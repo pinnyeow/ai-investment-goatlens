@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GOATlens - Multi-Agent Investment Analysis</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-card: #1a1a24;
+            --bg-hover: #22222e;
+            --text-primary: #f0f0f5;
+            --text-secondary: #a0a0b0;
+            --text-muted: #606070;
+            --accent-gold: #d4af37;
+            --accent-gold-dim: rgba(212, 175, 55, 0.15);
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --border: #2a2a3a;
+            --border-light: #3a3a4a;
+            --font-serif: 'Cormorant Garamond', Georgia, serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: var(--font-mono);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* Background Pattern */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(212, 175, 55, 0.03) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(139, 92, 246, 0.02) 0%, transparent 50%),
+                repeating-linear-gradient(
+                    0deg,
+                    transparent,
+                    transparent 100px,
+                    rgba(255, 255, 255, 0.01) 100px,
+                    rgba(255, 255, 255, 0.01) 101px
+                );
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* Header */
+        header {
+            padding: 2rem;
+            border-bottom: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .logo {
+            font-family: var(--font-serif);
+            font-size: 3rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            background: linear-gradient(135deg, var(--accent-gold) 0%, #f4d03f 50%, var(--accent-gold) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+
+        .logo span {
+            font-size: 2rem;
+        }
+
+        .tagline {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            letter-spacing: 0.3em;
+            text-transform: uppercase;
+        }
+
+        /* Main Container */
+        main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Input Section */
+        .input-section {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .input-group label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .ticker-input {
+            font-family: var(--font-mono);
+            font-size: 1.5rem;
+            font-weight: 500;
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--accent-gold);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            width: 180px;
+            transition: all 0.2s ease;
+        }
+
+        .ticker-input:focus {
+            outline: none;
+            border-color: var(--accent-gold);
+            box-shadow: 0 0 20px var(--accent-gold-dim);
+        }
+
+        .ticker-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .year-checkboxes {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .year-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+        }
+
+        .year-checkbox input {
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border: 1px solid var(--border);
+            background: var(--bg-secondary);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .year-checkbox input:checked {
+            background: var(--accent-gold);
+            border-color: var(--accent-gold);
+        }
+
+        .year-checkbox span {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .analyze-btn {
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            padding: 0.9rem 2.5rem;
+            background: linear-gradient(135deg, var(--accent-gold) 0%, #c9a227 100%);
+            border: none;
+            color: var(--bg-primary);
+            font-weight: 500;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .analyze-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 30px rgba(212, 175, 55, 0.3);
+        }
+
+        .analyze-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .demo-btn {
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            padding: 0.9rem 1.5rem;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .demo-btn:hover {
+            border-color: var(--text-secondary);
+            color: var(--text-secondary);
+        }
+
+        /* Loading State */
+        .loading {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 4rem;
+            gap: 1rem;
+        }
+
+        .loading.active {
+            display: flex;
+        }
+
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent-gold);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            letter-spacing: 0.1em;
+        }
+
+        /* Results Section */
+        .results {
+            display: none;
+        }
+
+        .results.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Company Header */
+        .company-header {
+            display: flex;
+            align-items: baseline;
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .company-ticker {
+            font-family: var(--font-serif);
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .company-name {
+            font-size: 1rem;
+            color: var(--text-secondary);
+        }
+
+        .company-sector {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            padding: 0.25rem 0.75rem;
+            border: 1px solid var(--border);
+            margin-left: auto;
+        }
+
+        /* Consensus Panel */
+        .consensus-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .consensus-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+        }
+
+        .consensus-title {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+        }
+
+        .agreement-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.75rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .consensus-verdict {
+            font-family: var(--font-serif);
+            font-size: 2.5rem;
+            font-weight: 600;
+            margin-bottom: 1.5rem;
+        }
+
+        .verdict-strong_buy { color: var(--accent-green); }
+        .verdict-buy { color: #4ade80; }
+        .verdict-hold { color: var(--accent-gold); }
+        .verdict-sell { color: #f87171; }
+        .verdict-strong_sell { color: var(--accent-red); }
+
+        .consensus-points {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .points-group h4 {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.75rem;
+        }
+
+        .points-group ul {
+            list-style: none;
+        }
+
+        .points-group li {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            padding: 0.5rem 0;
+            padding-left: 1.5rem;
+            position: relative;
+        }
+
+        .points-group li::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+
+        .consensus-list li::before {
+            background: var(--accent-green);
+        }
+
+        .divergence-list li::before {
+            background: var(--accent-purple);
+        }
+
+        /* Agents Grid */
+        .agents-section h3 {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            margin-bottom: 1rem;
+        }
+
+        .agents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .agent-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .agent-card:hover {
+            border-color: var(--border-light);
+            background: var(--bg-hover);
+        }
+
+        .agent-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .agent-name {
+            font-family: var(--font-serif);
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .agent-style {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .agent-score {
+            font-size: 1.5rem;
+            font-weight: 500;
+        }
+
+        .score-positive { color: var(--accent-green); }
+        .score-neutral { color: var(--accent-gold); }
+        .score-negative { color: var(--accent-red); }
+
+        .agent-verdict {
+            display: inline-block;
+            font-size: 0.7rem;
+            padding: 0.25rem 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 1rem;
+        }
+
+        .agent-insights h5, .agent-concerns h5 {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-bottom: 0.5rem;
+        }
+
+        .agent-insights ul, .agent-concerns ul {
+            list-style: none;
+            margin-bottom: 1rem;
+        }
+
+        .agent-insights li, .agent-concerns li {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            padding: 0.25rem 0;
+            padding-left: 1rem;
+            position: relative;
+        }
+
+        .agent-insights li::before {
+            content: '+';
+            position: absolute;
+            left: 0;
+            color: var(--accent-green);
+        }
+
+        .agent-concerns li::before {
+            content: '−';
+            position: absolute;
+            left: 0;
+            color: var(--accent-red);
+        }
+
+        /* Moat Analysis */
+        .moat-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .moat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .moat-title {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+        }
+
+        .moat-trend {
+            font-family: var(--font-serif);
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .trend-strengthening { color: var(--accent-green); }
+        .trend-stable { color: var(--accent-gold); }
+        .trend-weakening { color: var(--accent-red); }
+        .trend-collapsed { color: var(--accent-red); }
+
+        /* Comparison Table */
+        .comparison-section h3 {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            margin-bottom: 1rem;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+        }
+
+        .comparison-table th,
+        .comparison-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .comparison-table th {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            font-weight: 500;
+        }
+
+        .comparison-table td {
+            font-size: 0.85rem;
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .comparison-table tr:hover td {
+            background: var(--bg-hover);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 2rem;
+            border-top: 1px solid var(--border);
+            margin-top: 4rem;
+        }
+
+        .disclaimer {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Error State */
+        .error-message {
+            display: none;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+            padding: 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+        }
+
+        .error-message.active {
+            display: block;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .input-section {
+                flex-direction: column;
+            }
+
+            .consensus-points {
+                grid-template-columns: 1fr;
+            }
+
+            .agents-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .company-header {
+                flex-wrap: wrap;
+            }
+
+            .company-sector {
+                margin-left: 0;
+                margin-top: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1 class="logo">🐐 GOAT<span>lens</span></h1>
+        <p class="tagline">Multi-Agent Investment Analysis</p>
+    </header>
+
+    <main>
+        <div class="input-section">
+            <div class="input-group">
+                <label>Ticker Symbol</label>
+                <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="5">
+            </div>
+            <div class="input-group">
+                <label>Anchor Years</label>
+                <div class="year-checkboxes">
+                    <label class="year-checkbox">
+                        <input type="checkbox" name="years" value="2014" checked>
+                        <span>2014</span>
+                    </label>
+                    <label class="year-checkbox">
+                        <input type="checkbox" name="years" value="2019" checked>
+                        <span>2019</span>
+                    </label>
+                    <label class="year-checkbox">
+                        <input type="checkbox" name="years" value="2024" checked>
+                        <span>2024</span>
+                    </label>
+                </div>
+            </div>
+            <button class="analyze-btn" id="analyzeBtn">Analyze</button>
+            <button class="demo-btn" id="demoBtn">Demo Mode</button>
+        </div>
+
+        <div class="error-message" id="errorMessage"></div>
+
+        <div class="loading" id="loading">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Consulting the GOATs...</div>
+        </div>
+
+        <div class="results" id="results">
+            <!-- Company Header -->
+            <div class="company-header">
+                <span class="company-ticker" id="companyTicker">AAPL</span>
+                <span class="company-name" id="companyName">Apple Inc.</span>
+                <span class="company-sector" id="companySector">Technology</span>
+            </div>
+
+            <!-- Consensus Panel -->
+            <div class="consensus-panel">
+                <div class="consensus-header">
+                    <span class="consensus-title">Consensus Verdict</span>
+                    <span class="agreement-badge" id="agreementBadge">72% Agreement</span>
+                </div>
+                <div class="consensus-verdict" id="consensusVerdict">Buy</div>
+                <div class="consensus-points">
+                    <div class="points-group">
+                        <h4>Where GOATs Agree</h4>
+                        <ul class="consensus-list" id="consensusList"></ul>
+                    </div>
+                    <div class="points-group">
+                        <h4>Points of Debate</h4>
+                        <ul class="divergence-list" id="divergenceList"></ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Moat Analysis -->
+            <div class="moat-section">
+                <div class="moat-header">
+                    <span class="moat-title">10-Year Moat Trend</span>
+                    <span class="moat-trend" id="moatTrend">Stable</span>
+                </div>
+            </div>
+
+            <!-- Agent Cards -->
+            <section class="agents-section">
+                <h3>Individual GOAT Analysis</h3>
+                <div class="agents-grid" id="agentsGrid"></div>
+            </section>
+
+            <!-- Comparison Table -->
+            <section class="comparison-section">
+                <h3>GOAT Comparison</h3>
+                <table class="comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Investor</th>
+                            <th>Style</th>
+                            <th>Verdict</th>
+                            <th>Score</th>
+                        </tr>
+                    </thead>
+                    <tbody id="comparisonBody"></tbody>
+                </table>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <p class="disclaimer">
+            GOATlens is for educational and research purposes only. This is not financial advice. 
+            Always conduct your own research and consult with a qualified financial advisor before making investment decisions.
+        </p>
+    </footer>
+
+    <script>
+        const API_BASE = window.location.origin;
+        
+        // DOM Elements
+        const tickerInput = document.getElementById('tickerInput');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        const demoBtn = document.getElementById('demoBtn');
+        const loading = document.getElementById('loading');
+        const results = document.getElementById('results');
+        const errorMessage = document.getElementById('errorMessage');
+
+        // Event Listeners
+        analyzeBtn.addEventListener('click', runAnalysis);
+        demoBtn.addEventListener('click', runDemo);
+        tickerInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') runAnalysis();
+        });
+
+        async function runAnalysis() {
+            const ticker = tickerInput.value.trim().toUpperCase();
+            if (!ticker) {
+                showError('Please enter a ticker symbol');
+                return;
+            }
+
+            const selectedYears = Array.from(document.querySelectorAll('input[name="years"]:checked'))
+                .map(cb => parseInt(cb.value));
+
+            if (selectedYears.length < 2) {
+                showError('Please select at least 2 anchor years');
+                return;
+            }
+
+            showLoading();
+            hideError();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        ticker: ticker,
+                        anchor_years: selectedYears
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Analysis failed');
+                }
+
+                const data = await response.json();
+                displayResults(data);
+            } catch (err) {
+                showError(err.message);
+                hideLoading();
+            }
+        }
+
+        async function runDemo() {
+            showLoading();
+            hideError();
+
+            try {
+                const response = await fetch(`${API_BASE}/api/demo`);
+                const data = await response.json();
+                displayResults(data);
+            } catch (err) {
+                showError('Failed to load demo data');
+                hideLoading();
+            }
+        }
+
+        function displayResults(data) {
+            hideLoading();
+            
+            // Company Header
+            document.getElementById('companyTicker').textContent = data.ticker;
+            document.getElementById('companyName').textContent = data.company_name;
+            document.getElementById('companySector').textContent = data.sector;
+
+            // Consensus
+            const verdictEl = document.getElementById('consensusVerdict');
+            verdictEl.textContent = formatVerdict(data.consensus_verdict);
+            verdictEl.className = `consensus-verdict verdict-${data.consensus_verdict}`;
+
+            document.getElementById('agreementBadge').textContent = 
+                `${Math.round(data.agreement_score * 100)}% Agreement`;
+
+            // Consensus & Divergence Points
+            const consensusList = document.getElementById('consensusList');
+            consensusList.innerHTML = data.consensus_points.length > 0
+                ? data.consensus_points.map(p => `<li>${p}</li>`).join('')
+                : '<li>No strong consensus points</li>';
+
+            const divergenceList = document.getElementById('divergenceList');
+            divergenceList.innerHTML = data.divergence_points.length > 0
+                ? data.divergence_points.map(p => `<li>${p}</li>`).join('')
+                : '<li>General agreement across agents</li>';
+
+            // Moat Trend
+            const moatTrendEl = document.getElementById('moatTrend');
+            moatTrendEl.textContent = formatMoatTrend(data.moat_trend);
+            moatTrendEl.className = `moat-trend trend-${data.moat_trend}`;
+
+            // Agent Cards
+            const agentsGrid = document.getElementById('agentsGrid');
+            agentsGrid.innerHTML = data.agent_results.map(agent => `
+                <div class="agent-card">
+                    <div class="agent-header">
+                        <div>
+                            <div class="agent-name">${agent.agent}</div>
+                            <div class="agent-style">${agent.style}</div>
+                        </div>
+                        <div class="agent-score ${getScoreClass(agent.score)}">${agent.score > 0 ? '+' : ''}${agent.score}</div>
+                    </div>
+                    <span class="agent-verdict verdict-${agent.verdict}">${formatVerdict(agent.verdict)}</span>
+                    ${agent.insights.length > 0 ? `
+                        <div class="agent-insights">
+                            <h5>Key Insights</h5>
+                            <ul>${agent.insights.slice(0, 3).map(i => `<li>${i}</li>`).join('')}</ul>
+                        </div>
+                    ` : ''}
+                    ${agent.concerns.length > 0 ? `
+                        <div class="agent-concerns">
+                            <h5>Concerns</h5>
+                            <ul>${agent.concerns.slice(0, 2).map(c => `<li>${c}</li>`).join('')}</ul>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+
+            // Comparison Table
+            const comparisonBody = document.getElementById('comparisonBody');
+            comparisonBody.innerHTML = data.agent_results.map(agent => `
+                <tr>
+                    <td>${agent.agent}</td>
+                    <td>${agent.style}</td>
+                    <td class="verdict-${agent.verdict}">${formatVerdict(agent.verdict)}</td>
+                    <td class="${getScoreClass(agent.score)}">${agent.score > 0 ? '+' : ''}${agent.score}</td>
+                </tr>
+            `).join('');
+
+            results.classList.add('active');
+        }
+
+        function formatVerdict(verdict) {
+            const map = {
+                'strong_buy': 'Strong Buy',
+                'buy': 'Buy',
+                'hold': 'Hold',
+                'sell': 'Sell',
+                'strong_sell': 'Strong Sell'
+            };
+            return map[verdict] || verdict;
+        }
+
+        function formatMoatTrend(trend) {
+            const map = {
+                'strengthening': '↑ Strengthening',
+                'stable': '→ Stable',
+                'weakening': '↓ Weakening',
+                'collapsed': '⚠ Collapsed'
+            };
+            return map[trend] || trend;
+        }
+
+        function getScoreClass(score) {
+            if (score >= 20) return 'score-positive';
+            if (score <= -20) return 'score-negative';
+            return 'score-neutral';
+        }
+
+        function showLoading() {
+            loading.classList.add('active');
+            results.classList.remove('active');
+            analyzeBtn.disabled = true;
+        }
+
+        function hideLoading() {
+            loading.classList.remove('active');
+            analyzeBtn.disabled = false;
+        }
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.add('active');
+        }
+
+        function hideError() {
+            errorMessage.classList.remove('active');
+        }
+    </script>
+</body>
+</html>

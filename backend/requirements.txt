@@ -1,0 +1,22 @@
+# GOATlens - Backend Dependencies
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+
+# LangGraph & LangChain
+langgraph>=0.0.40
+langchain>=0.1.0
+langchain-openai>=0.0.5
+
+# HTTP Client
+httpx>=0.26.0
+
+# Data Processing
+pydantic>=2.5.0
+
+# Environment & Config
+python-dotenv>=1.0.0
+
+# Optional: For local development
+watchfiles>=0.21.0
