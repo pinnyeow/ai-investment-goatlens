@@ -12,6 +12,9 @@ langchain-openai>=0.0.5
 # HTTP Client
 httpx>=0.26.0
 
+# Data Sources
+yfinance>=0.2.0
+
 # Data Processing
 pydantic>=2.5.0
 

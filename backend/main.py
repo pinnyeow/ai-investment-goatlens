@@ -19,7 +19,11 @@ from contextlib import asynccontextmanager
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+
+# Load .env from the backend directory
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,7 +37,7 @@ from typing_extensions import TypedDict
 
 # Local imports
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
-from data_sources import FMPClient, FMPError
+from data_sources import YahooFinanceClient, YahooFinanceError
 from temporal import TemporalAnalyzer
 from strategies import calculate_consensus, StrategyResult, Verdict
 
@@ -138,13 +142,13 @@ class GOATState(TypedDict):
 
 async def fetch_data_node(state: GOATState) -> GOATState:
     """
-    Node: Fetch all financial data from FMP.
+    Node: Fetch all financial data from Yahoo Finance.
     """
     ticker = state["ticker"]
     anchor_years = state["anchor_years"]
     
     try:
-        async with FMPClient() as client:
+        async with YahooFinanceClient() as client:
             raw_data = await client.get_company_data(ticker, years=10)
             normalized = client.normalize_data(raw_data)
             anchor_data = client.extract_anchor_year_data(raw_data, anchor_years)
@@ -153,7 +157,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         state["normalized_data"] = normalized.__dict__
         state["anchor_year_data"] = anchor_data
         
-    except FMPError as e:
+    except YahooFinanceError as e:
         state["error"] = f"Data fetch failed: {str(e)}"
     
     return state
