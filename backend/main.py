@@ -1,20 +1,25 @@
 """
 GOATlens - Multi-Agent Investment Analysis Framework
 
-A research tool that performs 10-year "Time-Travel" analysis of a company
-using the mental models of legendary investors (the GOATs).
+A research tool that analyzes companies using the mental models of 
+legendary investors (the GOATs).
 
 Features:
-- Temporal Analysis: Compare company fundamentals across anchor years
-- Moat Decay Detection: Identify competitive advantage trends
+- Time Period Analysis: Analyze company over YTD, 3M, 6M, 1Y, or 5Y
+- Moat Detection: Identify competitive advantage strength
 - Multi-Agent Debate: Parallel analysis from different investor perspectives
 - Consensus/Divergence: Surface where GOATs agree vs. disagree
 """
 
 import os
 import asyncio
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,14 +45,32 @@ from strategies import calculate_consensus, StrategyResult, Verdict
 class AnalysisRequest(BaseModel):
     """Request to analyze a company."""
     ticker: str = Field(..., description="Stock ticker symbol (e.g., AAPL)")
-    anchor_years: List[int] = Field(
-        default=[2014, 2019, 2024],
-        description="Years to compare in time-travel analysis",
+    time_period: str = Field(
+        default="1y",
+        description="Time period for analysis: ytd, 3m, 6m, 1y, 5y",
     )
     agents: Optional[List[str]] = Field(
         default=None,
         description="Specific agents to run (default: all)",
     )
+
+
+def get_years_from_period(period: str) -> List[int]:
+    """Convert time period to anchor years for analysis."""
+    current_year = datetime.now().year
+    
+    if period == "ytd":
+        return [current_year - 1, current_year]
+    elif period == "3m":
+        return [current_year - 1, current_year]
+    elif period == "6m":
+        return [current_year - 1, current_year]
+    elif period == "1y":
+        return [current_year - 1, current_year]
+    elif period == "5y":
+        return [current_year - 5, current_year - 2, current_year]
+    else:
+        return [current_year - 1, current_year]
 
 
 class AgentResult(BaseModel):
@@ -90,6 +113,7 @@ class AnalysisResponse(BaseModel):
 class GOATState(TypedDict):
     """State passed through the LangGraph workflow."""
     ticker: str
+    time_period: str
     anchor_years: List[int]
     selected_agents: List[str]
     
@@ -365,10 +389,15 @@ async def analyze_company(request: AnalysisRequest):
     if not goat_workflow:
         raise HTTPException(status_code=503, detail="Workflow not initialized")
     
+    # Convert time period to anchor years
+    time_period = request.time_period or "1y"
+    anchor_years = get_years_from_period(time_period)
+    
     # Initialize state
     initial_state: GOATState = {
         "ticker": request.ticker.upper(),
-        "anchor_years": request.anchor_years,
+        "time_period": time_period,
+        "anchor_years": anchor_years,
         "selected_agents": request.agents or [],
         "raw_data": None,
         "normalized_data": None,
