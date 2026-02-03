@@ -15,6 +15,7 @@ import os
 import asyncio
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
+from opentelemetry import context as otel_context
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -23,6 +24,17 @@ from pathlib import Path
 # Load .env from the backend directory
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
+
+# --- Arize AX Auto-Instrumentation (MUST be before LangGraph imports) ---
+if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
+    try:
+        from arize.otel import register
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        tp = register(space_id=os.getenv("ARIZE_SPACE_ID"), api_key=os.getenv("ARIZE_API_KEY"), project_name="goatlens")
+        LangChainInstrumentor().instrument(tracer_provider=tp, include_chains=True, include_agents=True, include_tools=True)
+        print("Arize AX tracing enabled for project 'goatlens'")
+    except Exception as e:
+        print(f"Arize tracing setup failed: {e}")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -188,9 +200,17 @@ async def run_agents_node(state: GOATState) -> GOATState:
     else:
         agents = all_agents
     
-    # Run all agents in parallel
-    tasks = [agent.analyze(ticker, financials) for agent in agents.values()]
+    # Run all agents in parallel with context propagation
+    current_ctx = otel_context.get_current()
     
+    async def run_with_context(agent):
+        token = otel_context.attach(current_ctx)
+        try:
+            return await agent.analyze(ticker, financials)
+        finally:
+            otel_context.detach(token)
+    
+    tasks = [asyncio.create_task(run_with_context(agent)) for agent in agents.values()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Process results
