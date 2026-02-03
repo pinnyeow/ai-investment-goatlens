@@ -31,15 +31,13 @@ if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
     try:
         from arize.otel import register
         from openinference.instrumentation.langchain import LangChainInstrumentor
-        from openinference.instrumentation.openai import OpenAIInstrumentor
         
         tracer_provider = register(
             space_id=os.getenv("ARIZE_SPACE_ID"),
             api_key=os.getenv("ARIZE_API_KEY"),
             project_name="goatlens"
         )
-        LangChainInstrumentor().instrument(tracer_provider=tracer_provider, include_chains=True, include_agents=True, include_tools=True)
-        OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
+        LangChainInstrumentor().instrument(tracer_provider=tracer_provider)
         _TRACING = True
         print("Arize AX tracing enabled for project 'goatlens'")
     except Exception as e:
