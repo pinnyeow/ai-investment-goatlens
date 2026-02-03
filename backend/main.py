@@ -16,6 +16,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
+from opentelemetry import context as otel_context
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -237,11 +238,17 @@ async def run_agents_node(state: GOATState) -> GOATState:
     else:
         agents = all_agents
     
-    # Run all agents in parallel (asyncio.create_task copies context automatically)
-    tasks = [
-        asyncio.create_task(agent.analyze(ticker, financials, anchor_years))
-        for agent in agents.values()
-    ]
+    # Run all agents in parallel with trace context propagation
+    current_ctx = otel_context.get_current()
+    
+    async def run_with_trace(agent):
+        token = otel_context.attach(current_ctx)
+        try:
+            return await agent.analyze(ticker, financials, anchor_years)
+        finally:
+            otel_context.detach(token)
+    
+    tasks = [asyncio.create_task(run_with_trace(agent)) for agent in agents.values()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Process results
