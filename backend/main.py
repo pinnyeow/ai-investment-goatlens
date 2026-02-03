@@ -239,12 +239,11 @@ async def run_agents_node(state: GOATState) -> GOATState:
     else:
         agents = all_agents
     
-    # Run all agents in parallel
+    # Run all agents in parallel (asyncio.create_task copies context automatically)
     tasks = [
-        agent.analyze(ticker, financials, anchor_years)
+        asyncio.create_task(agent.analyze(ticker, financials, anchor_years))
         for agent in agents.values()
     ]
-    
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Process results
