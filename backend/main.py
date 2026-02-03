@@ -32,6 +32,8 @@ if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
     try:
         from arize.otel import register
         from openinference.instrumentation.langchain import LangChainInstrumentor
+        from openinference.instrumentation.openai import OpenAIInstrumentor
+        from opentelemetry import trace as trace_api
         
         tracer_provider = register(
             space_id=os.getenv("ARIZE_SPACE_ID"),
@@ -39,6 +41,7 @@ if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
             project_name="goatlens"
         )
         LangChainInstrumentor().instrument(tracer_provider=tracer_provider)
+        OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
         _TRACING = True
         print("Arize AX tracing enabled for project 'goatlens'")
     except Exception as e:
@@ -438,9 +441,14 @@ async def analyze_company(request: AnalysisRequest):
         "error": None,
     }
     
-    # Run workflow
+    # Run workflow with root trace span
     try:
-        final_state = await goat_workflow.ainvoke(initial_state)
+        from opentelemetry import trace as trace_api
+        tracer = trace_api.get_tracer("goatlens")
+        with tracer.start_as_current_span(f"analyze_{request.ticker.upper()}") as span:
+            span.set_attribute("ticker", request.ticker.upper())
+            span.set_attribute("time_period", time_period)
+            final_state = await goat_workflow.ainvoke(initial_state)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
     
