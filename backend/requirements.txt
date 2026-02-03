@@ -23,3 +23,11 @@ python-dotenv>=1.0.0
 
 # Optional: For local development
 watchfiles>=0.21.0
+
+# Observability - Arize AX
+arize-otel>=0.8.1
+opentelemetry-sdk>=1.21.0
+opentelemetry-exporter-otlp>=1.21.0
+openinference-instrumentation-langchain>=0.1.19
+openinference-instrumentation-openai>=0.1.0
+openinference-instrumentation>=0.1.12

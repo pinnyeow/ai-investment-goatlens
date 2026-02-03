@@ -1321,7 +1321,7 @@
                             <div class="agent-style">${agent.style}</div>
                         </div>
                         <div class="agent-score-wrapper">
-                            <div class="agent-score ${getScoreClass(agent.score)}">${agent.score > 0 ? '+' : ''}${agent.score}</div>
+                            <div class="agent-score ${getScoreClass(agent.score)}">${agent.score > 0 ? '+' : ''}${agent.score.toFixed(1)}</div>
                             <div class="score-tooltip">
                                 <div class="tooltip-title">How ${agent.agent.split(' ')[0]} Scores</div>
                                 ${investorTooltips[agent.agent] || 'Score based on investor-specific criteria.'}
@@ -1351,7 +1351,7 @@
                     <td><strong>${agent.agent}</strong></td>
                     <td>${agent.style}</td>
                     <td><span class="agent-verdict-badge badge-${agent.verdict}">${formatVerdict(agent.verdict)}</span></td>
-                    <td class="${getScoreClass(agent.score)}" style="font-weight: 600; font-size: 1.1rem;">${agent.score > 0 ? '+' : ''}${agent.score}</td>
+                    <td class="${getScoreClass(agent.score)}" style="font-weight: 600; font-size: 1.1rem;">${agent.score > 0 ? '+' : ''}${agent.score.toFixed(1)}</td>
                 </tr>
             `).join('');
 

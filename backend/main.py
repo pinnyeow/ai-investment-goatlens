@@ -25,13 +25,31 @@ from pathlib import Path
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
+# --- Arize AX Auto-Instrumentation (MUST be before LangGraph imports) ---
+_TRACING = False
+if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
+    try:
+        from arize.otel import register
+        from openinference.instrumentation.langchain import LangChainInstrumentor
+        
+        tracer_provider = register(
+            space_id=os.getenv("ARIZE_SPACE_ID"),
+            api_key=os.getenv("ARIZE_API_KEY"),
+            project_name="goatlens"
+        )
+        LangChainInstrumentor().instrument(tracer_provider=tracer_provider, include_chains=True, include_agents=True, include_tools=True)
+        _TRACING = True
+        print("Arize AX tracing enabled for project 'goatlens'")
+    except Exception as e:
+        print(f"Arize tracing setup failed: {e}")
+
+# --- Now import LangGraph (will be auto-instrumented) ---
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-# LangGraph imports
 from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
 
@@ -361,7 +379,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 @app.get("/")
 async def root():
