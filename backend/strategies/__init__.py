@@ -7,6 +7,7 @@ Contains the core evaluation strategies and scoring mechanisms.
 from typing import Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
+from collections import Counter
 
 
 class Verdict(Enum):
@@ -64,27 +65,20 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     else:
         consensus_verdict = Verdict.STRONG_SELL
     
-    # Calculate agreement score (inverse of variance)
-    variance = sum((r.score - avg_score) ** 2 for r in results) / len(results)
-    max_variance = 10000  # (100 - (-100))^2 / 4
-    agreement_score = max(0, 1 - (variance / max_variance))
-    
-    # Find consensus and divergence points
-    all_insights = [insight for r in results for insight in r.key_insights]
-    all_concerns = [concern for r in results for concern in r.concerns]
-    
-    # Simple frequency-based consensus (insights mentioned by multiple agents)
-    insight_counts: Dict[str, int] = {}
-    for insight in all_insights:
-        insight_counts[insight] = insight_counts.get(insight, 0) + 1
-    
-    consensus_points = [i for i, c in insight_counts.items() if c >= len(results) // 2 + 1]
-    
-    # Divergence: where verdicts differ significantly
+    # Calculate agreement score based on verdict match
     verdicts = [r.verdict for r in results]
+    verdict_counts = Counter(verdicts)
+    most_common_count = verdict_counts.most_common(1)[0][1]
+    agreement_score = most_common_count / len(results)
+    
+    # Divergence: where verdicts differ
     divergence_points = []
-    if len(set(verdicts)) > 2:
-        divergence_points.append("Significant disagreement on investment thesis")
+    if len(set(verdicts)) > 1:
+        differing = [v.value for v in set(verdicts)]
+        divergence_points.append(f"Agents split between {' and '.join(differing)}")
+    
+    # Consensus points (placeholder - could analyze common insights)
+    consensus_points = [] if len(set(verdicts)) > 1 else ["All agents agree on verdict"]
     
     return ConsensusResult(
         consensus_verdict=consensus_verdict,
