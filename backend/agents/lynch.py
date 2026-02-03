@@ -83,10 +83,11 @@ class LynchAgent:
         
         # Calculate Lynch score
         score = self._calculate_score(metrics, category, ten_bagger_potential)
+        verdict = self._score_to_verdict(score)
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, category, score)
+            insights = await self._generate_llm_insights(ticker, metrics, category, score, verdict)
         else:
             insights = self._generate_insights(metrics, category)
         
@@ -228,21 +229,13 @@ class LynchAgent:
         metrics: LynchMetrics,
         category: str,
         score: float,
+        verdict: str,
     ) -> List[str]:
         """Generate LLM-powered insights using Lynch's voice."""
-        prompt = f"""Analyze {ticker} with these metrics:
-- PEG Ratio: {metrics.peg_ratio:.2f}
-- Earnings Growth: {metrics.earnings_growth:.1%}
-- P/E: {metrics.pe_ratio:.1f}
-- Category: {category}
-- Score: {score:.0f}/100
-
-Provide 3 key insights in Peter Lynch's voice. Focus on whether this is a ten-bagger opportunity, if it's a GARP play, and whether institutions have discovered it yet."""
-
+        prompt = f"""Analyze {ticker}: PEG {metrics.peg_ratio:.2f}, Earnings Growth {metrics.earnings_growth:.1%}, P/E {metrics.pe_ratio:.1f}, Category {category}"""
         try:
-            response = await self.llm_client.analyze(prompt, persona="Peter Lynch")
-            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
-            return insights[:3] if insights else self._generate_insights(metrics, category)
+            response = await self.llm_client.analyze(prompt, persona="Peter Lynch", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, category)
         except Exception:
             return self._generate_insights(metrics, category)
     

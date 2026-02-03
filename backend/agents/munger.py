@@ -83,10 +83,11 @@ class MungerAgent:
         
         # Calculate Munger score
         score = self._calculate_score(metrics, quality_assessment, red_flags)
+        verdict = self._score_to_verdict(score)
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score)
+            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict)
         else:
             insights = self._generate_insights(metrics, quality_assessment)
         
@@ -267,22 +268,13 @@ class MungerAgent:
         quality_assessment: Dict[str, Any],
         red_flags: List[str],
         score: float,
+        verdict: str,
     ) -> List[str]:
         """Generate LLM-powered insights using Munger's voice."""
-        prompt = f"""Analyze {ticker} with these metrics:
-- Gross Margin: {metrics.gross_margin:.1%}
-- Operating Margin: {metrics.operating_margin:.1%}
-- ROIC: {metrics.roic:.1%}
-- Quality Level: {quality_assessment['level']}
-- Red Flags: {len(red_flags)} ({', '.join(red_flags[:2]) if red_flags else 'None'})
-- Score: {score:.0f}/100
-
-Provide 3 key insights in Charlie Munger's voice. Use inversion ("what would make this a bad investment?"), discuss business quality over cheapness, and apply mental models."""
-
+        prompt = f"""Analyze {ticker}: Gross Margin {metrics.gross_margin:.1%}, Operating Margin {metrics.operating_margin:.1%}, ROIC {metrics.roic:.1%}, Quality {quality_assessment['level']}, Red Flags {len(red_flags)}"""
         try:
-            response = await self.llm_client.analyze(prompt, persona="Charlie Munger")
-            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
-            return insights[:3] if insights else self._generate_insights(metrics, quality_assessment)
+            response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, quality_assessment)
         except Exception:
             return self._generate_insights(metrics, quality_assessment)
     

@@ -16,13 +16,22 @@ class LLMClient:
     def __init__(self):
         self._llm = ChatOpenAI(
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "300")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "200")),
             temperature=0.7,
         )
     
-    async def analyze(self, prompt: str, persona: str = "investment analyst") -> str:
+    async def analyze(self, prompt: str, persona: str = "investment analyst", verdict: str = "hold") -> str:
         """Generate analysis using LLM."""
-        system = f"You are {persona}. Provide concise, insightful investment analysis in your authentic voice. Be specific about the numbers. Keep responses under 150 words."
+        system = f"""You are {persona}. The quantitative analysis resulted in a "{verdict}" verdict.
+
+Your job: Explain WHY this verdict makes sense based on the metrics provided. Speak naturally in first person as {persona} would.
+
+Rules:
+- No markdown, no headers, no bullet points, no asterisks
+- Write 2-3 flowing sentences
+- Be specific about the numbers
+- Stay consistent with the {verdict} verdict"""
+        
         response = await self._llm.ainvoke([
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},

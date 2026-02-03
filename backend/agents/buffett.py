@@ -81,10 +81,11 @@ class BuffettAgent:
         
         # Calculate Buffett score
         score = self._calculate_score(metrics, moat_analysis, management_quality)
+        verdict = self._score_to_verdict(score)
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, score)
+            insights = await self._generate_llm_insights(ticker, metrics, score, verdict)
         else:
             insights = self._generate_insights(metrics, moat_analysis)
         
@@ -203,22 +204,13 @@ class BuffettAgent:
         ticker: str,
         metrics: BuffettMetrics,
         score: float,
+        verdict: str,
     ) -> List[str]:
         """Generate LLM-powered insights using Buffett's voice."""
-        prompt = f"""Analyze {ticker} with these metrics:
-- ROE: {metrics.roe:.1%}
-- Profit Margin: {metrics.profit_margin:.1%}
-- Debt/Equity: {metrics.debt_to_equity:.2f}
-- Moat: {metrics.moat_strength}
-- Score: {score:.0f}/100
-
-Provide 3 key insights in Warren Buffett's voice. Focus on moat quality, management efficiency, and whether this is a wonderful business at a fair price."""
-
+        prompt = f"""Analyze {ticker}: ROE {metrics.roe:.1%}, Profit Margin {metrics.profit_margin:.1%}, Debt/Equity {metrics.debt_to_equity:.2f}, Moat {metrics.moat_strength}"""
         try:
-            response = await self.llm_client.analyze(prompt, persona="Warren Buffett")
-            # Split into list of insights
-            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
-            return insights[:3] if insights else self._generate_insights(metrics, {"strength": metrics.moat_strength})
+            response = await self.llm_client.analyze(prompt, persona="Warren Buffett", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, {"strength": metrics.moat_strength})
         except Exception:
             return self._generate_insights(metrics, {"strength": metrics.moat_strength})
     

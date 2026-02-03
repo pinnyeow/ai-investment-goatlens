@@ -77,10 +77,11 @@ class GrahamAgent:
         
         # Calculate Graham score
         score = self._calculate_score(metrics, margin_of_safety, defensive_criteria)
+        verdict = self._score_to_verdict(score)
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score)
+            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score, verdict)
         else:
             insights = self._generate_insights(metrics, margin_of_safety)
         
@@ -256,23 +257,13 @@ class GrahamAgent:
         metrics: GrahamMetrics,
         margin_of_safety: Dict[str, Any],
         score: float,
+        verdict: str,
     ) -> List[str]:
         """Generate LLM-powered insights using Graham's voice."""
-        prompt = f"""Analyze {ticker} with these metrics:
-- P/E: {metrics.pe_ratio:.1f}
-- P/B: {metrics.pb_ratio:.1f}
-- Current Ratio: {metrics.current_ratio:.1f}
-- Graham Number: ${metrics.graham_number:.2f}
-- Current Price: ${metrics.current_price:.2f}
-- Margin of Safety: {margin_of_safety['percentage']:.1%}
-- Score: {score:.0f}/100
-
-Provide 3 key insights in Benjamin Graham's voice. Focus on margin of safety, intrinsic value, and whether Mr. Market is offering a bargain."""
-
+        prompt = f"""Analyze {ticker}: P/E {metrics.pe_ratio:.1f}, P/B {metrics.pb_ratio:.1f}, Current Ratio {metrics.current_ratio:.1f}, Margin of Safety {margin_of_safety['percentage']:.1%}"""
         try:
-            response = await self.llm_client.analyze(prompt, persona="Benjamin Graham")
-            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
-            return insights[:3] if insights else self._generate_insights(metrics, margin_of_safety)
+            response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, margin_of_safety)
         except Exception:
             return self._generate_insights(metrics, margin_of_safety)
     

@@ -80,10 +80,11 @@ class DalioAgent:
         
         # Calculate Dalio score
         score = self._calculate_score(metrics, risk_assessment, cycle_analysis)
+        verdict = self._score_to_verdict(score)
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, macro_positioning, score)
+            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, macro_positioning, score, verdict)
         else:
             insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
         
@@ -302,23 +303,13 @@ class DalioAgent:
         cycle_analysis: Dict[str, Any],
         macro_positioning: Dict[str, Any],
         score: float,
+        verdict: str,
     ) -> List[str]:
         """Generate LLM-powered insights using Dalio's voice."""
-        prompt = f"""Analyze {ticker} with these metrics:
-- Beta: {metrics.beta:.2f}
-- Debt/Equity: {metrics.debt_to_equity:.2f}
-- Interest Coverage: {metrics.interest_coverage:.1f}x
-- Debt Cycle Phase: {cycle_analysis['cycle_phase']}
-- Sector: {macro_positioning['sector']}
-- All-Weather Fit: {macro_positioning['all_weather_fit']}
-- Score: {score:.0f}/100
-
-Provide 3 key insights in Ray Dalio's voice. Focus on debt cycle positioning, risk-adjusted returns, and how this fits in an All-Weather portfolio."""
-
+        prompt = f"""Analyze {ticker}: Beta {metrics.beta:.2f}, Debt/Equity {metrics.debt_to_equity:.2f}, Debt Cycle {cycle_analysis['cycle_phase']}, Sector {macro_positioning['sector']}"""
         try:
-            response = await self.llm_client.analyze(prompt, persona="Ray Dalio")
-            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
-            return insights[:3] if insights else self._generate_insights(metrics, cycle_analysis, macro_positioning)
+            response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, cycle_analysis, macro_positioning)
         except Exception:
             return self._generate_insights(metrics, cycle_analysis, macro_positioning)
     
