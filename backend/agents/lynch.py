@@ -76,14 +76,6 @@ class LynchAgent:
     ) -> Dict[str, Any]:
         """
         Perform Lynch-style analysis on a company.
-        
-        Args:
-            ticker: Stock ticker symbol
-            financials: Historical financial data
-            anchor_years: Years to focus analysis on
-            
-        Returns:
-            Analysis result with verdict, score, and insights
         """
         metrics = self._calculate_metrics(financials)
         category = self._categorize_stock(metrics)
@@ -92,7 +84,12 @@ class LynchAgent:
         # Calculate Lynch score
         score = self._calculate_score(metrics, category, ten_bagger_potential)
         
-        insights = self._generate_insights(metrics, category)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, category, score)
+        else:
+            insights = self._generate_insights(metrics, category)
+        
         concerns = self._identify_concerns(metrics)
         
         return {
@@ -127,11 +124,7 @@ class LynchAgent:
         )
     
     def _categorize_stock(self, metrics: LynchMetrics) -> str:
-        """
-        Categorize stock according to Lynch's framework.
-        
-        Lynch believed different categories need different strategies.
-        """
+        """Categorize stock according to Lynch's framework."""
         growth = metrics.earnings_growth
         
         if growth < 0.05:
@@ -148,15 +141,7 @@ class LynchAgent:
         metrics: LynchMetrics,
         financials: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Assess potential for 10x returns.
-        
-        Lynch's ten-bagger indicators:
-        - Fast grower with room to expand
-        - PEG < 1
-        - Low institutional ownership
-        - Strong balance sheet
-        """
+        """Assess potential for 10x returns."""
         score = 0
         factors = []
         
@@ -237,12 +222,36 @@ class LynchAgent:
         else:
             return "strong_sell"
     
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: LynchMetrics,
+        category: str,
+        score: float,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Lynch's voice."""
+        prompt = f"""Analyze {ticker} with these metrics:
+- PEG Ratio: {metrics.peg_ratio:.2f}
+- Earnings Growth: {metrics.earnings_growth:.1%}
+- P/E: {metrics.pe_ratio:.1f}
+- Category: {category}
+- Score: {score:.0f}/100
+
+Provide 3 key insights in Peter Lynch's voice. Focus on whether this is a ten-bagger opportunity, if it's a GARP play, and whether institutions have discovered it yet."""
+
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Peter Lynch")
+            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
+            return insights[:3] if insights else self._generate_insights(metrics, category)
+        except Exception:
+            return self._generate_insights(metrics, category)
+    
     def _generate_insights(
         self,
         metrics: LynchMetrics,
         category: str,
     ) -> List[str]:
-        """Generate key insights from analysis."""
+        """Generate key insights from analysis (fallback)."""
         insights = []
         
         if metrics.peg_ratio < 1.0:

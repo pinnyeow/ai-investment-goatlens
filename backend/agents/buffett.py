@@ -76,13 +76,18 @@ class BuffettAgent:
             Analysis result with verdict, score, and insights
         """
         metrics = self._calculate_metrics(financials)
-        moat_analysis = self._assess_moat(financials, anchor_years)
+        moat_analysis = self._assess_moat(metrics)
         management_quality = self._assess_management(financials)
         
         # Calculate Buffett score
         score = self._calculate_score(metrics, moat_analysis, management_quality)
         
-        insights = self._generate_insights(metrics, moat_analysis)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, score)
+        else:
+            insights = self._generate_insights(metrics, moat_analysis)
+        
         concerns = self._identify_concerns(metrics)
         
         return {
@@ -100,48 +105,48 @@ class BuffettAgent:
     
     def _calculate_metrics(self, financials: Dict[str, Any]) -> BuffettMetrics:
         """Extract and calculate Buffett-relevant metrics."""
-        # Placeholder - will be populated from FMP data
+        roe = financials.get("roe", 0)
+        profit_margin = financials.get("profit_margin", 0)
+        debt_to_equity = financials.get("debt_to_equity", 0)
+        
+        # Determine moat strength from margins and ROE
+        if roe >= 0.20 and profit_margin >= 0.15:
+            moat = "Strong"
+        elif roe >= 0.15 and profit_margin >= 0.10:
+            moat = "Moderate"
+        else:
+            moat = "Weak"
+        
         return BuffettMetrics(
-            roe=financials.get("roe", 0),
-            profit_margin=financials.get("profit_margin", 0),
-            debt_to_equity=financials.get("debt_to_equity", 0),
+            roe=roe,
+            profit_margin=profit_margin,
+            debt_to_equity=debt_to_equity,
             owner_earnings=financials.get("free_cash_flow", 0),
             earnings_consistency=0.0,
-            moat_strength="Unknown",
+            moat_strength=moat,
         )
     
-    def _assess_moat(
-        self,
-        financials: Dict[str, Any],
-        anchor_years: List[int],
-    ) -> Dict[str, Any]:
-        """
-        Assess the durability of competitive advantage.
+    def _assess_moat(self, metrics: BuffettMetrics) -> Dict[str, Any]:
+        """Assess the durability of competitive advantage."""
+        if metrics.moat_strength == "Strong":
+            durability = "High"
+            analysis = "Strong pricing power and high returns suggest durable competitive advantage"
+        elif metrics.moat_strength == "Moderate":
+            durability = "Medium"
+            analysis = "Decent returns but moat durability needs monitoring"
+        else:
+            durability = "Low"
+            analysis = "Weak margins suggest limited pricing power"
         
-        Buffett's moat indicators:
-        - Pricing power (sustained margins)
-        - Network effects
-        - Switching costs
-        - Cost advantages
-        - Intangible assets (brands, patents)
-        """
         return {
-            "moat_type": "Unknown",
-            "durability": "Unknown",
-            "trend": "Unknown",
-            "analysis": "Moat analysis requires LLM integration",
+            "moat_type": "Financial Moat",
+            "durability": durability,
+            "strength": metrics.moat_strength,
+            "analysis": analysis,
         }
     
     def _assess_management(self, financials: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Assess management quality.
-        
-        Buffett looks for:
-        - Rational capital allocation
-        - Honest communication with shareholders
-        - Long-term focus
-        - Skin in the game (insider ownership)
-        """
+        """Assess management quality."""
         return {
             "capital_allocation": "Unknown",
             "shareholder_focus": "Unknown",
@@ -193,12 +198,36 @@ class BuffettAgent:
         else:
             return "strong_sell"
     
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: BuffettMetrics,
+        score: float,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Buffett's voice."""
+        prompt = f"""Analyze {ticker} with these metrics:
+- ROE: {metrics.roe:.1%}
+- Profit Margin: {metrics.profit_margin:.1%}
+- Debt/Equity: {metrics.debt_to_equity:.2f}
+- Moat: {metrics.moat_strength}
+- Score: {score:.0f}/100
+
+Provide 3 key insights in Warren Buffett's voice. Focus on moat quality, management efficiency, and whether this is a wonderful business at a fair price."""
+
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Warren Buffett")
+            # Split into list of insights
+            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
+            return insights[:3] if insights else self._generate_insights(metrics, {"strength": metrics.moat_strength})
+        except Exception:
+            return self._generate_insights(metrics, {"strength": metrics.moat_strength})
+    
     def _generate_insights(
         self,
         metrics: BuffettMetrics,
         moat_analysis: Dict[str, Any],
     ) -> List[str]:
-        """Generate key insights from analysis."""
+        """Generate key insights from analysis (fallback)."""
         insights = []
         
         if metrics.roe >= self.MIN_ROE:

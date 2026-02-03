@@ -72,17 +72,7 @@ class DalioAgent:
         financials: Dict[str, Any],
         anchor_years: List[int],
     ) -> Dict[str, Any]:
-        """
-        Perform Dalio-style analysis on a company.
-        
-        Args:
-            ticker: Stock ticker symbol
-            financials: Historical financial data
-            anchor_years: Years to focus analysis on
-            
-        Returns:
-            Analysis result with verdict, score, and insights
-        """
+        """Perform Dalio-style analysis on a company."""
         metrics = self._calculate_metrics(financials)
         cycle_analysis = self._analyze_debt_cycle(financials, anchor_years)
         risk_assessment = self._assess_risk_adjusted_returns(metrics, financials)
@@ -91,7 +81,12 @@ class DalioAgent:
         # Calculate Dalio score
         score = self._calculate_score(metrics, risk_assessment, cycle_analysis)
         
-        insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, macro_positioning, score)
+        else:
+            insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
+        
         concerns = self._identify_concerns(metrics, cycle_analysis)
         
         return {
@@ -125,13 +120,7 @@ class DalioAgent:
         financials: Dict[str, Any],
         anchor_years: List[int],
     ) -> Dict[str, Any]:
-        """
-        Analyze company's position in debt cycle.
-        
-        Dalio's framework:
-        - Short-term debt cycle (~5-8 years)
-        - Long-term debt cycle (~75-100 years)
-        """
+        """Analyze company's position in debt cycle."""
         debt_to_equity = financials.get("debt_to_equity", 0)
         debt_growth = financials.get("debt_growth_3y", 0)
         
@@ -162,12 +151,7 @@ class DalioAgent:
         metrics: DalioMetrics,
         financials: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Assess risk-adjusted return potential.
-        
-        Dalio focuses on return per unit of risk,
-        not absolute returns.
-        """
+        """Assess risk-adjusted return potential."""
         # Sharpe-like analysis
         expected_return = financials.get("expected_return", 0.10)
         risk_free_rate = 0.04  # Assumed
@@ -193,11 +177,7 @@ class DalioAgent:
         self,
         financials: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """
-        Analyze how company performs across economic seasons.
-        
-        Based on Dalio's All-Weather portfolio concept.
-        """
+        """Analyze how company performs across economic seasons."""
         sector = financials.get("sector", "Unknown")
         
         # Sector sensitivity to economic conditions
@@ -315,13 +295,40 @@ class DalioAgent:
         else:
             return "strong_sell"
     
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: DalioMetrics,
+        cycle_analysis: Dict[str, Any],
+        macro_positioning: Dict[str, Any],
+        score: float,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Dalio's voice."""
+        prompt = f"""Analyze {ticker} with these metrics:
+- Beta: {metrics.beta:.2f}
+- Debt/Equity: {metrics.debt_to_equity:.2f}
+- Interest Coverage: {metrics.interest_coverage:.1f}x
+- Debt Cycle Phase: {cycle_analysis['cycle_phase']}
+- Sector: {macro_positioning['sector']}
+- All-Weather Fit: {macro_positioning['all_weather_fit']}
+- Score: {score:.0f}/100
+
+Provide 3 key insights in Ray Dalio's voice. Focus on debt cycle positioning, risk-adjusted returns, and how this fits in an All-Weather portfolio."""
+
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Ray Dalio")
+            insights = [line.strip() for line in response.split("\n") if line.strip() and not line.strip().startswith("#")]
+            return insights[:3] if insights else self._generate_insights(metrics, cycle_analysis, macro_positioning)
+        except Exception:
+            return self._generate_insights(metrics, cycle_analysis, macro_positioning)
+    
     def _generate_insights(
         self,
         metrics: DalioMetrics,
         cycle_analysis: Dict[str, Any],
         macro_positioning: Dict[str, Any],
     ) -> List[str]:
-        """Generate key insights from analysis."""
+        """Generate key insights from analysis (fallback)."""
         insights = []
         
         if cycle_analysis["leverage_sustainability"]:

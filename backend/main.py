@@ -31,6 +31,7 @@ if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
     try:
         from arize.otel import register
         from openinference.instrumentation.langchain import LangChainInstrumentor
+        from openinference.instrumentation.openai import OpenAIInstrumentor
         
         tracer_provider = register(
             space_id=os.getenv("ARIZE_SPACE_ID"),
@@ -38,6 +39,7 @@ if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
             project_name="goatlens"
         )
         LangChainInstrumentor().instrument(tracer_provider=tracer_provider, include_chains=True, include_agents=True, include_tools=True)
+        OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
         _TRACING = True
         print("Arize AX tracing enabled for project 'goatlens'")
     except Exception as e:
@@ -58,6 +60,7 @@ from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgen
 from data_sources import YahooFinanceClient, YahooFinanceError
 from temporal import TemporalAnalyzer
 from strategies import calculate_consensus, StrategyResult, Verdict
+from llm import get_llm_client
 
 
 # ============================================================================
@@ -220,13 +223,14 @@ async def run_agents_node(state: GOATState) -> GOATState:
     anchor_years = state["anchor_years"]
     selected = state["selected_agents"]
     
-    # Initialize agents
+    # Initialize agents with LLM client for intelligent analysis
+    llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
     all_agents = {
-        "buffett": BuffettAgent(),
-        "lynch": LynchAgent(),
-        "graham": GrahamAgent(),
-        "munger": MungerAgent(),
-        "dalio": DalioAgent(),
+        "buffett": BuffettAgent(llm_client=llm),
+        "lynch": LynchAgent(llm_client=llm),
+        "graham": GrahamAgent(llm_client=llm),
+        "munger": MungerAgent(llm_client=llm),
+        "dalio": DalioAgent(llm_client=llm),
     }
     
     # Filter to selected agents (or use all)
