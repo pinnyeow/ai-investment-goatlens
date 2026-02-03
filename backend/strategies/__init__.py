@@ -65,20 +65,27 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     else:
         consensus_verdict = Verdict.STRONG_SELL
     
-    # Calculate agreement score based on verdict match
-    verdicts = [r.verdict for r in results]
-    verdict_counts = Counter(verdicts)
-    most_common_count = verdict_counts.most_common(1)[0][1]
+    # Group verdicts by direction (bullish/neutral/bearish)
+    def get_direction(v):
+        if v in (Verdict.STRONG_BUY, Verdict.BUY):
+            return "bullish"
+        elif v == Verdict.HOLD:
+            return "neutral"
+        else:
+            return "bearish"
+    
+    directions = [get_direction(r.verdict) for r in results]
+    direction_counts = Counter(directions)
+    most_common_count = direction_counts.most_common(1)[0][1]
     agreement_score = most_common_count / len(results)
     
-    # Divergence: where verdicts differ
+    # Divergence: where directions differ
     divergence_points = []
-    if len(set(verdicts)) > 1:
-        differing = [v.value for v in set(verdicts)]
-        divergence_points.append(f"Agents split between {' and '.join(differing)}")
+    unique_directions = set(directions)
+    if len(unique_directions) > 1:
+        divergence_points.append(f"Agents split between {' and '.join(unique_directions)}")
     
-    # Consensus points (placeholder - could analyze common insights)
-    consensus_points = [] if len(set(verdicts)) > 1 else ["All agents agree on verdict"]
+    consensus_points = [] if len(unique_directions) > 1 else ["All agents agree on direction"]
     
     return ConsensusResult(
         consensus_verdict=consensus_verdict,
