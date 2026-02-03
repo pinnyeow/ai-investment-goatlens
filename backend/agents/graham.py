@@ -68,23 +68,25 @@ class GrahamAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
-        anchor_years: List[int],
     ) -> Dict[str, Any]:
-        """Perform Graham-style analysis on a company."""
+        """
+        Perform Graham-style analysis on a company.
+        
+        Args:
+            ticker: Stock ticker symbol
+            financials: Historical financial data
+            
+        Returns:
+            Analysis result with verdict, score, and insights
+        """
         metrics = self._calculate_metrics(financials)
         margin_of_safety = self._calculate_margin_of_safety(metrics)
         defensive_criteria = self._check_defensive_criteria(metrics)
         
         # Calculate Graham score
         score = self._calculate_score(metrics, margin_of_safety, defensive_criteria)
-        verdict = self._score_to_verdict(score)
         
-        # Generate LLM-powered insights if client available
-        if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score, verdict)
-        else:
-            insights = self._generate_insights(metrics, margin_of_safety)
-        
+        insights = self._generate_insights(metrics, margin_of_safety)
         concerns = self._identify_concerns(metrics)
         
         return {
@@ -130,7 +132,12 @@ class GrahamAgent:
         )
     
     def _calculate_margin_of_safety(self, metrics: GrahamMetrics) -> Dict[str, Any]:
-        """Calculate margin of safety."""
+        """
+        Calculate margin of safety.
+        
+        Graham insisted on buying securities at a significant discount
+        to their intrinsic value to protect against errors and bad luck.
+        """
         if metrics.current_price <= 0:
             return {
                 "percentage": 0,
@@ -169,7 +176,18 @@ class GrahamAgent:
         }
     
     def _check_defensive_criteria(self, metrics: GrahamMetrics) -> Dict[str, bool]:
-        """Check Graham's defensive investor criteria."""
+        """
+        Check Graham's defensive investor criteria.
+        
+        From "The Intelligent Investor":
+        1. Adequate size (large cap)
+        2. Strong financial condition (current ratio > 2)
+        3. Earnings stability
+        4. Dividend record (20 years)
+        5. Earnings growth
+        6. Moderate P/E (< 15)
+        7. Moderate P/B (< 1.5) or P/E × P/B < 22.5
+        """
         pe_x_pb = metrics.pe_ratio * metrics.pb_ratio
         
         return {
@@ -251,28 +269,12 @@ class GrahamAgent:
         else:
             return "strong_sell"
     
-    async def _generate_llm_insights(
-        self,
-        ticker: str,
-        metrics: GrahamMetrics,
-        margin_of_safety: Dict[str, Any],
-        score: float,
-        verdict: str,
-    ) -> List[str]:
-        """Generate LLM-powered insights using Graham's voice."""
-        prompt = f"""Analyze {ticker}: P/E {metrics.pe_ratio:.1f}, P/B {metrics.pb_ratio:.1f}, Current Ratio {metrics.current_ratio:.1f}, Margin of Safety {margin_of_safety['percentage']:.1%}"""
-        try:
-            response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict)
-            return [response] if response else self._generate_insights(metrics, margin_of_safety)
-        except Exception:
-            return self._generate_insights(metrics, margin_of_safety)
-    
     def _generate_insights(
         self,
         metrics: GrahamMetrics,
         margin_of_safety: Dict[str, Any],
     ) -> List[str]:
-        """Generate key insights from analysis (fallback)."""
+        """Generate key insights from analysis."""
         insights = []
         
         if margin_of_safety["percentage"] >= 0.20:

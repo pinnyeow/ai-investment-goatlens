@@ -73,9 +73,17 @@ class MungerAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
-        anchor_years: List[int],
     ) -> Dict[str, Any]:
-        """Perform Munger-style analysis on a company."""
+        """
+        Perform Munger-style analysis on a company.
+        
+        Args:
+            ticker: Stock ticker symbol
+            financials: Historical financial data
+            
+        Returns:
+            Analysis result with verdict, score, and insights
+        """
         metrics = self._calculate_metrics(financials)
         quality_assessment = self._assess_business_quality(metrics, financials)
         red_flags = self._identify_red_flags(metrics, financials)
@@ -83,13 +91,9 @@ class MungerAgent:
         
         # Calculate Munger score
         score = self._calculate_score(metrics, quality_assessment, red_flags)
-        verdict = self._score_to_verdict(score)
         
-        # Generate LLM-powered insights if client available
-        if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict)
-        else:
-            insights = self._generate_insights(metrics, quality_assessment)
+        insights = self._generate_insights(metrics, quality_assessment)
+        concerns = red_flags  # Munger's concerns ARE the red flags
         
         return {
             "agent": self.name,
@@ -102,7 +106,7 @@ class MungerAgent:
             "red_flags": red_flags,
             "mental_models_applied": mental_models,
             "insights": insights,
-            "concerns": red_flags,  # Munger's concerns ARE the red flags
+            "concerns": concerns,
             "munger_wisdom": self._get_relevant_wisdom(score),
         }
     
@@ -122,7 +126,15 @@ class MungerAgent:
         metrics: MungerMetrics,
         financials: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Assess overall business quality."""
+        """
+        Assess overall business quality.
+        
+        Munger looks for:
+        - Structural competitive advantages
+        - Pricing power
+        - Low capital requirements
+        - Simple, understandable business
+        """
         quality_score = 0
         factors = []
         
@@ -171,7 +183,11 @@ class MungerAgent:
         metrics: MungerMetrics,
         financials: Dict[str, Any],
     ) -> List[str]:
-        """Apply inversion - identify reasons NOT to invest."""
+        """
+        Apply inversion - identify reasons NOT to invest.
+        
+        Munger: "Tell me where I'm going to die, so I won't go there."
+        """
         red_flags = []
         
         # High debt
@@ -203,29 +219,42 @@ class MungerAgent:
         return red_flags
     
     def _apply_mental_models(self, financials: Dict[str, Any]) -> List[Dict[str, str]]:
-        """Apply Munger's multidisciplinary mental models."""
-        return [
-            {
-                "model": "Economic Moat",
-                "discipline": "Business Strategy",
-                "application": "Assessing durability of competitive advantages",
-            },
-            {
-                "model": "Incentive-Caused Bias",
-                "discipline": "Psychology",
-                "application": "Evaluating management incentives and alignment",
-            },
-            {
-                "model": "Margin of Safety",
-                "discipline": "Engineering",
-                "application": "Building in buffer for uncertainty",
-            },
-            {
-                "model": "Circle of Competence",
-                "discipline": "Epistemology",
-                "application": "Staying within areas of understanding",
-            },
-        ]
+        """
+        Apply Munger's multidisciplinary mental models.
+        
+        Munger uses ~100 mental models from various fields.
+        """
+        models_applied = []
+        
+        # Moat Analysis (from Buffett/Competitive Strategy)
+        models_applied.append({
+            "model": "Economic Moat",
+            "discipline": "Business Strategy",
+            "application": "Assessing durability of competitive advantages",
+        })
+        
+        # Incentive Analysis (Psychology)
+        models_applied.append({
+            "model": "Incentive-Caused Bias",
+            "discipline": "Psychology",
+            "application": "Evaluating management incentives and alignment",
+        })
+        
+        # Margin of Safety (Engineering)
+        models_applied.append({
+            "model": "Margin of Safety",
+            "discipline": "Engineering",
+            "application": "Building in buffer for uncertainty",
+        })
+        
+        # Circle of Competence
+        models_applied.append({
+            "model": "Circle of Competence",
+            "discipline": "Epistemology",
+            "application": "Staying within areas of understanding",
+        })
+        
+        return models_applied
     
     def _calculate_score(
         self,
@@ -261,29 +290,12 @@ class MungerAgent:
         else:
             return "strong_sell"
     
-    async def _generate_llm_insights(
-        self,
-        ticker: str,
-        metrics: MungerMetrics,
-        quality_assessment: Dict[str, Any],
-        red_flags: List[str],
-        score: float,
-        verdict: str,
-    ) -> List[str]:
-        """Generate LLM-powered insights using Munger's voice."""
-        prompt = f"""Analyze {ticker}: Gross Margin {metrics.gross_margin:.1%}, Operating Margin {metrics.operating_margin:.1%}, ROIC {metrics.roic:.1%}, Quality {quality_assessment['level']}, Red Flags {len(red_flags)}"""
-        try:
-            response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict)
-            return [response] if response else self._generate_insights(metrics, quality_assessment)
-        except Exception:
-            return self._generate_insights(metrics, quality_assessment)
-    
     def _generate_insights(
         self,
         metrics: MungerMetrics,
         quality_assessment: Dict[str, Any],
     ) -> List[str]:
-        """Generate key insights from analysis (fallback)."""
+        """Generate key insights from analysis."""
         insights = []
         
         if quality_assessment["level"] in ["Exceptional", "High"]:

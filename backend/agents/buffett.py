@@ -62,7 +62,6 @@ class BuffettAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
-        anchor_years: List[int],
     ) -> Dict[str, Any]:
         """
         Perform Buffett-style analysis on a company.
@@ -70,7 +69,6 @@ class BuffettAgent:
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
-            anchor_years: Years to focus analysis on
             
         Returns:
             Analysis result with verdict, score, and insights

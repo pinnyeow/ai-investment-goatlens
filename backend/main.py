@@ -13,10 +13,8 @@ Features:
 
 import os
 import asyncio
-from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
-from opentelemetry import context as otel_context
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -26,34 +24,13 @@ from pathlib import Path
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# --- Arize AX Auto-Instrumentation (MUST be before LangGraph imports) ---
-_TRACING = False
-if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
-    try:
-        from arize.otel import register
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-        from openinference.instrumentation.openai import OpenAIInstrumentor
-        from opentelemetry import trace as trace_api
-        
-        tracer_provider = register(
-            space_id=os.getenv("ARIZE_SPACE_ID"),
-            api_key=os.getenv("ARIZE_API_KEY"),
-            project_name="goatlens"
-        )
-        LangChainInstrumentor().instrument(tracer_provider=tracer_provider)
-        OpenAIInstrumentor().instrument(tracer_provider=tracer_provider)
-        _TRACING = True
-        print("Arize AX tracing enabled for project 'goatlens'")
-    except Exception as e:
-        print(f"Arize tracing setup failed: {e}")
-
-# --- Now import LangGraph (will be auto-instrumented) ---
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+# LangGraph imports
 from langgraph.graph import StateGraph, END
 from typing_extensions import TypedDict
 
@@ -61,7 +38,7 @@ from typing_extensions import TypedDict
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
 from data_sources import YahooFinanceClient, YahooFinanceError
 from temporal import TemporalAnalyzer
-from strategies import calculate_consensus, StrategyResult, Verdict
+from strategies import calculate_consensus, calculate_consensus_with_llm, StrategyResult, Verdict
 from llm import get_llm_client
 
 
@@ -80,24 +57,6 @@ class AnalysisRequest(BaseModel):
         default=None,
         description="Specific agents to run (default: all)",
     )
-
-
-def get_years_from_period(period: str) -> List[int]:
-    """Convert time period to anchor years for analysis."""
-    current_year = datetime.now().year
-    
-    if period == "ytd":
-        return [current_year - 1, current_year]
-    elif period == "3m":
-        return [current_year - 1, current_year]
-    elif period == "6m":
-        return [current_year - 1, current_year]
-    elif period == "1y":
-        return [current_year - 1, current_year]
-    elif period == "5y":
-        return [current_year - 5, current_year - 2, current_year]
-    else:
-        return [current_year - 1, current_year]
 
 
 class AgentResult(BaseModel):
@@ -127,7 +86,6 @@ class AnalysisResponse(BaseModel):
     
     # Temporal analysis
     moat_trend: str
-    anchor_year_comparison: Dict[str, Any]
     
     # GOAT comparison table
     comparison_table: Dict[str, Any]
@@ -141,13 +99,11 @@ class GOATState(TypedDict):
     """State passed through the LangGraph workflow."""
     ticker: str
     time_period: str
-    anchor_years: List[int]
     selected_agents: List[str]
     
     # Data
     raw_data: Optional[Dict[str, Any]]
     normalized_data: Optional[Dict[str, Any]]
-    anchor_year_data: Optional[Dict[int, Dict[str, Any]]]
     
     # Temporal analysis
     temporal_results: Optional[Dict[str, Any]]
@@ -168,17 +124,14 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     Node: Fetch all financial data from Yahoo Finance.
     """
     ticker = state["ticker"]
-    anchor_years = state["anchor_years"]
     
     try:
         async with YahooFinanceClient() as client:
             raw_data = await client.get_company_data(ticker, years=10)
             normalized = client.normalize_data(raw_data)
-            anchor_data = client.extract_anchor_year_data(raw_data, anchor_years)
         
         state["raw_data"] = raw_data
         state["normalized_data"] = normalized.__dict__
-        state["anchor_year_data"] = anchor_data
         
     except YahooFinanceError as e:
         state["error"] = f"Data fetch failed: {str(e)}"
@@ -188,26 +141,21 @@ async def fetch_data_node(state: GOATState) -> GOATState:
 
 async def temporal_analysis_node(state: GOATState) -> GOATState:
     """
-    Node: Perform time-travel analysis.
+    Node: Calculate moat strength/trend based on time period.
     """
     if state.get("error"):
         return state
     
     analyzer = TemporalAnalyzer()
-    anchor_years = state["anchor_years"]
-    anchor_data = state["anchor_year_data"]
+    time_period = state["time_period"]
+    financials = state.get("normalized_data", {})
     
-    if not anchor_data:
-        state["temporal_results"] = {"error": "No anchor year data available"}
-        return state
-    
-    comparison = analyzer.compare_anchor_years(anchor_years, anchor_data)
+    moat_result = analyzer.calculate_moat_from_period(time_period, financials)
     
     state["temporal_results"] = {
-        "comparison": comparison,
-        "moat_trend": comparison["moat_analysis"].overall_trend.value,
-        "moat_observations": comparison["moat_analysis"].key_observations,
-        "risk_factors": comparison["moat_analysis"].risk_factors,
+        "moat_trend": moat_result["label"],
+        "moat_score": moat_result["score"],
+        "moat_observations": moat_result.get("observations", []),
     }
     
     return state
@@ -222,10 +170,9 @@ async def run_agents_node(state: GOATState) -> GOATState:
     
     ticker = state["ticker"]
     financials = state["normalized_data"]
-    anchor_years = state["anchor_years"]
     selected = state["selected_agents"]
     
-    # Initialize agents with LLM client for intelligent analysis
+    # Initialize agents with LLM client
     llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
     all_agents = {
         "buffett": BuffettAgent(llm_client=llm),
@@ -241,17 +188,9 @@ async def run_agents_node(state: GOATState) -> GOATState:
     else:
         agents = all_agents
     
-    # Run all agents in parallel with trace context propagation
-    current_ctx = otel_context.get_current()
+    # Run all agents in parallel
+    tasks = [agent.analyze(ticker, financials) for agent in agents.values()]
     
-    async def run_with_trace(agent):
-        token = otel_context.attach(current_ctx)
-        try:
-            return await agent.analyze(ticker, financials, anchor_years)
-        finally:
-            otel_context.detach(token)
-    
-    tasks = [asyncio.create_task(run_with_trace(agent)) for agent in agents.values()]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
     # Process results
@@ -292,7 +231,8 @@ async def synthesize_node(state: GOATState) -> GOATState:
             score=result.get("score", 0),
         ))
     
-    consensus = calculate_consensus(strategy_results)
+    llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
+    consensus = await calculate_consensus_with_llm(strategy_results, llm, state["ticker"]) if llm else calculate_consensus(strategy_results)
     
     state["consensus"] = {
         "verdict": consensus.consensus_verdict.value,
@@ -391,6 +331,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 async def root():
     """Serve the frontend."""
@@ -421,19 +362,15 @@ async def analyze_company(request: AnalysisRequest):
     if not goat_workflow:
         raise HTTPException(status_code=503, detail="Workflow not initialized")
     
-    # Convert time period to anchor years
     time_period = request.time_period or "1y"
-    anchor_years = get_years_from_period(time_period)
     
     # Initialize state
     initial_state: GOATState = {
         "ticker": request.ticker.upper(),
         "time_period": time_period,
-        "anchor_years": anchor_years,
         "selected_agents": request.agents or [],
         "raw_data": None,
         "normalized_data": None,
-        "anchor_year_data": None,
         "temporal_results": None,
         "agent_results": [],
         "consensus": None,
@@ -441,14 +378,9 @@ async def analyze_company(request: AnalysisRequest):
         "error": None,
     }
     
-    # Run workflow with root trace span
+    # Run workflow
     try:
-        from opentelemetry import trace as trace_api
-        tracer = trace_api.get_tracer("goatlens")
-        with tracer.start_as_current_span(f"analyze_{request.ticker.upper()}") as span:
-            span.set_attribute("ticker", request.ticker.upper())
-            span.set_attribute("time_period", time_period)
-            final_state = await goat_workflow.ainvoke(initial_state)
+        final_state = await goat_workflow.ainvoke(initial_state)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
     
@@ -481,7 +413,6 @@ async def analyze_company(request: AnalysisRequest):
             for r in report["agent_results"]
         ],
         moat_trend=temporal.get("moat_trend", "unknown"),
-        anchor_year_comparison=temporal.get("comparison", {}),
         comparison_table=report["comparison_table"],
     )
 
@@ -622,15 +553,6 @@ async def demo_analysis():
             },
         ],
         "moat_trend": "stable",
-        "anchor_year_comparison": {
-            "years": [2014, 2019, 2024],
-            "metrics": {
-                "revenue": {2014: 182795000000, 2019: 260174000000, 2024: 383285000000},
-                "net_income": {2014: 39510000000, 2019: 55256000000, 2024: 96995000000},
-                "gross_margin": {2014: 0.387, 2019: 0.378, 2024: 0.438},
-            },
-            "revenue_cagr": 0.077,
-        },
         "comparison_table": {
             "agents": [
                 {"name": "Warren Buffett", "style": "Value", "verdict": "buy", "score": 65},
