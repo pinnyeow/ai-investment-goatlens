@@ -68,6 +68,9 @@ class GrahamAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
+        *,
+        earnings_data: Optional[List[Dict]] = None,
+        earnings_streak: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Perform Graham-style analysis on a company.
@@ -75,6 +78,8 @@ class GrahamAgent:
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
+            earnings_data: List of quarterly earnings (actual vs estimate)
+            earnings_streak: Streak summary dict
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -83,11 +88,16 @@ class GrahamAgent:
         margin_of_safety = self._calculate_margin_of_safety(metrics)
         defensive_criteria = self._check_defensive_criteria(metrics)
         
-        # Calculate Graham score
-        score = self._calculate_score(metrics, margin_of_safety, defensive_criteria)
+        # Calculate Graham score with earnings stability bonus
+        earnings_bonus = self._earnings_stability_bonus(earnings_data or [], earnings_streak or {})
+        score = self._calculate_score(metrics, margin_of_safety, defensive_criteria) + earnings_bonus
+        score = round(max(-100, min(100, score)), 2)
         
         insights = self._generate_insights(metrics, margin_of_safety)
+        insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
+        
         concerns = self._identify_concerns(metrics)
+        concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
         
         return {
             "agent": self.name,
@@ -313,6 +323,81 @@ class GrahamAgent:
         
         return concerns
     
+    # ------------------------------------------------------------------
+    # Earnings-aware methods (Graham: STABILITY & no negative surprises)
+    # ------------------------------------------------------------------
+
+    def _earnings_stability_bonus(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> float:
+        """
+        Graham demands earnings stability — no nasty surprises.
+        He cares less about beating estimates and more about
+        never missing them badly.
+        """
+        if not earnings_data:
+            return 0.0
+
+        bonus = 0.0
+        misses = earnings_streak.get("misses", 0)
+        total = earnings_streak.get("total", 0)
+
+        # Low miss rate = stable earnings (max 10 pts)
+        if total >= 4:
+            miss_rate = misses / total
+            if miss_rate == 0:
+                bonus += 10  # Perfect — never missed
+            elif miss_rate <= 0.25:
+                bonus += 5
+            elif miss_rate >= 0.50:
+                bonus -= 10  # Unstable — Graham avoids
+
+        # Large negative surprises are a big red flag for Graham
+        large_misses = sum(1 for e in earnings_data if e.get("surprise_pct", 0) < -5.0)
+        if large_misses >= 2:
+            bonus -= 10
+
+        return bonus
+
+    def _earnings_insights(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Graham-style earnings insights."""
+        insights = []
+        misses = earnings_streak.get("misses", 0)
+        total = earnings_streak.get("total", 0)
+
+        if total >= 4 and misses == 0:
+            insights.append(f"No earnings misses in {total} quarters — meets Graham's stability requirement")
+        elif total >= 4 and misses / total <= 0.25:
+            insights.append(f"Low miss rate ({misses}/{total}) — reasonably stable earnings")
+        return insights
+
+    def _earnings_concerns(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Graham-style earnings concerns."""
+        concerns = []
+        misses = earnings_streak.get("misses", 0)
+        total = earnings_streak.get("total", 0)
+
+        large_misses = [e for e in earnings_data if e.get("surprise_pct", 0) < -5.0]
+        if large_misses:
+            worst = min(large_misses, key=lambda x: x.get("surprise_pct", 0))
+            concerns.append(
+                f"Large earnings miss in {worst.get('quarter', '?')} "
+                f"({worst.get('surprise_pct', 0):.1f}%) — threatens margin of safety"
+            )
+        if total >= 4 and misses / total >= 0.50:
+            concerns.append(f"Unstable earnings — missed {misses}/{total} quarters")
+        return concerns
+
     def _get_relevant_quote(self, margin_of_safety: Dict[str, Any]) -> str:
         """Get a relevant Graham quote based on the analysis."""
         if margin_of_safety["percentage"] >= 0.33:

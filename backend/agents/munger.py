@@ -73,6 +73,9 @@ class MungerAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
+        *,
+        earnings_data: Optional[List[Dict]] = None,
+        earnings_streak: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Perform Munger-style analysis on a company.
@@ -80,6 +83,8 @@ class MungerAgent:
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
+            earnings_data: List of quarterly earnings (actual vs estimate)
+            earnings_streak: Streak summary dict
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -89,11 +94,16 @@ class MungerAgent:
         red_flags = self._identify_red_flags(metrics, financials)
         mental_models = self._apply_mental_models(financials)
         
-        # Calculate Munger score
-        score = self._calculate_score(metrics, quality_assessment, red_flags)
+        # Calculate Munger score with earnings quality adjustment
+        earnings_adj = self._earnings_quality_adjustment(earnings_data or [], earnings_streak or {})
+        score = self._calculate_score(metrics, quality_assessment, red_flags) + earnings_adj
+        score = round(max(-100, min(100, score)), 2)
         
         insights = self._generate_insights(metrics, quality_assessment)
-        concerns = red_flags  # Munger's concerns ARE the red flags
+        insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
+        
+        concerns = list(red_flags)  # Copy so we don't modify the original
+        concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
         
         return {
             "agent": self.name,
@@ -312,6 +322,86 @@ class MungerAgent:
         
         return insights
     
+    # ------------------------------------------------------------------
+    # Earnings-aware methods (Munger: QUALITY signal & red-flag avoidance)
+    # ------------------------------------------------------------------
+
+    def _earnings_quality_adjustment(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> float:
+        """
+        Munger uses earnings as a quality signal.
+        Consistent beats → quality business that manages expectations.
+        Erratic results → possible red flag (complex accounting?).
+        """
+        if not earnings_data:
+            return 0.0
+
+        adj = 0.0
+        beats = earnings_streak.get("beats", 0)
+        misses = earnings_streak.get("misses", 0)
+        total = earnings_streak.get("total", 0)
+
+        # Quality businesses consistently beat (max 10 pts)
+        if total >= 4:
+            beat_rate = beats / total
+            if beat_rate >= 0.80:
+                adj += 10
+            elif beat_rate >= 0.60:
+                adj += 5
+
+        # Erratic earnings are a red flag (Munger hates complexity)
+        if total >= 4:
+            # Check variance in surprise %
+            surprises = [abs(e.get("surprise_pct", 0)) for e in earnings_data]
+            if surprises:
+                avg_surprise = sum(surprises) / len(surprises)
+                if avg_surprise > 10:
+                    adj -= 10  # Too volatile — something complex going on
+
+        # Frequent misses → red flag
+        if total > 0 and misses / total >= 0.50:
+            adj -= 15
+
+        return adj
+
+    def _earnings_insights(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Munger-style earnings insights."""
+        insights = []
+        beats = earnings_streak.get("beats", 0)
+        total = earnings_streak.get("total", 0)
+
+        if total >= 4 and beats / total >= 0.80:
+            insights.append("Predictable earnings indicate quality management (Munger: 'quality over cheapness')")
+        return insights
+
+    def _earnings_concerns(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Munger-style earnings concerns (red flags)."""
+        concerns = []
+        misses = earnings_streak.get("misses", 0)
+        total = earnings_streak.get("total", 0)
+
+        if total >= 4 and misses / total >= 0.50:
+            concerns.append("Frequent earnings misses — possible red flag: complex accounting or deteriorating business")
+
+        # Check for wild swings
+        if len(earnings_data) >= 4:
+            surprises = [abs(e.get("surprise_pct", 0)) for e in earnings_data]
+            avg = sum(surprises) / len(surprises)
+            if avg > 10:
+                concerns.append("Erratic earnings surprises — low predictability (Munger: 'Avoid what you can't understand')")
+        return concerns
+
     def _get_relevant_wisdom(self, score: float) -> str:
         """Get a relevant Munger quote based on the analysis."""
         if score >= 60:

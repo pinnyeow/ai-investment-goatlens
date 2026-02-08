@@ -72,6 +72,9 @@ class LynchAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
+        *,
+        earnings_data: Optional[List[Dict]] = None,
+        earnings_streak: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Perform Lynch-style analysis on a company.
@@ -79,6 +82,8 @@ class LynchAgent:
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
+            earnings_data: List of quarterly earnings (actual vs estimate)
+            earnings_streak: Streak summary dict
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -87,11 +92,16 @@ class LynchAgent:
         category = self._categorize_stock(metrics)
         ten_bagger_potential = self._assess_ten_bagger_potential(metrics, financials)
         
-        # Calculate Lynch score
-        score = self._calculate_score(metrics, category, ten_bagger_potential)
+        # Calculate Lynch score with earnings momentum bonus
+        earnings_bonus = self._earnings_momentum_bonus(earnings_data or [], earnings_streak or {})
+        score = self._calculate_score(metrics, category, ten_bagger_potential) + earnings_bonus
+        score = round(max(-100, min(100, score)), 2)
         
         insights = self._generate_insights(metrics, category)
+        insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
+        
         concerns = self._identify_concerns(metrics)
+        concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
         
         return {
             "agent": self.name,
@@ -269,6 +279,83 @@ class LynchAgent:
         
         return concerns
     
+    # ------------------------------------------------------------------
+    # Earnings-aware methods (Lynch: earnings MOMENTUM & surprises)
+    # ------------------------------------------------------------------
+
+    def _earnings_momentum_bonus(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> float:
+        """
+        Lynch loves earnings acceleration. Consecutive beats
+        signal the 'earnings story' is intact for fast growers.
+        """
+        if not earnings_data:
+            return 0.0
+
+        bonus = 0.0
+        streak_type = earnings_streak.get("streak_type", "")
+        streak_count = earnings_streak.get("streak_count", 0)
+
+        # Momentum bonus — Lynch wants the earnings story improving (max 15 pts)
+        if streak_type == "beat" and streak_count >= 4:
+            bonus += 15
+        elif streak_type == "beat" and streak_count >= 2:
+            bonus += 8
+
+        # Big positive surprises signal hidden growth (max 5 pts)
+        big_surprises = sum(1 for e in earnings_data if e.get("surprise_pct", 0) > 5.0)
+        if big_surprises >= 2:
+            bonus += 5
+
+        # Consecutive misses are a red flag for Lynch — the story is broken
+        if streak_type == "miss" and streak_count >= 2:
+            bonus -= 15
+
+        return bonus
+
+    def _earnings_insights(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Lynch-style earnings insights."""
+        insights = []
+        streak_type = earnings_streak.get("streak_type", "")
+        streak_count = earnings_streak.get("streak_count", 0)
+
+        if streak_type == "beat" and streak_count >= 3:
+            insights.append(f"Earnings story intact: {streak_count} consecutive beats — classic Lynch momentum signal")
+
+        # Look for accelerating surprises
+        if len(earnings_data) >= 2:
+            recent = earnings_data[0].get("surprise_pct", 0)
+            prior = earnings_data[1].get("surprise_pct", 0)
+            if recent > prior and recent > 0:
+                insights.append("Accelerating earnings surprises — growth may be underestimated")
+        return insights
+
+    def _earnings_concerns(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Lynch-style earnings concerns."""
+        concerns = []
+        streak_type = earnings_streak.get("streak_type", "")
+        streak_count = earnings_streak.get("streak_count", 0)
+
+        if streak_type == "miss" and streak_count >= 2:
+            concerns.append(f"Earnings story broken — missed {streak_count} consecutive quarters")
+        elif len(earnings_data) >= 2:
+            recent = earnings_data[0].get("surprise_pct", 0)
+            prior = earnings_data[1].get("surprise_pct", 0)
+            if recent < prior and recent < 0:
+                concerns.append("Decelerating earnings — the growth story may be fading")
+        return concerns
+
     def _get_relevant_tip(self, category: str) -> str:
         """Get a relevant Lynch tip based on stock category."""
         tips = {

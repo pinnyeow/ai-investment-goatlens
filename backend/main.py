@@ -81,6 +81,89 @@ class AgentResult(BaseModel):
     concerns: List[str]
 
 
+class EarningsQuarter(BaseModel):
+    """Earnings data for a single quarter."""
+    quarter: str = Field(description="Quarter label, e.g. Q4 2025")
+    date: str = Field(description="Earnings report date YYYY-MM-DD")
+    eps_actual: Optional[float] = Field(default=None, description="Reported EPS")
+    eps_estimate: Optional[float] = Field(default=None, description="Consensus EPS estimate")
+    eps_surprise: Optional[float] = Field(default=None, description="EPS surprise (actual - estimate)")
+    surprise_pct: Optional[float] = Field(default=None, description="Surprise as percentage")
+    beat_miss: str = Field(default="unknown", description="beat, miss, or inline")
+
+
+class EarningsStreak(BaseModel):
+    """Summary of earnings beat/miss track record."""
+    streak_type: str = Field(description="Current streak: beat, miss, inline, or unknown")
+    streak_count: int = Field(description="Number of consecutive quarters in current streak")
+    beats: int = Field(description="Total beats in history")
+    misses: int = Field(description="Total misses in history")
+    inline: int = Field(description="Total inline results")
+    total: int = Field(description="Total quarters with data")
+    summary: str = Field(description="Human-readable summary")
+
+
+class PricePoint(BaseModel):
+    """Single day of price data."""
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+class EarningsMarker(BaseModel):
+    """Earnings event marker for overlaying on a price chart."""
+    quarter: str
+    date: str
+    eps_actual: Optional[float] = None
+    eps_estimate: Optional[float] = None
+    surprise_pct: Optional[float] = None
+    beat_miss: str = "unknown"
+    price_reaction_1d: Optional[float] = None
+    price_reaction_5d: Optional[float] = None
+
+
+class PriceHistoryResponse(BaseModel):
+    """Price history with earnings overlays for charting."""
+    ticker: str
+    period: str
+    prices: List[PricePoint]
+    earnings_markers: List[EarningsMarker]
+    next_earnings_date: Optional[str] = None
+
+
+class EarningsReactionInsight(BaseModel):
+    """Per-quarter reaction insight explaining why the stock moved."""
+    quarter: str = ""
+    date: str = ""
+    eps_beat_miss: str = "unknown"
+    eps_surprise_pct: Optional[float] = None
+    price_reaction_1d: Optional[float] = None
+    price_reaction_5d: Optional[float] = None
+    pre_earnings_runup: Optional[float] = None
+    analyst_upgrades: int = 0
+    analyst_downgrades: int = 0
+    analyst_maintains: int = 0
+    revenue_growth_yoy: Optional[float] = None
+    guidance_signal: str = "unknown"
+    insight: str = ""
+
+
+class ForwardGuidanceSummary(BaseModel):
+    """Forward-looking guidance summary from analyst estimates."""
+    current_q_eps_growth: Optional[float] = None
+    next_q_eps_growth: Optional[float] = None
+    current_q_rev_growth: Optional[float] = None
+    next_q_rev_growth: Optional[float] = None
+    growth_trend: str = "unknown"
+    analyst_price_target_mean: Optional[float] = None
+    analyst_price_target_upside_pct: Optional[float] = None
+    num_analysts: Optional[int] = None
+    summary: str = ""
+
+
 class AnalysisResponse(BaseModel):
     """Complete analysis response."""
     ticker: str
@@ -101,6 +184,13 @@ class AnalysisResponse(BaseModel):
     
     # GOAT comparison table
     comparison_table: Dict[str, Any]
+    
+    # Earnings history
+    earnings_history: List[EarningsQuarter] = Field(default_factory=list)
+    earnings_streak: Optional[EarningsStreak] = None
+    
+    # Next earnings date
+    next_earnings_date: Optional[str] = None
 
 
 # ============================================================================
@@ -116,6 +206,10 @@ class GOATState(TypedDict):
     # Data
     raw_data: Optional[Dict[str, Any]]
     normalized_data: Optional[Dict[str, Any]]
+    
+    # Earnings data (actual vs. consensus)
+    earnings_data: Optional[List[Dict[str, Any]]]
+    earnings_streak: Optional[Dict[str, Any]]
     
     # Temporal analysis
     temporal_results: Optional[Dict[str, Any]]
@@ -133,7 +227,8 @@ class GOATState(TypedDict):
 
 async def fetch_data_node(state: GOATState) -> GOATState:
     """
-    Node: Fetch all financial data from Yahoo Finance.
+    Node: Fetch all financial data from Yahoo Finance,
+    including earnings history (actual vs. consensus).
     """
     ticker = state["ticker"]
     
@@ -141,9 +236,15 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         async with YahooFinanceClient() as client:
             raw_data = await client.get_company_data(ticker, years=10)
             normalized = client.normalize_data(raw_data)
+            
+            # Extract earnings history (EPS actual vs. estimate)
+            earnings = client.normalize_earnings(raw_data)
+            streak = client.get_earnings_streak(earnings)
         
         state["raw_data"] = raw_data
         state["normalized_data"] = normalized.__dict__
+        state["earnings_data"] = earnings
+        state["earnings_streak"] = streak
         
     except YahooFinanceError as e:
         state["error"] = f"Data fetch failed: {str(e)}"
@@ -176,6 +277,7 @@ async def temporal_analysis_node(state: GOATState) -> GOATState:
 async def run_agents_node(state: GOATState) -> GOATState:
     """
     Node: Run all GOAT agents in parallel.
+    Now passes earnings data so agents can factor beat/miss history.
     """
     if state.get("error"):
         return state
@@ -183,6 +285,8 @@ async def run_agents_node(state: GOATState) -> GOATState:
     ticker = state["ticker"]
     financials = state["normalized_data"]
     selected = state["selected_agents"]
+    earnings_data = state.get("earnings_data") or []
+    earnings_streak = state.get("earnings_streak") or {}
     
     # Initialize agents with LLM client
     llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
@@ -206,7 +310,7 @@ async def run_agents_node(state: GOATState) -> GOATState:
     async def run_with_context(agent):
         token = otel_context.attach(current_ctx)
         try:
-            return await agent.analyze(ticker, financials)
+            return await agent.analyze(ticker, financials, earnings_data=earnings_data, earnings_streak=earnings_streak)
         finally:
             otel_context.detach(token)
     
@@ -277,15 +381,28 @@ async def synthesize_node(state: GOATState) -> GOATState:
     # Build final report
     raw_data = state.get("raw_data", {})
     profile = raw_data.get("profile", {})
+    # Yahoo Finance uses 'info' instead of 'profile'
+    info = raw_data.get("info", {})
+    
+    # Fetch next earnings date (lightweight call)
+    next_earnings = None
+    try:
+        async with YahooFinanceClient() as client:
+            next_earnings = await client.get_next_earnings_date(state["ticker"])
+    except Exception:
+        pass
     
     state["final_report"] = {
         "ticker": state["ticker"],
-        "company_name": profile.get("companyName", state["ticker"]),
-        "sector": profile.get("sector", "Unknown"),
+        "company_name": info.get("longName", info.get("shortName", profile.get("companyName", state["ticker"]))),
+        "sector": info.get("sector", profile.get("sector", "Unknown")),
         "consensus": state["consensus"],
         "agent_results": agent_results,
         "temporal_results": state.get("temporal_results", {}),
         "comparison_table": comparison_table,
+        "earnings_data": state.get("earnings_data", []),
+        "earnings_streak": state.get("earnings_streak", {}),
+        "next_earnings_date": next_earnings,
     }
     
     return state
@@ -354,8 +471,11 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    """Serve the frontend."""
-    return FileResponse("../frontend/index.html")
+    """Serve the frontend (no-cache so changes appear immediately)."""
+    return FileResponse(
+        "../frontend/index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/health")
@@ -391,6 +511,8 @@ async def analyze_company(request: AnalysisRequest):
         "selected_agents": request.agents or [],
         "raw_data": None,
         "normalized_data": None,
+        "earnings_data": None,
+        "earnings_streak": None,
         "temporal_results": None,
         "agent_results": [],
         "consensus": None,
@@ -413,6 +535,13 @@ async def analyze_company(request: AnalysisRequest):
     consensus = final_state["consensus"]
     temporal = final_state.get("temporal_results", {})
     
+    # Build earnings response
+    earnings_history = [
+        EarningsQuarter(**eq) for eq in report.get("earnings_data", [])
+    ]
+    streak_data = report.get("earnings_streak", {})
+    earnings_streak_obj = EarningsStreak(**streak_data) if streak_data and streak_data.get("total", 0) > 0 else None
+    
     return AnalysisResponse(
         ticker=report["ticker"],
         company_name=report["company_name"],
@@ -434,6 +563,9 @@ async def analyze_company(request: AnalysisRequest):
         ],
         moat_trend=temporal.get("moat_trend", "unknown"),
         comparison_table=report["comparison_table"],
+        earnings_history=earnings_history,
+        earnings_streak=earnings_streak_obj,
+        next_earnings_date=report.get("next_earnings_date"),
     )
 
 
@@ -479,6 +611,123 @@ async def list_agents():
             },
         ]
     }
+
+
+@app.get("/api/earnings/{ticker}")
+async def get_earnings(ticker: str):
+    """
+    Get earnings history for a ticker (standalone endpoint).
+    
+    Returns last 8 quarters of EPS actual vs. consensus estimate,
+    beat/miss classification, streak summary, price reactions,
+    per-quarter reaction insights, forward guidance summary,
+    and the next upcoming earnings date.
+    Free data from Yahoo Finance — no API key required.
+    """
+    ticker = ticker.upper()
+    
+    try:
+        async with YahooFinanceClient() as client:
+            # Fetch all data in parallel
+            raw_task = client.get_company_data(ticker, years=1)
+            price_task = client.get_price_history(ticker, period="2y")
+            analyst_task = client.get_analyst_reactions(ticker)
+            revenue_task = client.get_quarterly_revenue(ticker)
+            estimates_task = client.get_forward_estimates(ticker)
+            next_earnings_task = client.get_next_earnings_date(ticker)
+
+            raw_data, price_history, analyst_reactions, quarterly_revenue, \
+                forward_estimates, next_earnings = await asyncio.gather(
+                    raw_task, price_task, analyst_task, revenue_task,
+                    estimates_task, next_earnings_task,
+                )
+
+            # Normalize earnings & streak
+            earnings = client.normalize_earnings(raw_data)
+            streak = client.get_earnings_streak(earnings)
+
+            # Enrich with price reactions
+            earnings = client.calculate_earnings_reactions(price_history, earnings)
+
+            # Build per-quarter reaction insights
+            reaction_insights = client.build_earnings_insights(
+                earnings, price_history, analyst_reactions, quarterly_revenue,
+            )
+
+            # Build forward guidance summary
+            normalized = client.normalize_data(raw_data)
+            forward_guidance = client.build_forward_guidance_summary(
+                forward_estimates, current_price=normalized.current_price,
+            )
+    except YahooFinanceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Earnings fetch failed: {str(e)}")
+
+    return {
+        "ticker": ticker,
+        "earnings_history": earnings,
+        "earnings_streak": streak,
+        "reaction_insights": reaction_insights,
+        "forward_guidance": forward_guidance,
+        "next_earnings_date": next_earnings,
+    }
+
+
+@app.get("/api/price-history/{ticker}", response_model=PriceHistoryResponse)
+async def get_price_history(ticker: str, period: str = "2y"):
+    """
+    Get historical price data with earnings markers for charting.
+    
+    Returns daily OHLCV prices and earnings date markers (with
+    price reaction calculations) for overlay on a chart.
+    
+    Query params:
+        period: 1mo, 3mo, 6mo, 1y, 2y, 5y, ytd (default: 2y)
+    """
+    ticker = ticker.upper()
+    valid_periods = {"1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd"}
+    if period not in valid_periods:
+        period = "2y"
+    
+    try:
+        async with YahooFinanceClient() as client:
+            # Fetch price history and earnings in parallel
+            price_task = client.get_price_history(ticker, period=period)
+            data_task = client.get_company_data(ticker, years=1)
+            next_earnings_task = client.get_next_earnings_date(ticker)
+            
+            prices, raw_data, next_earnings = await asyncio.gather(
+                price_task, data_task, next_earnings_task
+            )
+            
+            # Normalize earnings and calculate reactions
+            earnings = client.normalize_earnings(raw_data)
+            earnings_with_reactions = client.calculate_earnings_reactions(prices, earnings)
+    except YahooFinanceError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch price data: {str(e)}")
+    
+    return PriceHistoryResponse(
+        ticker=ticker,
+        period=period,
+        prices=[PricePoint(**p) for p in prices],
+        earnings_markers=[
+            EarningsMarker(
+                quarter=e.get("quarter", ""),
+                date=e.get("date", ""),
+                eps_actual=e.get("eps_actual"),
+                eps_estimate=e.get("eps_estimate"),
+                surprise_pct=e.get("surprise_pct"),
+                beat_miss=e.get("beat_miss", "unknown"),
+                price_reaction_1d=e.get("price_reaction_1d"),
+                price_reaction_5d=e.get("price_reaction_5d"),
+            )
+            for e in earnings_with_reactions
+        ],
+        next_earnings_date=next_earnings,
+    )
 
 
 @app.get("/api/demo")
@@ -582,6 +831,24 @@ async def demo_analysis():
                 {"name": "Ray Dalio", "style": "Macro", "verdict": "buy", "score": 55},
             ]
         },
+        "earnings_history": [
+            {"quarter": "Q4 2025", "date": "2026-01-30", "eps_actual": 2.40, "eps_estimate": 2.36, "eps_surprise": 0.04, "surprise_pct": 1.7, "beat_miss": "beat"},
+            {"quarter": "Q3 2025", "date": "2025-10-30", "eps_actual": 1.64, "eps_estimate": 1.60, "eps_surprise": 0.04, "surprise_pct": 2.5, "beat_miss": "beat"},
+            {"quarter": "Q2 2025", "date": "2025-08-01", "eps_actual": 1.40, "eps_estimate": 1.35, "eps_surprise": 0.05, "surprise_pct": 3.7, "beat_miss": "beat"},
+            {"quarter": "Q1 2025", "date": "2025-05-01", "eps_actual": 1.65, "eps_estimate": 1.62, "eps_surprise": 0.03, "surprise_pct": 1.9, "beat_miss": "beat"},
+            {"quarter": "Q4 2024", "date": "2025-01-30", "eps_actual": 2.18, "eps_estimate": 2.14, "eps_surprise": 0.04, "surprise_pct": 1.9, "beat_miss": "beat"},
+            {"quarter": "Q3 2024", "date": "2024-10-31", "eps_actual": 1.55, "eps_estimate": 1.50, "eps_surprise": 0.05, "surprise_pct": 3.3, "beat_miss": "beat"},
+        ],
+        "earnings_streak": {
+            "streak_type": "beat",
+            "streak_count": 6,
+            "beats": 6,
+            "misses": 0,
+            "inline": 0,
+            "total": 6,
+            "summary": "Strong momentum: Beat 6 consecutive quarters",
+        },
+        "next_earnings_date": "2026-04-30",
     }
 
 

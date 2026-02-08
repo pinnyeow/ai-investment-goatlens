@@ -62,6 +62,9 @@ class BuffettAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
+        *,
+        earnings_data: Optional[List[Dict]] = None,
+        earnings_streak: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Perform Buffett-style analysis on a company.
@@ -69,6 +72,8 @@ class BuffettAgent:
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
+            earnings_data: List of quarterly earnings (actual vs estimate)
+            earnings_streak: Streak summary dict
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -77,8 +82,10 @@ class BuffettAgent:
         moat_analysis = self._assess_moat(metrics)
         management_quality = self._assess_management(financials)
         
-        # Calculate Buffett score
-        score = self._calculate_score(metrics, moat_analysis, management_quality)
+        # Calculate Buffett score (now includes earnings consistency bonus)
+        earnings_bonus = self._earnings_consistency_bonus(earnings_data or [], earnings_streak or {})
+        score = self._calculate_score(metrics, moat_analysis, management_quality) + earnings_bonus
+        score = round(max(-100, min(100, score)), 2)
         verdict = self._score_to_verdict(score)
         
         # Generate LLM-powered insights if client available
@@ -87,7 +94,11 @@ class BuffettAgent:
         else:
             insights = self._generate_insights(metrics, moat_analysis)
         
+        # Add earnings-specific insights
+        insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
+        
         concerns = self._identify_concerns(metrics)
+        concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
         
         return {
             "agent": self.name,
@@ -246,6 +257,80 @@ class BuffettAgent:
         
         return concerns
     
+    # ------------------------------------------------------------------
+    # Earnings-aware methods (Buffett: values CONSISTENCY of earnings)
+    # ------------------------------------------------------------------
+
+    def _earnings_consistency_bonus(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> float:
+        """
+        Buffett rewards predictable earnings power.
+        Consistent beats = management under-promises and over-delivers.
+        """
+        if not earnings_data:
+            return 0.0
+
+        bonus = 0.0
+        total = earnings_streak.get("total", 0)
+        beats = earnings_streak.get("beats", 0)
+        streak_count = earnings_streak.get("streak_count", 0)
+        streak_type = earnings_streak.get("streak_type", "")
+
+        # Beat rate — Buffett loves consistency (max 10 pts)
+        if total > 0:
+            beat_rate = beats / total
+            if beat_rate >= 0.80:
+                bonus += 10
+            elif beat_rate >= 0.60:
+                bonus += 5
+
+        # Consecutive beat streak bonus (max 5 pts)
+        if streak_type == "beat" and streak_count >= 4:
+            bonus += 5
+        elif streak_type == "miss" and streak_count >= 2:
+            bonus -= 10  # Buffett worries about deteriorating earnings
+
+        return bonus
+
+    def _earnings_insights(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Buffett-style earnings insights."""
+        insights = []
+        beats = earnings_streak.get("beats", 0)
+        total = earnings_streak.get("total", 0)
+        streak_type = earnings_streak.get("streak_type", "")
+        streak_count = earnings_streak.get("streak_count", 0)
+
+        if total >= 4 and beats / total >= 0.80:
+            insights.append(f"Consistent earnings beats ({beats}/{total} quarters) — predictable earnings power")
+        if streak_type == "beat" and streak_count >= 4:
+            insights.append(f"Beat consensus {streak_count} consecutive quarters — management credibility")
+        return insights
+
+    def _earnings_concerns(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Buffett-style earnings concerns."""
+        concerns = []
+        streak_type = earnings_streak.get("streak_type", "")
+        streak_count = earnings_streak.get("streak_count", 0)
+        misses = earnings_streak.get("misses", 0)
+        total = earnings_streak.get("total", 0)
+
+        if streak_type == "miss" and streak_count >= 2:
+            concerns.append(f"Missed earnings {streak_count} quarters in a row — deteriorating earnings power")
+        elif total > 0 and misses / total >= 0.50:
+            concerns.append(f"Missed earnings {misses}/{total} quarters — unreliable earnings")
+        return concerns
+
     def _get_relevant_quote(self, score: float) -> str:
         """Get a relevant Buffett quote based on the analysis."""
         if score >= 60:

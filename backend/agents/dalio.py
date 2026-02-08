@@ -70,6 +70,9 @@ class DalioAgent:
         self,
         ticker: str,
         financials: Dict[str, Any],
+        *,
+        earnings_data: Optional[List[Dict]] = None,
+        earnings_streak: Optional[Dict] = None,
     ) -> Dict[str, Any]:
         """
         Perform Dalio-style analysis on a company.
@@ -77,6 +80,8 @@ class DalioAgent:
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
+            earnings_data: List of quarterly earnings (actual vs estimate)
+            earnings_streak: Streak summary dict
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -86,11 +91,16 @@ class DalioAgent:
         risk_assessment = self._assess_risk_adjusted_returns(metrics, financials)
         macro_positioning = self._analyze_macro_positioning(financials)
         
-        # Calculate Dalio score
-        score = self._calculate_score(metrics, risk_assessment, cycle_analysis)
+        # Calculate Dalio score with earnings volatility adjustment
+        earnings_adj = self._earnings_predictability_bonus(earnings_data or [], earnings_streak or {})
+        score = self._calculate_score(metrics, risk_assessment, cycle_analysis) + earnings_adj
+        score = round(max(-100, min(100, score)), 2)
         
         insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
+        insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
+        
         concerns = self._identify_concerns(metrics, cycle_analysis)
+        concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
         
         return {
             "agent": self.name,
@@ -357,6 +367,81 @@ class DalioAgent:
         
         return concerns
     
+    # ------------------------------------------------------------------
+    # Earnings-aware methods (Dalio: PREDICTABILITY reduces portfolio risk)
+    # ------------------------------------------------------------------
+
+    def _earnings_predictability_bonus(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> float:
+        """
+        Dalio cares about predictability for risk-parity construction.
+        Low earnings surprise variance → lower portfolio risk.
+        """
+        if not earnings_data:
+            return 0.0
+
+        bonus = 0.0
+
+        # Low surprise variance = predictable → lower risk (max 10 pts)
+        surprises = [abs(e.get("surprise_pct", 0)) for e in earnings_data]
+        if len(surprises) >= 3:
+            avg_abs_surprise = sum(surprises) / len(surprises)
+            if avg_abs_surprise < 3.0:
+                bonus += 10  # Very predictable
+            elif avg_abs_surprise < 5.0:
+                bonus += 5
+            elif avg_abs_surprise > 15.0:
+                bonus -= 10  # High volatility = risk
+
+        # Consistent beats reduce downside risk (max 5 pts)
+        beats = earnings_streak.get("beats", 0)
+        total = earnings_streak.get("total", 0)
+        if total >= 4 and beats / total >= 0.75:
+            bonus += 5
+
+        return bonus
+
+    def _earnings_insights(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Dalio-style earnings insights."""
+        insights = []
+        if len(earnings_data) >= 3:
+            surprises = [abs(e.get("surprise_pct", 0)) for e in earnings_data]
+            avg = sum(surprises) / len(surprises)
+            if avg < 3.0:
+                insights.append(f"Low earnings surprise volatility ({avg:.1f}% avg) — predictable cash flows reduce portfolio risk")
+        
+        beats = earnings_streak.get("beats", 0)
+        total = earnings_streak.get("total", 0)
+        if total >= 4 and beats / total >= 0.75:
+            insights.append(f"Beat {beats}/{total} quarters — consistent outperformance reduces downside risk")
+        return insights
+
+    def _earnings_concerns(
+        self,
+        earnings_data: List[Dict],
+        earnings_streak: Dict,
+    ) -> List[str]:
+        """Generate Dalio-style earnings concerns."""
+        concerns = []
+        if len(earnings_data) >= 3:
+            surprises = [abs(e.get("surprise_pct", 0)) for e in earnings_data]
+            avg = sum(surprises) / len(surprises)
+            if avg > 15.0:
+                concerns.append(f"High earnings surprise volatility ({avg:.1f}% avg) — adds portfolio risk in all-weather context")
+
+        streak_type = earnings_streak.get("streak_type", "")
+        streak_count = earnings_streak.get("streak_count", 0)
+        if streak_type == "miss" and streak_count >= 3:
+            concerns.append(f"Missed {streak_count} consecutive quarters — systematic underperformance increases drawdown risk")
+        return concerns
+
     def _get_relevant_principle(self, score: float) -> str:
         """Get a relevant Dalio principle based on the analysis."""
         if score >= 60:

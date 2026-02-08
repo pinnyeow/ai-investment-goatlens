@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         :root {
             --bg-primary: #09090b;
@@ -863,6 +865,700 @@
             font-weight: 600;
         }
 
+        /* Earnings Track Record */
+        .earnings-section {
+            margin-bottom: 2rem;
+        }
+
+        .earnings-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .earnings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .earnings-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .earnings-title-icon {
+            font-size: 1.5rem;
+        }
+
+        .earnings-title-text {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .earnings-streak-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            padding: 0.5rem 1rem;
+            border-radius: 50px;
+        }
+
+        .streak-beat {
+            background: var(--accent-green-dim);
+            color: var(--accent-green);
+        }
+
+        .streak-miss {
+            background: var(--accent-red-dim);
+            color: var(--accent-red);
+        }
+
+        .streak-inline, .streak-unknown {
+            background: var(--accent-gold-dim);
+            color: var(--accent-gold);
+        }
+
+        .earnings-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .earnings-table th,
+        .earnings-table td {
+            padding: 1rem 1.5rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .earnings-table th {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            background: var(--bg-secondary);
+        }
+
+        .earnings-table td {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+        }
+
+        .earnings-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .earnings-table tbody tr:hover td {
+            background: var(--bg-card-hover);
+        }
+
+        .eps-value {
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .surprise-positive {
+            color: var(--accent-green);
+            font-weight: 600;
+        }
+
+        .surprise-negative {
+            color: var(--accent-red);
+            font-weight: 600;
+        }
+
+        .surprise-inline {
+            color: var(--accent-gold);
+            font-weight: 600;
+        }
+
+        .beat-miss-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.25rem 0.75rem;
+            border-radius: 50px;
+        }
+
+        .indicator-beat {
+            background: var(--accent-green-dim);
+            color: var(--accent-green);
+        }
+
+        .indicator-miss {
+            background: var(--accent-red-dim);
+            color: var(--accent-red);
+        }
+
+        .indicator-inline {
+            background: var(--accent-gold-dim);
+            color: var(--accent-gold);
+        }
+
+        .earnings-summary {
+            padding: 1rem 2rem;
+            border-top: 1px solid var(--border);
+            background: var(--bg-secondary);
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .earnings-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .earnings-stat-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .earnings-stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        /* Charts Section */
+        .charts-section {
+            margin-bottom: 2rem;
+        }
+
+        .charts-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .charts-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .charts-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .charts-title-icon {
+            font-size: 1.5rem;
+        }
+
+        .charts-title-text {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .chart-tab-selector {
+            display: flex;
+            gap: 0.25rem;
+            background: var(--bg-secondary);
+            padding: 0.25rem;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+        }
+
+        .chart-tab-btn {
+            font-family: var(--font-sans);
+            font-size: 0.875rem;
+            font-weight: 500;
+            padding: 0.5rem 1.125rem;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .chart-tab-btn:hover {
+            color: var(--text-secondary);
+            background: var(--bg-elevated);
+        }
+
+        .chart-tab-btn.active {
+            background: var(--accent-gold);
+            color: var(--bg-primary);
+        }
+
+        .chart-tab-btn .tab-icon {
+            font-size: 1rem;
+        }
+
+        .chart-view {
+            display: none;
+        }
+
+        .chart-view.active {
+            display: block;
+        }
+
+        .chart-period-selector {
+            display: flex;
+            gap: 0.25rem;
+            background: var(--bg-secondary);
+            padding: 0.2rem;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+
+        .chart-period-btn {
+            font-family: var(--font-sans);
+            font-size: 0.8rem;
+            font-weight: 500;
+            padding: 0.375rem 0.75rem;
+            background: transparent;
+            border: none;
+            border-radius: 4px;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .chart-period-btn:hover {
+            color: var(--text-secondary);
+            background: var(--bg-elevated);
+        }
+
+        .chart-period-btn.active {
+            background: var(--accent-gold);
+            color: var(--bg-primary);
+        }
+
+        .price-chart-container {
+            padding: 1rem 1rem 0 1rem;
+            height: 400px;
+            position: relative;
+        }
+
+        .price-chart-container .tv-lightweight-charts {
+            border-radius: 8px;
+        }
+
+        /* Next Earnings Badge */
+        .next-earnings-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.9rem;
+            font-weight: 600;
+            padding: 0.5rem 1.25rem;
+            border-radius: 50px;
+            background: rgba(59, 130, 246, 0.1);
+            color: var(--accent-blue);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .next-earnings-badge .countdown {
+            font-weight: 400;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* EPS Bar Chart */
+        .eps-chart-section {
+            margin-bottom: 2rem;
+        }
+
+        .eps-chart-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .eps-chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .eps-chart-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .eps-chart-title-icon {
+            font-size: 1.5rem;
+        }
+
+        .eps-chart-title-text {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .eps-chart-container {
+            padding: 1.5rem 2rem;
+            height: 300px;
+            position: relative;
+        }
+
+        .eps-chart-legend {
+            display: flex;
+            gap: 1.5rem;
+            padding: 0 2rem 1rem;
+        }
+
+        .eps-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .eps-legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        .eps-legend-dot.actual { background: var(--accent-gold); }
+        .eps-legend-dot.estimate { background: var(--bg-elevated); }
+
+        .chart-loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            gap: 0.75rem;
+        }
+
+        .chart-loading .mini-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent-gold);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* ── Earnings Reaction Insights Section ── */
+        .insights-section {
+            margin-bottom: 2rem;
+        }
+
+        .guidance-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem 2rem;
+            margin-bottom: 1rem;
+        }
+
+        .guidance-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .guidance-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .growth-trend-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.375rem 0.875rem;
+            border-radius: 50px;
+        }
+
+        .trend-badge-accelerating {
+            background: var(--accent-green-dim);
+            color: var(--accent-green);
+        }
+
+        .trend-badge-stable {
+            background: var(--accent-gold-dim);
+            color: var(--accent-gold);
+        }
+
+        .trend-badge-decelerating {
+            background: var(--accent-red-dim);
+            color: var(--accent-red);
+        }
+
+        .trend-badge-unknown {
+            background: rgba(161, 161, 170, 0.1);
+            color: var(--text-muted);
+        }
+
+        .guidance-metrics {
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .guidance-metric {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .guidance-metric-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .guidance-metric-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+        }
+
+        .guidance-metric-sub {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .guidance-summary-text {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+        }
+
+        /* Per-Quarter Insight Rows */
+        .insight-row {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 1rem 1.5rem;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .insight-row:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-card-hover);
+        }
+
+        .insight-row-top {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            flex-wrap: wrap;
+        }
+
+        .insight-quarter {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            min-width: 80px;
+        }
+
+        .insight-result-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.2rem 0.6rem;
+            border-radius: 50px;
+            text-transform: uppercase;
+        }
+
+        .insight-reaction {
+            font-size: 0.9rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            min-width: 60px;
+        }
+
+        .insight-guidance-tag {
+            font-size: 0.7rem;
+            font-weight: 600;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .guidance-tag-strong { background: var(--accent-green-dim); color: var(--accent-green); }
+        .guidance-tag-inline { background: rgba(161, 161, 170, 0.1); color: var(--text-muted); }
+        .guidance-tag-cautious { background: var(--accent-gold-dim); color: var(--accent-gold); }
+        .guidance-tag-weak { background: var(--accent-red-dim); color: var(--accent-red); }
+        .guidance-tag-unknown { background: rgba(161, 161, 170, 0.1); color: var(--text-muted); }
+
+        .insight-text {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            flex: 1;
+            line-height: 1.5;
+            min-width: 200px;
+        }
+
+        .insight-expand-hint {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-left: auto;
+            flex-shrink: 0;
+        }
+
+        .insight-detail {
+            display: none;
+            padding-top: 0.75rem;
+            margin-top: 0.75rem;
+            border-top: 1px solid var(--border);
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .insight-detail.expanded {
+            display: flex;
+        }
+
+        .insight-detail-stat {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+
+        .insight-detail-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .insight-detail-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        /* Color-coded insight row left border */
+        .insight-row.beat-rose { border-left: 3px solid var(--accent-green); }
+        .insight-row.beat-dropped { border-left: 3px solid var(--accent-red); }
+        .insight-row.beat-flat { border-left: 3px solid var(--accent-gold); }
+        .insight-row.miss { border-left: 3px solid var(--accent-red); }
+        .insight-row.inline-result { border-left: 3px solid var(--accent-gold); }
+
+        .insights-loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.95rem;
+        }
+
+        /* ── Custom earnings tooltip on stock chart ── */
+        .chart-earnings-tooltip {
+            position: absolute;
+            z-index: 60;
+            pointer-events: none;           /* so it doesn't block chart interaction */
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-hover);
+            border-radius: var(--radius-sm);
+            padding: 0.875rem 1rem;
+            min-width: 220px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        .chart-earnings-tooltip.visible {
+            opacity: 1;
+        }
+
+        .chart-earnings-tooltip .tooltip-quarter {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.375rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .chart-earnings-tooltip .tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.15rem 0;
+        }
+
+        .chart-earnings-tooltip .tooltip-label {
+            color: var(--text-muted);
+        }
+
+        .chart-earnings-tooltip .tooltip-value {
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .chart-earnings-tooltip .tooltip-divider {
+            border-top: 1px solid var(--border);
+            margin: 0.375rem 0;
+        }
+
+        /* ── Legend below the stock price chart ── */
+        .price-chart-legend {
+            display: flex;
+            align-items: center;
+            gap: 1.25rem;
+            padding: 0.75rem 1.5rem 1rem;
+            flex-wrap: wrap;
+        }
+
+        .price-chart-legend .legend-entry {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .price-chart-legend .legend-circle {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .price-chart-legend .legend-line {
+            width: 18px;
+            height: 2px;
+            border-radius: 1px;
+        }
+
         /* Comparison Table */
         .comparison-section {
             margin-bottom: 2rem;
@@ -1126,6 +1822,125 @@
                 <span class="moat-trend" id="moatTrend">Stable</span>
             </div>
 
+            <!-- Charts Section (Tabbed: Stock Price / EPS Comparison) -->
+            <section class="charts-section" id="chartsSection" style="display: none;">
+                <div class="section-header">
+                    <span class="section-title">Price History & Earnings</span>
+                    <span class="next-earnings-badge" id="nextEarningsBadge" style="display: none;">
+                        <span>📅</span>
+                        <span id="nextEarningsText">Next Earnings: —</span>
+                        <span class="countdown" id="nextEarningsCountdown"></span>
+                    </span>
+                </div>
+                <div class="charts-card">
+                    <div class="charts-header">
+                        <div class="chart-tab-selector">
+                            <button class="chart-tab-btn active" data-chart-tab="price">
+                                <span class="tab-icon">📈</span> Stock Price
+                            </button>
+                            <button class="chart-tab-btn" data-chart-tab="eps">
+                                <span class="tab-icon">📊</span> EPS Comparison
+                            </button>
+                        </div>
+                        <div class="chart-period-selector" id="chartPeriodSelector">
+                            <button class="chart-period-btn" data-chart-period="3mo">3M</button>
+                            <button class="chart-period-btn" data-chart-period="6mo">6M</button>
+                            <button class="chart-period-btn active" data-chart-period="1y">1Y</button>
+                            <button class="chart-period-btn" data-chart-period="2y">2Y</button>
+                            <button class="chart-period-btn" data-chart-period="5y">5Y</button>
+                        </div>
+                    </div>
+
+                    <!-- Tab: Stock Price -->
+                    <div class="chart-view active" id="chartViewPrice">
+                        <div class="price-chart-container" id="priceChartContainer">
+                            <div class="chart-loading" id="chartLoading">
+                                <div class="mini-spinner"></div>
+                                Loading price data...
+                            </div>
+                            <!-- Tooltip: hidden by default, shown on crosshair hover -->
+                            <div class="chart-earnings-tooltip" id="chartEarningsTooltip"></div>
+                        </div>
+                        <!-- Legend explaining the colored dots -->
+                        <div class="price-chart-legend">
+                            <div class="legend-entry">
+                                <span class="legend-circle" style="background: var(--accent-green);"></span>
+                                Earnings Beat
+                            </div>
+                            <div class="legend-entry">
+                                <span class="legend-circle" style="background: var(--accent-red);"></span>
+                                Earnings Miss
+                            </div>
+                            <div class="legend-entry">
+                                <span class="legend-circle" style="background: var(--accent-gold);"></span>
+                                Inline
+                            </div>
+                            <div class="legend-entry">
+                                <span class="legend-line" style="background: var(--accent-gold);"></span>
+                                Stock Price
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tab: EPS Comparison -->
+                    <div class="chart-view" id="chartViewEps">
+                        <div class="eps-chart-header" style="border-bottom: none; padding-bottom: 0;">
+                            <div></div>
+                            <div class="eps-chart-legend">
+                                <div class="eps-legend-item"><span class="eps-legend-dot" style="background: var(--accent-green);"></span> Beat Estimate</div>
+                                <div class="eps-legend-item"><span class="eps-legend-dot" style="background: var(--accent-red);"></span> Missed Estimate</div>
+                                <div class="eps-legend-item"><span class="eps-legend-dot" style="background: var(--accent-gold);"></span> Inline</div>
+                                <div class="eps-legend-item"><span class="eps-legend-dot estimate"></span> Consensus Estimate</div>
+                            </div>
+                        </div>
+                        <div class="eps-chart-container">
+                            <canvas id="epsChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Earnings Reaction Insights -->
+            <section class="insights-section" id="insightsSection" style="display: none;">
+                <div class="section-header">
+                    <span class="section-title">Earnings Reaction Insights</span>
+                </div>
+                <!-- Forward Guidance Summary -->
+                <div class="guidance-card" id="guidanceCard" style="display: none;"></div>
+                <!-- Per-Quarter Insights -->
+                <div id="reactionInsightsList"></div>
+            </section>
+
+            <!-- Earnings Track Record -->
+            <section class="earnings-section" id="earningsSection" style="display: none;">
+                <div class="section-header">
+                    <span class="section-title">Earnings Track Record</span>
+                </div>
+                <div class="earnings-card">
+                    <div class="earnings-header">
+                        <div class="earnings-title">
+                            <span class="earnings-title-icon">📊</span>
+                            <span class="earnings-title-text">EPS: Actual vs Consensus</span>
+                        </div>
+                        <div id="earningsStreakBadge" class="earnings-streak-badge streak-unknown"></div>
+                    </div>
+                    <table class="earnings-table">
+                        <thead>
+                            <tr>
+                                <th>Quarter</th>
+                                <th>Date</th>
+                                <th>EPS Actual</th>
+                                <th>EPS Estimate</th>
+                                <th>Surprise</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="earningsBody"></tbody>
+                    </table>
+                    <div class="earnings-summary" id="earningsSummary"></div>
+                </div>
+            </section>
+
             <!-- Agent Cards -->
             <section class="agents-section">
                 <div class="section-header">
@@ -1165,6 +1980,11 @@
         const API_BASE = window.location.origin;
         let selectedPeriod = '1y';
         let selectedInvestors = ['buffett', 'lynch', 'graham', 'munger', 'dalio'];
+        let currentTicker = '';
+        let priceChart = null;
+        let epsChartInstance = null;
+        let selectedChartPeriod = '1y';
+        let pendingEpsData = [];
         
         // Score tooltips for each investor
         const investorTooltips = {
@@ -1215,6 +2035,46 @@
             helpBtn.innerHTML = learnMorePanel.classList.contains('active') 
                 ? '<span>✕</span> Close' 
                 : '<span>?</span> How It Works';
+        });
+
+        // Chart tab selector (Stock Price vs EPS)
+        document.querySelectorAll('.chart-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.chart-tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+
+                const tab = btn.dataset.chartTab;
+                // Toggle views
+                document.getElementById('chartViewPrice').classList.toggle('active', tab === 'price');
+                document.getElementById('chartViewEps').classList.toggle('active', tab === 'eps');
+
+                // Show period selector only for price tab
+                document.getElementById('chartPeriodSelector').style.display =
+                    tab === 'price' ? 'flex' : 'none';
+
+                // Re-render EPS chart when switching to its tab (Chart.js needs visible canvas)
+                if (tab === 'eps' && pendingEpsData && pendingEpsData.length > 0) {
+                    renderEpsChart(pendingEpsData);
+                }
+
+                // Resize price chart when coming back
+                if (tab === 'price' && priceChart) {
+                    const container = document.getElementById('priceChartContainer');
+                    priceChart.applyOptions({ width: container.clientWidth });
+                }
+            });
+        });
+
+        // Chart period selector
+        document.querySelectorAll('.chart-period-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.chart-period-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                selectedChartPeriod = btn.dataset.chartPeriod;
+                if (currentTicker) {
+                    loadPriceChart(currentTicker, selectedChartPeriod);
+                }
+            });
         });
 
         // Event Listeners
@@ -1279,12 +2139,16 @@
 
         function displayResults(data) {
             hideLoading();
+            currentTicker = data.ticker;
             
             // Company Header
             document.getElementById('companyTicker').textContent = data.ticker;
             document.getElementById('companyName').textContent = data.company_name;
             document.getElementById('companySector').textContent = data.sector;
             document.getElementById('analysisPeriod').textContent = formatPeriod(selectedPeriod);
+
+            // Next Earnings Badge
+            renderNextEarnings(data.next_earnings_date);
 
             // Consensus
             const verdictEl = document.getElementById('consensusVerdict');
@@ -1310,6 +2174,29 @@
             const moatTrendEl = document.getElementById('moatTrend');
             moatTrendEl.textContent = formatMoatTrend(data.moat_trend);
             moatTrendEl.className = `moat-trend trend-${data.moat_trend}`;
+
+            // Earnings Track Record
+            renderEarnings(data);
+
+            // Store EPS data for tab switching; render if EPS tab is active
+            pendingEpsData = data.earnings_history || [];
+            const epsTabActive = document.querySelector('.chart-tab-btn[data-chart-tab="eps"]')?.classList.contains('active');
+            if (epsTabActive) {
+                renderEpsChart(pendingEpsData);
+            }
+
+            // Reset to price tab
+            document.querySelectorAll('.chart-tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelector('.chart-tab-btn[data-chart-tab="price"]')?.classList.add('active');
+            document.getElementById('chartViewPrice').classList.add('active');
+            document.getElementById('chartViewEps').classList.remove('active');
+            document.getElementById('chartPeriodSelector').style.display = 'flex';
+
+            // Load price chart (separate API call, non-blocking)
+            loadPriceChart(data.ticker, selectedChartPeriod);
+
+            // Load earnings reaction insights (separate API call, non-blocking)
+            loadEarningsInsights(data.ticker);
 
             // Agent Cards with Tooltips
             const agentsGrid = document.getElementById('agentsGrid');
@@ -1356,6 +2243,658 @@
             `).join('');
 
             results.classList.add('active');
+        }
+
+        function renderEarnings(data) {
+            const section = document.getElementById('earningsSection');
+            const earningsHistory = data.earnings_history || [];
+            const streak = data.earnings_streak;
+
+            if (!earningsHistory.length) {
+                section.style.display = 'none';
+                return;
+            }
+
+            section.style.display = 'block';
+
+            // Streak badge
+            const badge = document.getElementById('earningsStreakBadge');
+            if (streak && streak.total > 0) {
+                const streakClass = streak.streak_type === 'beat' ? 'streak-beat'
+                    : streak.streak_type === 'miss' ? 'streak-miss' : 'streak-inline';
+                badge.className = `earnings-streak-badge ${streakClass}`;
+                badge.textContent = streak.summary;
+            } else {
+                badge.style.display = 'none';
+            }
+
+            // Table rows
+            const tbody = document.getElementById('earningsBody');
+            tbody.innerHTML = earningsHistory.map(e => {
+                const surpriseClass = e.beat_miss === 'beat' ? 'surprise-positive'
+                    : e.beat_miss === 'miss' ? 'surprise-negative' : 'surprise-inline';
+                const indicatorClass = e.beat_miss === 'beat' ? 'indicator-beat'
+                    : e.beat_miss === 'miss' ? 'indicator-miss' : 'indicator-inline';
+                const indicatorIcon = e.beat_miss === 'beat' ? '▲' : e.beat_miss === 'miss' ? '▼' : '●';
+                const indicatorLabel = e.beat_miss === 'beat' ? 'BEAT' : e.beat_miss === 'miss' ? 'MISS' : 'INLINE';
+
+                const surpriseStr = e.surprise_pct != null
+                    ? `${e.surprise_pct > 0 ? '+' : ''}${e.surprise_pct.toFixed(1)}%`
+                    : '—';
+
+                return `<tr>
+                    <td><strong>${e.quarter || '—'}</strong></td>
+                    <td>${e.date || '—'}</td>
+                    <td class="eps-value">${e.eps_actual != null ? '$' + e.eps_actual.toFixed(2) : '—'}</td>
+                    <td class="eps-value" style="color: var(--text-muted);">${e.eps_estimate != null ? '$' + e.eps_estimate.toFixed(2) : '—'}</td>
+                    <td class="${surpriseClass}">${surpriseStr}</td>
+                    <td><span class="beat-miss-indicator ${indicatorClass}">${indicatorIcon} ${indicatorLabel}</span></td>
+                </tr>`;
+            }).join('');
+
+            // Summary stats
+            const summary = document.getElementById('earningsSummary');
+            if (streak && streak.total > 0) {
+                const beatPct = streak.total > 0 ? Math.round((streak.beats / streak.total) * 100) : 0;
+                summary.innerHTML = `
+                    <div class="earnings-stat">
+                        <span class="earnings-stat-label">Beats</span>
+                        <span class="earnings-stat-value" style="color: var(--accent-green);">${streak.beats}</span>
+                    </div>
+                    <div class="earnings-stat">
+                        <span class="earnings-stat-label">Misses</span>
+                        <span class="earnings-stat-value" style="color: var(--accent-red);">${streak.misses}</span>
+                    </div>
+                    <div class="earnings-stat">
+                        <span class="earnings-stat-label">Inline</span>
+                        <span class="earnings-stat-value" style="color: var(--accent-gold);">${streak.inline}</span>
+                    </div>
+                    <div class="earnings-stat">
+                        <span class="earnings-stat-label">Beat Rate</span>
+                        <span class="earnings-stat-value" style="color: var(--text-primary);">${beatPct}%</span>
+                    </div>
+                    <div class="earnings-stat">
+                        <span class="earnings-stat-label">Current Streak</span>
+                        <span class="earnings-stat-value" style="color: ${streak.streak_type === 'beat' ? 'var(--accent-green)' : streak.streak_type === 'miss' ? 'var(--accent-red)' : 'var(--accent-gold)'};">${streak.streak_count}× ${streak.streak_type.toUpperCase()}</span>
+                    </div>
+                `;
+            } else {
+                summary.innerHTML = '';
+            }
+        }
+
+        // ==========================================
+        // Next Earnings Badge
+        // ==========================================
+        function renderNextEarnings(dateStr) {
+            const badge = document.getElementById('nextEarningsBadge');
+            if (!dateStr) {
+                badge.style.display = 'none';
+                return;
+            }
+            const earningsDate = new Date(dateStr + 'T00:00:00');
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const diffMs = earningsDate - today;
+            const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 0) {
+                badge.style.display = 'none';
+                return;
+            }
+
+            const formatted = earningsDate.toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric'
+            });
+            document.getElementById('nextEarningsText').textContent = `Next Earnings: ${formatted}`;
+            document.getElementById('nextEarningsCountdown').textContent =
+                diffDays === 0 ? '(Today!)' :
+                diffDays === 1 ? '(Tomorrow)' :
+                `(${diffDays} days)`;
+            badge.style.display = 'inline-flex';
+        }
+
+        // ==========================================
+        // Price Chart (TradingView Lightweight Charts)
+        // ==========================================
+        async function loadPriceChart(ticker, period) {
+            const section = document.getElementById('chartsSection');
+            const container = document.getElementById('priceChartContainer');
+            const loadingEl = document.getElementById('chartLoading');
+
+            section.style.display = 'block';
+            loadingEl.style.display = 'flex';
+
+            // Remove old chart
+            if (priceChart) {
+                priceChart.remove();
+                priceChart = null;
+            }
+            // Clear previous chart DOM (keep loading indicator)
+            Array.from(container.children).forEach(child => {
+                if (child.id !== 'chartLoading') child.remove();
+            });
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/price-history/${ticker}?period=${period}`);
+                if (!resp.ok) throw new Error('Failed to load price data');
+                const data = await resp.json();
+
+                loadingEl.style.display = 'none';
+
+                if (!data.prices || data.prices.length === 0) {
+                    container.innerHTML = '<div class="chart-loading">No price data available</div>';
+                    return;
+                }
+
+                // Create chart
+                priceChart = LightweightCharts.createChart(container, {
+                    width: container.clientWidth,
+                    height: 380,
+                    layout: {
+                        background: { type: 'solid', color: '#18181b' },
+                        textColor: '#a1a1aa',
+                        fontSize: 12,
+                        fontFamily: "'Inter', -apple-system, sans-serif",
+                    },
+                    grid: {
+                        vertLines: { color: 'rgba(39, 39, 42, 0.5)' },
+                        horzLines: { color: 'rgba(39, 39, 42, 0.5)' },
+                    },
+                    crosshair: {
+                        mode: LightweightCharts.CrosshairMode.Normal,
+                        vertLine: { color: 'rgba(234, 179, 8, 0.3)', width: 1, style: 2 },
+                        horzLine: { color: 'rgba(234, 179, 8, 0.3)', width: 1, style: 2 },
+                    },
+                    rightPriceScale: {
+                        borderColor: '#27272a',
+                    },
+                    timeScale: {
+                        borderColor: '#27272a',
+                        timeVisible: false,
+                    },
+                    handleScroll: { vertTouchDrag: false },
+                });
+
+                // Area series for price
+                const areaSeries = priceChart.addAreaSeries({
+                    topColor: 'rgba(234, 179, 8, 0.28)',
+                    bottomColor: 'rgba(234, 179, 8, 0.02)',
+                    lineColor: '#eab308',
+                    lineWidth: 2,
+                    priceLineVisible: true,
+                    priceLineColor: 'rgba(234, 179, 8, 0.4)',
+                    lastValueVisible: true,
+                });
+
+                // Set price data
+                const priceData = data.prices.map(p => ({
+                    time: p.date,
+                    value: p.close,
+                }));
+                areaSeries.setData(priceData);
+
+                // ── Earnings markers: colored dots (details shown on hover) ──
+                // Build a lookup map so the crosshair handler can find marker
+                // data by date in O(1) instead of scanning the array each frame.
+                const earningsLookup = {};
+
+                if (data.earnings_markers && data.earnings_markers.length > 0) {
+                    const markers = data.earnings_markers
+                        .filter(e => e.date)
+                        .map(e => {
+                            // Store full data for tooltip lookup
+                            earningsLookup[e.date] = e;
+
+                            const isBeat = e.beat_miss === 'beat';
+                            const isMiss = e.beat_miss === 'miss';
+
+                            // Short label: "Q1'26" instead of the full text dump
+                            const shortLabel = (e.quarter || '').replace('Q', 'Q').replace(' 20', "'");
+
+                            return {
+                                time: e.date,
+                                position: 'belowBar',
+                                color: isBeat ? '#22c55e' : isMiss ? '#ef4444' : '#eab308',
+                                shape: 'circle',
+                                size: 2,
+                                text: shortLabel,
+                            };
+                        })
+                        .sort((a, b) => a.time < b.time ? -1 : 1);
+
+                    areaSeries.setMarkers(markers);
+                }
+
+                // ── Custom tooltip on crosshair hover ──
+                // When the user's crosshair lands on an earnings date, we
+                // show a rich tooltip. This is "progressive disclosure" —
+                // minimal visual (dot) with details on demand (hover).
+                const tooltip = document.getElementById('chartEarningsTooltip');
+
+                priceChart.subscribeCrosshairMove(param => {
+                    if (!param.time || !earningsLookup[param.time]) {
+                        tooltip.classList.remove('visible');
+                        return;
+                    }
+
+                    const e = earningsLookup[param.time];
+                    const isBeat = e.beat_miss === 'beat';
+                    const isMiss = e.beat_miss === 'miss';
+                    const badgeColor = isBeat ? 'var(--accent-green)' : isMiss ? 'var(--accent-red)' : 'var(--accent-gold)';
+                    const badgeBg = isBeat ? 'var(--accent-green-dim)' : isMiss ? 'var(--accent-red-dim)' : 'var(--accent-gold-dim)';
+                    const badgeText = isBeat ? '▲ BEAT' : isMiss ? '▼ MISS' : '● INLINE';
+
+                    const surpriseStr = e.surprise_pct != null
+                        ? `${e.surprise_pct > 0 ? '+' : ''}${e.surprise_pct.toFixed(1)}%` : '—';
+                    const r1d = e.price_reaction_1d != null
+                        ? `${e.price_reaction_1d > 0 ? '+' : ''}${e.price_reaction_1d}%` : '—';
+                    const r5d = e.price_reaction_5d != null
+                        ? `${e.price_reaction_5d > 0 ? '+' : ''}${e.price_reaction_5d}%` : '—';
+                    const r1dColor = e.price_reaction_1d > 0 ? 'var(--accent-green)' : e.price_reaction_1d < 0 ? 'var(--accent-red)' : 'var(--text-secondary)';
+                    const r5dColor = e.price_reaction_5d > 0 ? 'var(--accent-green)' : e.price_reaction_5d < 0 ? 'var(--accent-red)' : 'var(--text-secondary)';
+
+                    tooltip.innerHTML = `
+                        <div class="tooltip-quarter">
+                            ${e.quarter || e.date}
+                            <span style="font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:50px; background:${badgeBg}; color:${badgeColor}; font-weight:600;">${badgeText}</span>
+                        </div>
+                        <div class="tooltip-row">
+                            <span class="tooltip-label">EPS Actual</span>
+                            <span class="tooltip-value" style="color:var(--text-primary);">$${e.eps_actual != null ? e.eps_actual.toFixed(2) : '—'}</span>
+                        </div>
+                        <div class="tooltip-row">
+                            <span class="tooltip-label">EPS Estimate</span>
+                            <span class="tooltip-value">$${e.eps_estimate != null ? e.eps_estimate.toFixed(2) : '—'}</span>
+                        </div>
+                        <div class="tooltip-row">
+                            <span class="tooltip-label">Surprise</span>
+                            <span class="tooltip-value" style="color:${badgeColor};">${surpriseStr}</span>
+                        </div>
+                        <div class="tooltip-divider"></div>
+                        <div class="tooltip-row">
+                            <span class="tooltip-label">1-Day Reaction</span>
+                            <span class="tooltip-value" style="color:${r1dColor};">${r1d}</span>
+                        </div>
+                        <div class="tooltip-row">
+                            <span class="tooltip-label">5-Day Reaction</span>
+                            <span class="tooltip-value" style="color:${r5dColor};">${r5d}</span>
+                        </div>
+                    `;
+
+                    // Position tooltip near the crosshair point
+                    const point = param.point;
+                    if (point) {
+                        const chartRect = container.getBoundingClientRect();
+                        let left = point.x + 16;
+                        // Flip to left side if too close to right edge
+                        if (left + 240 > chartRect.width) {
+                            left = point.x - 240;
+                        }
+                        let top = point.y - 60;
+                        if (top < 0) top = 10;
+
+                        tooltip.style.left = left + 'px';
+                        tooltip.style.top = top + 'px';
+                    }
+                    tooltip.classList.add('visible');
+                });
+
+                // Handle next earnings marker
+                if (data.next_earnings_date) {
+                    renderNextEarnings(data.next_earnings_date);
+                }
+
+                // Fit content
+                priceChart.timeScale().fitContent();
+
+                // Responsive resize
+                const resizeObserver = new ResizeObserver(entries => {
+                    for (const entry of entries) {
+                        if (priceChart) {
+                            priceChart.applyOptions({
+                                width: entry.contentRect.width,
+                            });
+                        }
+                    }
+                });
+                resizeObserver.observe(container);
+
+            } catch (err) {
+                loadingEl.style.display = 'none';
+                container.innerHTML = `<div class="chart-loading" style="color: var(--accent-red);">Failed to load chart: ${err.message}</div>`;
+            }
+        }
+
+        // ==========================================
+        // EPS Bar Chart (Chart.js)
+        // ==========================================
+        function renderEpsChart(earningsHistory) {
+            if (!earningsHistory || earningsHistory.length === 0) {
+                return;
+            }
+
+            // Destroy old chart
+            if (epsChartInstance) {
+                epsChartInstance.destroy();
+                epsChartInstance = null;
+            }
+
+            // Reverse so oldest is on the left
+            const sorted = [...earningsHistory].reverse();
+
+            const labels = sorted.map(e => e.quarter || e.date || '—');
+            const actuals = sorted.map(e => e.eps_actual);
+            const estimates = sorted.map(e => e.eps_estimate);
+
+            const ctx = document.getElementById('epsChart').getContext('2d');
+
+            epsChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Actual EPS',
+                            data: actuals,
+                            backgroundColor: sorted.map(e =>
+                                e.beat_miss === 'beat' ? 'rgba(34, 197, 94, 0.8)' :
+                                e.beat_miss === 'miss' ? 'rgba(239, 68, 68, 0.8)' :
+                                'rgba(234, 179, 8, 0.8)'
+                            ),
+                            borderColor: sorted.map(e =>
+                                e.beat_miss === 'beat' ? '#22c55e' :
+                                e.beat_miss === 'miss' ? '#ef4444' :
+                                '#eab308'
+                            ),
+                            borderWidth: 1,
+                            borderRadius: 4,
+                            barPercentage: 0.6,
+                            categoryPercentage: 0.7,
+                        },
+                        {
+                            label: 'Consensus Estimate',
+                            data: estimates,
+                            backgroundColor: 'rgba(39, 39, 42, 0.8)',
+                            borderColor: '#3f3f46',
+                            borderWidth: 1,
+                            borderRadius: 4,
+                            barPercentage: 0.6,
+                            categoryPercentage: 0.7,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index',
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#27272a',
+                            titleColor: '#fafafa',
+                            bodyColor: '#a1a1aa',
+                            borderColor: '#3f3f46',
+                            borderWidth: 1,
+                            cornerRadius: 8,
+                            padding: 12,
+                            bodyFont: { family: "'Inter', sans-serif", size: 13 },
+                            titleFont: { family: "'Inter', sans-serif", size: 13, weight: '600' },
+                            callbacks: {
+                                label: function(context) {
+                                    const val = context.parsed.y;
+                                    if (val === null || val === undefined) return '';
+                                    const prefix = context.dataset.label;
+                                    return `${prefix}: $${val.toFixed(2)}`;
+                                },
+                                afterBody: function(tooltipItems) {
+                                    const idx = tooltipItems[0].dataIndex;
+                                    const e = sorted[idx];
+                                    if (!e) return '';
+                                    const lines = [];
+                                    if (e.surprise_pct != null) {
+                                        lines.push(`Surprise: ${e.surprise_pct > 0 ? '+' : ''}${e.surprise_pct.toFixed(1)}%`);
+                                    }
+                                    lines.push(`Result: ${(e.beat_miss || 'unknown').toUpperCase()}`);
+                                    return lines;
+                                },
+                            },
+                        },
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(39, 39, 42, 0.5)', drawBorder: false },
+                            ticks: {
+                                color: '#71717a',
+                                font: { family: "'Inter', sans-serif", size: 11 },
+                            },
+                        },
+                        y: {
+                            grid: { color: 'rgba(39, 39, 42, 0.5)', drawBorder: false },
+                            ticks: {
+                                color: '#71717a',
+                                font: { family: "'Inter', sans-serif", size: 11 },
+                                callback: function(value) { return '$' + value.toFixed(2); },
+                            },
+                            beginAtZero: false,
+                        },
+                    },
+                },
+            });
+        }
+
+        // ==========================================
+        // Earnings Reaction Insights
+        // ==========================================
+        async function loadEarningsInsights(ticker) {
+            const section = document.getElementById('insightsSection');
+            const guidanceCard = document.getElementById('guidanceCard');
+            const insightsList = document.getElementById('reactionInsightsList');
+
+            // Show loading state
+            section.style.display = 'block';
+            insightsList.innerHTML = '<div class="insights-loading"><div class="mini-spinner" style="display:inline-block; margin-right:0.5rem;"></div> Loading insights...</div>';
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/earnings/${ticker}`);
+                if (!resp.ok) throw new Error('Failed to load earnings insights');
+                const data = await resp.json();
+
+                // Render forward guidance summary
+                if (data.forward_guidance) {
+                    renderForwardGuidance(data.forward_guidance);
+                }
+
+                // Render per-quarter reaction insights
+                if (data.reaction_insights && data.reaction_insights.length > 0) {
+                    renderReactionInsights(data.reaction_insights);
+                } else {
+                    insightsList.innerHTML = '<div class="insights-loading">No reaction insight data available.</div>';
+                }
+            } catch (err) {
+                insightsList.innerHTML = `<div class="insights-loading" style="color: var(--accent-red);">Failed to load insights: ${err.message}</div>`;
+            }
+        }
+
+        function renderForwardGuidance(fg) {
+            const card = document.getElementById('guidanceCard');
+            if (!fg || fg.growth_trend === 'unknown' && !fg.analyst_price_target_mean) {
+                card.style.display = 'none';
+                return;
+            }
+
+            card.style.display = 'block';
+
+            // Growth trend badge
+            const trendIcon = fg.growth_trend === 'accelerating' ? '↑' :
+                              fg.growth_trend === 'decelerating' ? '↓' :
+                              fg.growth_trend === 'stable' ? '→' : '?';
+            const trendLabel = fg.growth_trend.charAt(0).toUpperCase() + fg.growth_trend.slice(1);
+            const trendClass = `trend-badge-${fg.growth_trend}`;
+
+            // Metrics
+            const metrics = [];
+
+            if (fg.current_q_rev_growth != null) {
+                const arrow = fg.next_q_rev_growth != null
+                    ? ` → ${fg.next_q_rev_growth}%`
+                    : '';
+                metrics.push({
+                    label: 'Revenue Growth',
+                    value: `${fg.current_q_rev_growth}%${arrow}`,
+                    sub: 'Current Q → Next Q',
+                    color: fg.current_q_rev_growth > 0 ? 'var(--accent-green)' : 'var(--accent-red)',
+                });
+            }
+
+            if (fg.current_q_eps_growth != null) {
+                const arrow = fg.next_q_eps_growth != null
+                    ? ` → ${fg.next_q_eps_growth}%`
+                    : '';
+                metrics.push({
+                    label: 'EPS Growth',
+                    value: `${fg.current_q_eps_growth}%${arrow}`,
+                    sub: 'Current Q → Next Q',
+                    color: fg.current_q_eps_growth > 0 ? 'var(--accent-green)' : 'var(--accent-red)',
+                });
+            }
+
+            if (fg.analyst_price_target_mean != null) {
+                const upside = fg.analyst_price_target_upside_pct;
+                const upsideStr = upside != null
+                    ? ` (${upside > 0 ? '+' : ''}${upside}%)`
+                    : '';
+                const upsideColor = upside > 5 ? 'var(--accent-green)' :
+                                    upside < -5 ? 'var(--accent-red)' : 'var(--text-primary)';
+                metrics.push({
+                    label: 'Analyst Price Target',
+                    value: `$${fg.analyst_price_target_mean.toFixed(0)}${upsideStr}`,
+                    sub: fg.num_analysts ? `${fg.num_analysts} analysts` : '',
+                    color: upsideColor,
+                });
+            }
+
+            card.innerHTML = `
+                <div class="guidance-header">
+                    <div class="guidance-title">
+                        <span>🔮</span> Forward Guidance
+                    </div>
+                    <span class="growth-trend-badge ${trendClass}">
+                        ${trendIcon} ${trendLabel}
+                    </span>
+                </div>
+                <div class="guidance-metrics">
+                    ${metrics.map(m => `
+                        <div class="guidance-metric">
+                            <span class="guidance-metric-label">${m.label}</span>
+                            <span class="guidance-metric-value" style="color: ${m.color};">${m.value}</span>
+                            ${m.sub ? `<span class="guidance-metric-sub">${m.sub}</span>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="guidance-summary-text">${fg.summary}</div>
+            `;
+        }
+
+        function renderReactionInsights(insights) {
+            const container = document.getElementById('reactionInsightsList');
+
+            container.innerHTML = insights.map((ins, idx) => {
+                // Determine row color class
+                const bm = ins.eps_beat_miss;
+                const r1d = ins.price_reaction_1d;
+                let rowClass = 'inline-result';
+                if (bm === 'beat' && r1d != null && r1d > 1) rowClass = 'beat-rose';
+                else if (bm === 'beat' && r1d != null && r1d < -1) rowClass = 'beat-dropped';
+                else if (bm === 'beat') rowClass = 'beat-flat';
+                else if (bm === 'miss') rowClass = 'miss';
+
+                // Badge
+                const badgeBg = bm === 'beat' ? 'var(--accent-green-dim)' :
+                                bm === 'miss' ? 'var(--accent-red-dim)' : 'var(--accent-gold-dim)';
+                const badgeColor = bm === 'beat' ? 'var(--accent-green)' :
+                                   bm === 'miss' ? 'var(--accent-red)' : 'var(--accent-gold)';
+                const badgeIcon = bm === 'beat' ? '▲' : bm === 'miss' ? '▼' : '●';
+                const badgeLabel = bm === 'beat' ? 'BEAT' : bm === 'miss' ? 'MISS' : 'INLINE';
+
+                // Price reaction
+                const reactionStr = r1d != null ? `${r1d > 0 ? '+' : ''}${r1d}%` : '—';
+                const reactionColor = r1d > 0 ? 'var(--accent-green)' :
+                                      r1d < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+
+                // Guidance signal tag
+                const gs = ins.guidance_signal || 'unknown';
+                const gsClass = `guidance-tag-${gs}`;
+                const gsLabel = gs.charAt(0).toUpperCase() + gs.slice(1);
+
+                // Detail stats
+                const runup = ins.pre_earnings_runup;
+                const r5d = ins.price_reaction_5d;
+                const revGrowth = ins.revenue_growth_yoy;
+                const ups = ins.analyst_upgrades || 0;
+                const downs = ins.analyst_downgrades || 0;
+                const maint = ins.analyst_maintains || 0;
+                const totalA = ups + downs + maint;
+
+                return `
+                    <div class="insight-row ${rowClass}" onclick="toggleInsightDetail(${idx})">
+                        <div class="insight-row-top">
+                            <span class="insight-quarter">${ins.quarter || ins.date || '—'}</span>
+                            <span class="insight-result-badge" style="background:${badgeBg}; color:${badgeColor};">${badgeIcon} ${badgeLabel}</span>
+                            <span class="insight-reaction" style="color:${reactionColor};">${reactionStr}</span>
+                            <span class="insight-guidance-tag ${gsClass}">${gsLabel}</span>
+                            <span class="insight-text">${ins.insight || '—'}</span>
+                            <span class="insight-expand-hint">▾</span>
+                        </div>
+                        <div class="insight-detail" id="insightDetail${idx}">
+                            ${runup != null ? `
+                                <div class="insight-detail-stat">
+                                    <span class="insight-detail-label">Pre-Earnings Run-Up</span>
+                                    <span class="insight-detail-value" style="color: ${runup > 5 ? 'var(--accent-gold)' : 'var(--text-secondary)'};">${runup > 0 ? '+' : ''}${runup}%</span>
+                                </div>
+                            ` : ''}
+                            ${r5d != null ? `
+                                <div class="insight-detail-stat">
+                                    <span class="insight-detail-label">5-Day Reaction</span>
+                                    <span class="insight-detail-value" style="color: ${r5d > 0 ? 'var(--accent-green)' : r5d < 0 ? 'var(--accent-red)' : 'var(--text-secondary)'};">${r5d > 0 ? '+' : ''}${r5d}%</span>
+                                </div>
+                            ` : ''}
+                            ${revGrowth != null ? `
+                                <div class="insight-detail-stat">
+                                    <span class="insight-detail-label">Revenue Growth YoY</span>
+                                    <span class="insight-detail-value" style="color: ${revGrowth > 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${revGrowth > 0 ? '+' : ''}${revGrowth}%</span>
+                                </div>
+                            ` : ''}
+                            ${totalA > 0 ? `
+                                <div class="insight-detail-stat">
+                                    <span class="insight-detail-label">Analyst Reactions</span>
+                                    <span class="insight-detail-value">${ups > 0 ? `<span style="color:var(--accent-green);">${ups}↑</span> ` : ''}${downs > 0 ? `<span style="color:var(--accent-red);">${downs}↓</span> ` : ''}${maint > 0 ? `<span style="color:var(--text-muted);">${maint}→</span>` : ''}</span>
+                                </div>
+                            ` : ''}
+                            <div class="insight-detail-stat">
+                                <span class="insight-detail-label">EPS Surprise</span>
+                                <span class="insight-detail-value" style="color:${badgeColor};">${ins.eps_surprise_pct != null ? (ins.eps_surprise_pct > 0 ? '+' : '') + ins.eps_surprise_pct.toFixed(1) + '%' : '—'}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function toggleInsightDetail(idx) {
+            const detail = document.getElementById(`insightDetail${idx}`);
+            if (detail) {
+                detail.classList.toggle('expanded');
+                // Toggle arrow hint
+                const row = detail.parentElement;
+                const hint = row.querySelector('.insight-expand-hint');
+                if (hint) {
+                    hint.textContent = detail.classList.contains('expanded') ? '▴' : '▾';
+                }
+            }
         }
 
         function formatVerdict(verdict) {
