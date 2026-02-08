@@ -1841,6 +1841,11 @@
             max-height: 90vh;
             background: var(--bg-card);
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            margin: auto;
+            position: fixed;
+            top: 5vh;
+            left: 50%;
+            transform: translateX(-50%);
         }
         .scoring-modal::backdrop {
             background: rgba(0, 0, 0, 0.6);
@@ -2002,7 +2007,10 @@
         .verdict-table td:first-child {
             font-weight: 600;
             background: var(--bg-card);
-            color: var(--text-primary);
+            color: var(--accent-gold);
+        }
+        .verdict-table td:last-child {
+            color: #fafafa !important;
         }
 
         .modal-disclaimer {
