@@ -783,6 +783,8 @@ class YahooFinanceClient:
             rec: Dict[str, Any] = {
                 "quarter": e.get("quarter", ""),
                 "date": e.get("date", ""),
+                "eps_actual": _safe_float(e.get("eps_actual"), default=None),
+                "eps_estimate": _safe_float(e.get("eps_estimate"), default=None),
                 "eps_beat_miss": e.get("beat_miss", "unknown"),
                 "eps_surprise_pct": _safe_float(e.get("surprise_pct"), default=0),
                 "price_reaction_1d": e.get("price_reaction_1d"),

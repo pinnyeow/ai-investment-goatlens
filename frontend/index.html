@@ -1355,190 +1355,126 @@
             border-top: 1px solid var(--border);
         }
 
-        .guidance-badges {
-            display: flex;
-            gap: 0.5rem;
-            align-items: center;
-            flex-wrap: wrap;
+        /* ── "What's Next" Forward Comparison Card ── */
+        .guidance-comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin: 1rem 0;
         }
-
-        .consensus-conf-badge {
-            font-size: 0.75rem;
-            font-weight: 600;
-            padding: 0.25rem 0.75rem;
-            border-radius: 999px;
+        .guidance-col {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            padding: 1rem 1.25rem;
             border: 1px solid var(--border);
         }
-        .conf-badge-high { background: rgba(76, 175, 80, 0.1); color: var(--accent-green); border-color: rgba(76, 175, 80, 0.3); }
-        .conf-badge-moderate { background: rgba(255, 193, 7, 0.1); color: var(--accent-gold); border-color: rgba(255, 193, 7, 0.3); }
-        .conf-badge-low { background: rgba(244, 67, 54, 0.1); color: var(--accent-red); border-color: rgba(244, 67, 54, 0.3); }
-        .conf-badge-unknown { background: var(--bg-secondary); color: var(--text-muted); }
+        .guidance-col-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .guidance-col-label.street { color: var(--accent-blue, #42a5f5); }
+        .guidance-col-label.last-year { color: var(--text-muted); }
+        .guidance-col-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            padding: 0.35rem 0;
+        }
+        .guidance-col-metric {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .guidance-col-value {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .guidance-col-growth {
+            display: inline-block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-top: 0.5rem;
+            padding: 0.15rem 0.5rem;
+            border-radius: 4px;
+        }
+        .growth-up { color: var(--accent-green); background: rgba(76, 175, 80, 0.1); }
+        .growth-down { color: var(--accent-red); background: rgba(244, 67, 54, 0.1); }
 
-        /* ── Estimate Range Bars ── */
-        .estimate-ranges-section {
-            margin-top: 1rem;
-            padding-top: 0.75rem;
+        .guidance-pt-row {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem 0;
+            margin-top: 0.5rem;
             border-top: 1px solid var(--border);
         }
-        .estimate-ranges-title {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-bottom: 0.75rem;
-            letter-spacing: 0.02em;
-        }
-        .estimate-period-block {
-            margin-bottom: 1rem;
-        }
-        .estimate-period-label {
+        .guidance-pt-label {
             font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        .guidance-pt-value {
+            font-size: 1.1rem;
             font-weight: 700;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 0.5rem;
         }
-
-        .range-bar-row {
-            display: flex;
-            align-items: flex-start;
-            gap: 1rem;
-            margin-bottom: 0.75rem;
-        }
-        .range-bar-label {
+        .guidance-pt-upside {
             font-size: 0.85rem;
             font-weight: 600;
-            color: var(--text-secondary);
-            min-width: 100px;
-            padding-top: 0.3rem;
         }
-        .range-analysts {
-            font-weight: 400;
+        .guidance-analyst-count {
+            font-size: 0.8rem;
             color: var(--text-muted);
-            font-size: 0.75rem;
-        }
-        .range-bar-visual {
-            flex: 1;
-        }
-        .range-bar-track {
-            position: relative;
-            height: 10px;
-            background: var(--bg-secondary);
-            border-radius: 5px;
-            border: 1px solid var(--border);
-            overflow: visible;
-        }
-        .range-bar-fill {
-            position: absolute;
-            top: 0; bottom: 0;
-            background: linear-gradient(90deg, rgba(244,67,54,0.15), rgba(255,193,7,0.15), rgba(76,175,80,0.15));
-            border-radius: 5px;
-        }
-        .range-marker-consensus {
-            position: absolute;
-            top: -4px;
-            width: 14px; height: 18px;
-            background: var(--accent-blue, #42a5f5);
-            border: 2px solid #fff;
-            border-radius: 3px;
-            transform: translateX(-50%);
-            cursor: help;
-            z-index: 2;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-        }
-        .range-marker-ya {
-            position: absolute;
-            top: -3px;
-            width: 3px; height: 16px;
-            background: var(--text-muted);
-            transform: translateX(-50%);
-            border-radius: 1px;
-            opacity: 0.7;
-            cursor: help;
-            z-index: 1;
-        }
-        .range-bar-labels {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 4px;
-        }
-        .range-val-low, .range-val-high {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-        }
-        .range-val-consensus {
-            font-size: 0.72rem;
-            color: var(--accent-blue, #42a5f5);
-            font-weight: 600;
-        }
-        .range-bar-meta {
-            display: flex;
-            justify-content: space-between;
-            margin-top: 2px;
-        }
-        .range-ya-label {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            font-style: italic;
-        }
-        .range-growth {
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-        .growth-positive { color: var(--accent-green); }
-        .growth-negative { color: var(--accent-red); }
-        .range-bar-value {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--text-primary);
+            margin-top: 0.75rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid var(--border);
+            text-align: center;
         }
 
-        /* Per-Quarter Insight Rows */
-        .insight-row {
+        /* ── Per-Quarter Story Cards ── */
+        .quarter-story-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius-sm);
-            padding: 1rem 1.5rem;
-            margin-bottom: 0.5rem;
-            cursor: pointer;
-            transition: all 0.2s ease;
+            margin-bottom: 0.75rem;
+            overflow: hidden;
+            transition: border-color 0.2s ease;
         }
-
-        .insight-row:hover {
+        .quarter-story-card:hover {
             border-color: var(--border-hover);
-            background: var(--bg-card-hover);
         }
-
-        .insight-row-top {
+        .story-headline {
             display: flex;
             align-items: center;
-            gap: 1rem;
+            gap: 0.75rem;
+            padding: 1rem 1.5rem;
+            cursor: pointer;
             flex-wrap: wrap;
         }
-
-        .insight-quarter {
-            font-size: 0.95rem;
-            font-weight: 600;
+        .story-quarter {
+            font-size: 1rem;
+            font-weight: 700;
             color: var(--text-primary);
-            min-width: 80px;
-        }
-
-        .insight-result-badge {
-            font-size: 0.75rem;
-            font-weight: 600;
-            padding: 0.2rem 0.6rem;
-            border-radius: 50px;
-            text-transform: uppercase;
-        }
-
-        .insight-reaction {
-            font-size: 0.9rem;
-            font-weight: 600;
-            font-variant-numeric: tabular-nums;
             min-width: 60px;
         }
-
-        .insight-guidance-tag {
+        .story-badge {
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 0.2rem 0.6rem;
+            border-radius: 4px;
+        }
+        .story-badge.beat { background: rgba(34, 197, 94, 0.15); color: var(--accent-green); }
+        .story-badge.miss { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .story-badge.inline { background: rgba(234, 179, 8, 0.15); color: var(--accent-gold); }
+        .story-stock-reaction {
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-left: auto;
+        }
+        .story-guidance-tag {
             font-size: 0.7rem;
             font-weight: 600;
             padding: 0.15rem 0.5rem;
@@ -1546,65 +1482,80 @@
             text-transform: uppercase;
             letter-spacing: 0.04em;
         }
-
-        .guidance-tag-strong { background: var(--accent-green-dim); color: var(--accent-green); }
-        .guidance-tag-inline { background: rgba(161, 161, 170, 0.1); color: var(--text-muted); }
-        .guidance-tag-cautious { background: var(--accent-gold-dim); color: var(--accent-gold); }
-        .guidance-tag-weak { background: var(--accent-red-dim); color: var(--accent-red); }
-        .guidance-tag-unknown { background: rgba(161, 161, 170, 0.1); color: var(--text-muted); }
-
-        .insight-text {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            flex: 1;
-            line-height: 1.5;
-            min-width: 200px;
-        }
-
-        .insight-expand-hint {
-            font-size: 0.75rem;
+        .story-guidance-tag.strong { background: rgba(34, 197, 94, 0.1); color: var(--accent-green); }
+        .story-guidance-tag.cautious { background: rgba(234, 179, 8, 0.1); color: var(--accent-gold); }
+        .story-guidance-tag.weak { background: rgba(239, 68, 68, 0.1); color: var(--accent-red); }
+        .story-guidance-tag.inline { background: var(--bg-secondary); color: var(--text-muted); }
+        .story-guidance-tag.unknown { background: var(--bg-secondary); color: var(--text-muted); }
+        .story-expand-icon {
             color: var(--text-muted);
-            margin-left: auto;
-            flex-shrink: 0;
+            font-size: 0.8rem;
+            transition: transform 0.2s ease;
         }
+        .story-expand-icon.open { transform: rotate(180deg); }
 
-        .insight-detail {
+        .story-body {
             display: none;
-            padding-top: 0.75rem;
+            padding: 0 1.5rem 1.25rem;
+        }
+        .story-body.open {
+            display: block;
+        }
+        .story-comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+        .story-delivered, .story-expected {
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border);
+        }
+        .story-col-label {
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 0.4rem;
+        }
+        .story-delivered .story-col-label { color: var(--accent-green); }
+        .story-expected .story-col-label { color: var(--accent-blue, #42a5f5); }
+        .story-col-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .story-explanation {
+            background: var(--bg-secondary);
+            border-left: 3px solid var(--accent-gold);
+            padding: 0.75rem 1rem;
+            border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+            font-size: 0.9rem;
+            line-height: 1.6;
+            color: var(--text-secondary);
+        }
+        .story-explanation strong {
+            color: var(--text-primary);
+        }
+        .story-stats {
+            display: flex;
+            gap: 1.5rem;
             margin-top: 0.75rem;
-            border-top: 1px solid var(--border);
-            gap: 2rem;
             flex-wrap: wrap;
         }
-
-        .insight-detail.expanded {
-            display: flex;
-        }
-
-        .insight-detail-stat {
-            display: flex;
-            flex-direction: column;
-            gap: 0.15rem;
-        }
-
-        .insight-detail-label {
-            font-size: 0.7rem;
+        .story-stat {
+            font-size: 0.8rem;
             color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
         }
-
-        .insight-detail-value {
-            font-size: 0.95rem;
+        .story-stat-value {
             font-weight: 600;
+            color: var(--text-secondary);
         }
-
-        /* Color-coded insight row left border */
-        .insight-row.beat-rose { border-left: 3px solid var(--accent-green); }
-        .insight-row.beat-dropped { border-left: 3px solid var(--accent-red); }
-        .insight-row.beat-flat { border-left: 3px solid var(--accent-gold); }
-        .insight-row.miss { border-left: 3px solid var(--accent-red); }
-        .insight-row.inline-result { border-left: 3px solid var(--accent-gold); }
+        .story-border-beat { border-left: 3px solid var(--accent-green); }
+        .story-border-miss { border-left: 3px solid var(--accent-red); }
+        .story-border-inline { border-left: 3px solid var(--accent-gold); }
 
         .insights-loading {
             text-align: center;
@@ -2861,6 +2812,15 @@
             }
         }
 
+        /**
+         * renderForwardGuidance — "What's Next" card
+         *
+         * UX principle: answer the user's REAL question:
+         *   "What does Wall Street expect next, and how does that compare?"
+         *
+         * Layout: two columns — "Street Expects" vs "Last Year" — so the
+         * comparison is instant. No abstract bars or dots to decode.
+         */
         function renderForwardGuidance(fg) {
             const card = document.getElementById('guidanceCard');
             if (!fg || (fg.growth_trend === 'unknown' && !fg.analyst_price_target_mean && (!fg.estimate_ranges || fg.estimate_ranges.length === 0))) {
@@ -2877,279 +2837,202 @@
             const trendLabel = fg.growth_trend.charAt(0).toUpperCase() + fg.growth_trend.slice(1);
             const trendClass = `trend-badge-${fg.growth_trend}`;
 
-            // Consensus confidence badge
-            const confLabel = fg.consensus_confidence || 'unknown';
-            const confIcon = confLabel === 'high' ? '🟢' : confLabel === 'moderate' ? '🟡' : confLabel === 'low' ? '🔴' : '⚪';
-            const confClass = `conf-badge-${confLabel}`;
+            // Helper: format large revenue numbers
+            const fmtRev = (v) => {
+                if (v == null) return '—';
+                if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+                if (v >= 1e6) return '$' + (v / 1e6).toFixed(0) + 'M';
+                return '$' + v.toFixed(0);
+            };
+            const fmtEps = (v) => v != null ? '$' + v.toFixed(2) : '—';
+            const fmtGrowth = (g) => {
+                if (g == null) return '';
+                const pct = (g * 100).toFixed(1);
+                const cls = g >= 0 ? 'growth-up' : 'growth-down';
+                return `<span class="guidance-col-growth ${cls}">${g >= 0 ? '+' : ''}${pct}% YoY</span>`;
+            };
 
-            // Metrics row (growth + price target)
-            const metrics = [];
-            if (fg.current_q_rev_growth != null) {
-                const arrow = fg.next_q_rev_growth != null ? ` → ${fg.next_q_rev_growth}%` : '';
-                metrics.push({
-                    label: 'Revenue Growth',
-                    value: `${fg.current_q_rev_growth}%${arrow}`,
-                    sub: 'Current Q → Next Q',
-                    color: fg.current_q_rev_growth > 0 ? 'var(--accent-green)' : 'var(--accent-red)',
-                });
-            }
-            if (fg.current_q_eps_growth != null) {
-                const arrow = fg.next_q_eps_growth != null ? ` → ${fg.next_q_eps_growth}%` : '';
-                metrics.push({
-                    label: 'EPS Growth',
-                    value: `${fg.current_q_eps_growth}%${arrow}`,
-                    sub: 'Current Q → Next Q',
-                    color: fg.current_q_eps_growth > 0 ? 'var(--accent-green)' : 'var(--accent-red)',
-                });
-            }
-            if (fg.analyst_price_target_mean != null) {
-                const upside = fg.analyst_price_target_upside_pct;
-                const upsideStr = upside != null ? ` (${upside > 0 ? '+' : ''}${upside}%)` : '';
-                const upsideColor = upside > 5 ? 'var(--accent-green)' : upside < -5 ? 'var(--accent-red)' : 'var(--text-primary)';
-                metrics.push({
-                    label: 'Analyst Price Target',
-                    value: `$${fg.analyst_price_target_mean.toFixed(0)}${upsideStr}`,
-                    sub: fg.num_analysts ? `${fg.num_analysts} analysts` : '',
-                    color: upsideColor,
-                });
-            }
-
-            // ── Build estimate range rows ──
+            // ── Build the side-by-side comparison for each period ──
             const ranges = fg.estimate_ranges || [];
-            let rangeHTML = '';
+            let comparisonHTML = '';
 
             if (ranges.length > 0) {
-                rangeHTML = `
-                    <div class="estimate-ranges-section">
-                        <div class="estimate-ranges-title">Analyst Estimate Ranges vs Last Year</div>
-                        ${ranges.map(r => {
-                            let epsRangeBar = '';
-                            let revRangeBar = '';
+                comparisonHTML = ranges.map(r => {
+                    const hasEps = r.eps_avg != null;
+                    const hasRev = r.rev_avg != null;
+                    if (!hasEps && !hasRev) return '';
 
-                            // EPS range bar
-                            if (r.eps_avg != null) {
-                                epsRangeBar = buildRangeBar(
-                                    'EPS', r.eps_low, r.eps_avg, r.eps_high,
-                                    r.eps_year_ago, r.eps_growth, r.eps_num_analysts, '$'
-                                );
-                            }
-
-                            // Revenue range bar
-                            if (r.rev_avg != null) {
-                                const fmtRev = (v) => {
-                                    if (v == null) return null;
-                                    if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
-                                    if (v >= 1e6) return '$' + (v / 1e6).toFixed(0) + 'M';
-                                    return '$' + v.toFixed(0);
-                                };
-                                revRangeBar = buildRangeBar(
-                                    'Revenue', r.rev_low, r.rev_avg, r.rev_high,
-                                    r.rev_year_ago, r.rev_growth, r.rev_num_analysts, '$',
-                                    fmtRev
-                                );
-                            }
-
-                            return `
-                                <div class="estimate-period-block">
-                                    <div class="estimate-period-label">${r.period}</div>
-                                    ${epsRangeBar}
-                                    ${revRangeBar}
+                    return `
+                        <div style="margin-bottom: 1rem;">
+                            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 0.5rem;">${r.period}</div>
+                            <div class="guidance-comparison-grid">
+                                <div class="guidance-col">
+                                    <div class="guidance-col-label street">Street Expects</div>
+                                    ${hasEps ? `
+                                        <div class="guidance-col-row">
+                                            <span class="guidance-col-metric">EPS</span>
+                                            <span class="guidance-col-value">${fmtEps(r.eps_avg)}</span>
+                                        </div>
+                                    ` : ''}
+                                    ${hasRev ? `
+                                        <div class="guidance-col-row">
+                                            <span class="guidance-col-metric">Revenue</span>
+                                            <span class="guidance-col-value">${fmtRev(r.rev_avg)}</span>
+                                        </div>
+                                    ` : ''}
+                                    ${r.eps_num_analysts ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">${r.eps_num_analysts} analysts</div>` : ''}
                                 </div>
-                            `;
-                        }).join('')}
-                    </div>
-                `;
+                                <div class="guidance-col">
+                                    <div class="guidance-col-label last-year">Last Year Actual</div>
+                                    ${hasEps ? `
+                                        <div class="guidance-col-row">
+                                            <span class="guidance-col-metric">EPS</span>
+                                            <span class="guidance-col-value">${fmtEps(r.eps_year_ago)}</span>
+                                        </div>
+                                    ` : ''}
+                                    ${hasRev ? `
+                                        <div class="guidance-col-row">
+                                            <span class="guidance-col-metric">Revenue</span>
+                                            <span class="guidance-col-value">${fmtRev(r.rev_year_ago)}</span>
+                                        </div>
+                                    ` : ''}
+                                    ${hasEps && r.eps_growth != null ? fmtGrowth(r.eps_growth) : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
             }
 
-            // ── Price target range bar ──
-            let ptRangeHTML = '';
-            if (fg.price_targets && fg.price_targets.mean != null) {
-                const pt = fg.price_targets;
-                ptRangeHTML = buildRangeBar(
-                    'Price Target', pt.low, pt.mean, pt.high,
-                    pt.current, null, null, '$', null, 'Current Price'
-                );
+            // ── Price target row (simple, no abstract bar) ──
+            let ptHTML = '';
+            if (fg.analyst_price_target_mean != null) {
+                const upside = fg.analyst_price_target_upside_pct;
+                const upsideStr = upside != null ? `${upside > 0 ? '+' : ''}${upside}%` : '';
+                const upsideColor = upside > 5 ? 'var(--accent-green)' : upside < -5 ? 'var(--accent-red)' : 'var(--text-primary)';
+                ptHTML = `
+                    <div class="guidance-pt-row">
+                        <span class="guidance-pt-label">Analyst Price Target</span>
+                        <span class="guidance-pt-value" style="color: var(--text-primary);">$${fg.analyst_price_target_mean.toFixed(0)}</span>
+                        ${upsideStr ? `<span class="guidance-pt-upside" style="color: ${upsideColor};">${upsideStr} from current</span>` : ''}
+                    </div>
+                `;
             }
 
             card.innerHTML = `
                 <div class="guidance-header">
                     <div class="guidance-title">
-                        <span>🔮</span> Forward Guidance
+                        <span>🔮</span> What's Next
                     </div>
-                    <div class="guidance-badges">
-                        <span class="growth-trend-badge ${trendClass}">
-                            ${trendIcon} ${trendLabel}
-                        </span>
-                        <span class="consensus-conf-badge ${confClass}">
-                            ${confIcon} ${confLabel.charAt(0).toUpperCase() + confLabel.slice(1)} Confidence
-                        </span>
-                    </div>
+                    <span class="growth-trend-badge ${trendClass}">
+                        ${trendIcon} ${trendLabel}
+                    </span>
                 </div>
-                <div class="guidance-metrics">
-                    ${metrics.map(m => `
-                        <div class="guidance-metric">
-                            <span class="guidance-metric-label">${m.label}</span>
-                            <span class="guidance-metric-value" style="color: ${m.color};">${m.value}</span>
-                            ${m.sub ? `<span class="guidance-metric-sub">${m.sub}</span>` : ''}
-                        </div>
-                    `).join('')}
-                </div>
-                ${rangeHTML}
-                ${ptRangeHTML ? `<div class="estimate-ranges-section" style="margin-top: 0.5rem;">${ptRangeHTML}</div>` : ''}
+                ${comparisonHTML}
+                ${ptHTML}
                 <div class="guidance-summary-text">${fg.summary}</div>
             `;
         }
 
         /**
-         * Build a visual range bar: Low ◄─── Consensus ───► High
-         * with optional year-ago marker and growth %.
+         * renderReactionInsights — Per-quarter "story cards"
+         *
+         * UX principle: Progressive Disclosure.
+         * Layer 1 (always visible): Quarter, Beat/Miss, Stock Reaction
+         * Layer 2 (click to expand): "Company delivered X vs Street expected Y"
+         *                            + plain-English explanation of WHY it moved
+         *
+         * This means the user gets a scannable list, then dives deeper
+         * only into quarters they care about.
          */
-        function buildRangeBar(label, low, avg, high, yearAgo, growthPct, numAnalysts, prefix, fmtFn, yearAgoLabel) {
-            prefix = prefix || '';
-            const fmt = fmtFn || ((v) => v != null ? `${prefix}${v.toFixed(2)}` : '—');
-            const yaLabel = yearAgoLabel || 'Year Ago';
-
-            // If low/high are missing, only show consensus
-            if (low == null || high == null) {
-                return `
-                    <div class="range-bar-row">
-                        <span class="range-bar-label">${label}</span>
-                        <span class="range-bar-value">${fmt(avg)}</span>
-                        ${growthPct != null ? `<span class="range-growth ${growthPct >= 0 ? 'growth-positive' : 'growth-negative'}">${growthPct >= 0 ? '+' : ''}${(growthPct * 100).toFixed(1)}% YoY</span>` : ''}
-                    </div>
-                `;
-            }
-
-            // Compute positions on the bar (0-100%)
-            const range = high - low;
-            const consensusPos = range > 0 ? ((avg - low) / range) * 100 : 50;
-
-            // Year-ago marker
-            let yaMarkerHTML = '';
-            let yaLegendHTML = '';
-            if (yearAgo != null && range > 0) {
-                const yaPos = Math.max(0, Math.min(100, ((yearAgo - low) / range) * 100));
-                yaMarkerHTML = `<div class="range-marker-ya" style="left: ${yaPos}%;" title="${yaLabel}: ${fmt(yearAgo)}"></div>`;
-                yaLegendHTML = `<span class="range-ya-label">${yaLabel}: ${fmt(yearAgo)}</span>`;
-            }
-
-            return `
-                <div class="range-bar-row">
-                    <span class="range-bar-label">${label}${numAnalysts ? ` <span class="range-analysts">(${numAnalysts} analysts)</span>` : ''}</span>
-                    <div class="range-bar-visual">
-                        <div class="range-bar-track">
-                            <div class="range-bar-fill" style="left: 0%; width: 100%;"></div>
-                            <div class="range-marker-consensus" style="left: ${consensusPos}%;" title="Consensus: ${fmt(avg)}"></div>
-                            ${yaMarkerHTML}
-                        </div>
-                        <div class="range-bar-labels">
-                            <span class="range-val-low">${fmt(low)}</span>
-                            <span class="range-val-consensus">Consensus: ${fmt(avg)}</span>
-                            <span class="range-val-high">${fmt(high)}</span>
-                        </div>
-                        <div class="range-bar-meta">
-                            ${yaLegendHTML}
-                            ${growthPct != null ? `<span class="range-growth ${growthPct >= 0 ? 'growth-positive' : 'growth-negative'}">${growthPct >= 0 ? '+' : ''}${(growthPct * 100).toFixed(1)}% YoY</span>` : ''}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
         function renderReactionInsights(insights) {
             const container = document.getElementById('reactionInsightsList');
 
             container.innerHTML = insights.map((ins, idx) => {
-                // Determine row color class
                 const bm = ins.eps_beat_miss;
                 const r1d = ins.price_reaction_1d;
-                let rowClass = 'inline-result';
-                if (bm === 'beat' && r1d != null && r1d > 1) rowClass = 'beat-rose';
-                else if (bm === 'beat' && r1d != null && r1d < -1) rowClass = 'beat-dropped';
-                else if (bm === 'beat') rowClass = 'beat-flat';
-                else if (bm === 'miss') rowClass = 'miss';
+                const gs = ins.guidance_signal || 'unknown';
 
-                // Badge
-                const badgeBg = bm === 'beat' ? 'var(--accent-green-dim)' :
-                                bm === 'miss' ? 'var(--accent-red-dim)' : 'var(--accent-gold-dim)';
-                const badgeColor = bm === 'beat' ? 'var(--accent-green)' :
-                                   bm === 'miss' ? 'var(--accent-red)' : 'var(--accent-gold)';
-                const badgeIcon = bm === 'beat' ? '▲' : bm === 'miss' ? '▼' : '●';
-                const badgeLabel = bm === 'beat' ? 'BEAT' : bm === 'miss' ? 'MISS' : 'INLINE';
+                // Beat/Miss badge
+                const badgeClass = bm === 'beat' ? 'beat' : bm === 'miss' ? 'miss' : 'inline';
+                const badgeLabel = bm === 'beat' ? '▲ BEAT' : bm === 'miss' ? '▼ MISS' : '● INLINE';
 
-                // Price reaction
-                const reactionStr = r1d != null ? `${r1d > 0 ? '+' : ''}${r1d}%` : '—';
+                // Stock reaction
+                const reactionStr = r1d != null ? `Stock: ${r1d > 0 ? '+' : ''}${r1d}%` : '';
                 const reactionColor = r1d > 0 ? 'var(--accent-green)' :
                                       r1d < 0 ? 'var(--accent-red)' : 'var(--text-muted)';
 
-                // Guidance signal tag
-                const gs = ins.guidance_signal || 'unknown';
-                const gsClass = `guidance-tag-${gs}`;
-                const gsLabel = gs.charAt(0).toUpperCase() + gs.slice(1);
+                // Guidance tag
+                const gsLabel = gs.charAt(0).toUpperCase() + gs.slice(1) + ' Guidance';
 
-                // Detail stats
-                const runup = ins.pre_earnings_runup;
-                const r5d = ins.price_reaction_5d;
-                const revGrowth = ins.revenue_growth_yoy;
+                // Border color based on the "story" — did the stock agree with the result?
+                let borderClass = 'story-border-inline';
+                if (bm === 'beat' && r1d != null && r1d > 1) borderClass = 'story-border-beat';
+                else if (bm === 'beat' && r1d != null && r1d < -1) borderClass = 'story-border-miss';
+                else if (bm === 'miss') borderClass = 'story-border-miss';
+                else if (bm === 'beat') borderClass = 'story-border-beat';
+
+                // EPS values for "Company Delivered vs Street Expected"
+                const epsActual = ins.eps_actual != null ? '$' + ins.eps_actual.toFixed(2) : '—';
+                const epsEstimate = ins.eps_estimate != null ? '$' + ins.eps_estimate.toFixed(2) : '—';
+
+                // Surprise
+                const surpriseStr = ins.eps_surprise_pct != null
+                    ? `${ins.eps_surprise_pct > 0 ? '+' : ''}${ins.eps_surprise_pct.toFixed(1)}%`
+                    : '';
+
+                // Stats for the expanded detail
+                const stats = [];
+                if (ins.pre_earnings_runup != null) stats.push({ label: 'Pre-Earnings Run-Up', value: `${ins.pre_earnings_runup > 0 ? '+' : ''}${ins.pre_earnings_runup}%` });
+                if (ins.price_reaction_5d != null) stats.push({ label: '5-Day Reaction', value: `${ins.price_reaction_5d > 0 ? '+' : ''}${ins.price_reaction_5d}%` });
+                if (ins.revenue_growth_yoy != null) stats.push({ label: 'Revenue Growth YoY', value: `${ins.revenue_growth_yoy > 0 ? '+' : ''}${ins.revenue_growth_yoy}%` });
                 const ups = ins.analyst_upgrades || 0;
                 const downs = ins.analyst_downgrades || 0;
-                const maint = ins.analyst_maintains || 0;
-                const totalA = ups + downs + maint;
+                if (ups || downs) stats.push({ label: 'Analyst Reactions', value: `${ups}↑ ${downs}↓` });
 
                 return `
-                    <div class="insight-row ${rowClass}" onclick="toggleInsightDetail(${idx})">
-                        <div class="insight-row-top">
-                            <span class="insight-quarter">${ins.quarter || ins.date || '—'}</span>
-                            <span class="insight-result-badge" style="background:${badgeBg}; color:${badgeColor};">${badgeIcon} ${badgeLabel}</span>
-                            <span class="insight-reaction" style="color:${reactionColor};">${reactionStr}</span>
-                            <span class="insight-guidance-tag ${gsClass}">${gsLabel}</span>
-                            <span class="insight-text">${ins.insight || '—'}</span>
-                            <span class="insight-expand-hint">▾</span>
+                    <div class="quarter-story-card ${borderClass}">
+                        <div class="story-headline" onclick="toggleStoryBody(${idx})">
+                            <span class="story-quarter">${ins.quarter || ins.date || '—'}</span>
+                            <span class="story-badge ${badgeClass}">${badgeLabel}${surpriseStr ? ' ' + surpriseStr : ''}</span>
+                            <span class="story-guidance-tag ${gs}">${gsLabel}</span>
+                            <span class="story-stock-reaction" style="color: ${reactionColor};">${reactionStr}</span>
+                            <span class="story-expand-icon" id="storyIcon${idx}">▾</span>
                         </div>
-                        <div class="insight-detail" id="insightDetail${idx}">
-                            ${runup != null ? `
-                                <div class="insight-detail-stat">
-                                    <span class="insight-detail-label">Pre-Earnings Run-Up</span>
-                                    <span class="insight-detail-value" style="color: ${runup > 5 ? 'var(--accent-gold)' : 'var(--text-secondary)'};">${runup > 0 ? '+' : ''}${runup}%</span>
+                        <div class="story-body" id="storyBody${idx}">
+                            <div class="story-comparison">
+                                <div class="story-delivered">
+                                    <div class="story-col-label">Company Delivered</div>
+                                    <div class="story-col-value">${epsActual} EPS</div>
                                 </div>
-                            ` : ''}
-                            ${r5d != null ? `
-                                <div class="insight-detail-stat">
-                                    <span class="insight-detail-label">5-Day Reaction</span>
-                                    <span class="insight-detail-value" style="color: ${r5d > 0 ? 'var(--accent-green)' : r5d < 0 ? 'var(--accent-red)' : 'var(--text-secondary)'};">${r5d > 0 ? '+' : ''}${r5d}%</span>
+                                <div class="story-expected">
+                                    <div class="story-col-label">Street Expected</div>
+                                    <div class="story-col-value">${epsEstimate} EPS</div>
                                 </div>
-                            ` : ''}
-                            ${revGrowth != null ? `
-                                <div class="insight-detail-stat">
-                                    <span class="insight-detail-label">Revenue Growth YoY</span>
-                                    <span class="insight-detail-value" style="color: ${revGrowth > 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${revGrowth > 0 ? '+' : ''}${revGrowth}%</span>
-                                </div>
-                            ` : ''}
-                            ${totalA > 0 ? `
-                                <div class="insight-detail-stat">
-                                    <span class="insight-detail-label">Analyst Reactions</span>
-                                    <span class="insight-detail-value">${ups > 0 ? `<span style="color:var(--accent-green);">${ups}↑</span> ` : ''}${downs > 0 ? `<span style="color:var(--accent-red);">${downs}↓</span> ` : ''}${maint > 0 ? `<span style="color:var(--text-muted);">${maint}→</span>` : ''}</span>
-                                </div>
-                            ` : ''}
-                            <div class="insight-detail-stat">
-                                <span class="insight-detail-label">EPS Surprise</span>
-                                <span class="insight-detail-value" style="color:${badgeColor};">${ins.eps_surprise_pct != null ? (ins.eps_surprise_pct > 0 ? '+' : '') + ins.eps_surprise_pct.toFixed(1) + '%' : '—'}</span>
                             </div>
+                            ${ins.insight ? `
+                                <div class="story-explanation">
+                                    <strong>Why it moved:</strong> ${ins.insight}
+                                </div>
+                            ` : ''}
+                            ${stats.length > 0 ? `
+                                <div class="story-stats">
+                                    ${stats.map(s => `<div class="story-stat">${s.label}: <span class="story-stat-value">${s.value}</span></div>`).join('')}
+                                </div>
+                            ` : ''}
                         </div>
                     </div>
                 `;
             }).join('');
         }
 
-        function toggleInsightDetail(idx) {
-            const detail = document.getElementById(`insightDetail${idx}`);
-            if (detail) {
-                detail.classList.toggle('expanded');
-                // Toggle arrow hint
-                const row = detail.parentElement;
-                const hint = row.querySelector('.insight-expand-hint');
-                if (hint) {
-                    hint.textContent = detail.classList.contains('expanded') ? '▴' : '▾';
+        function toggleStoryBody(idx) {
+            const body = document.getElementById(`storyBody${idx}`);
+            const icon = document.getElementById(`storyIcon${idx}`);
+            if (body) {
+                body.classList.toggle('open');
+                if (icon) {
+                    icon.classList.toggle('open');
                 }
             }
         }

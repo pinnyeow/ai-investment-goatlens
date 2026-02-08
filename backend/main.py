@@ -138,6 +138,8 @@ class EarningsReactionInsight(BaseModel):
     """Per-quarter reaction insight explaining why the stock moved."""
     quarter: str = ""
     date: str = ""
+    eps_actual: Optional[float] = None
+    eps_estimate: Optional[float] = None
     eps_beat_miss: str = "unknown"
     eps_surprise_pct: Optional[float] = None
     price_reaction_1d: Optional[float] = None
