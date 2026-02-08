@@ -451,6 +451,29 @@
             color: var(--text-muted);
         }
 
+        .loading-substeps {
+            display: flex;
+            gap: 1.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+        }
+
+        .substep {
+            opacity: 0.35;
+            transition: opacity 0.4s;
+        }
+
+        .substep.active {
+            opacity: 1;
+            color: var(--accent-gold);
+        }
+
+        .substep.done {
+            opacity: 0.6;
+            text-decoration: line-through;
+        }
+
         /* Error State */
         .error-message {
             display: none;
@@ -1981,7 +2004,12 @@
 
         <div class="loading" id="loading">
             <div class="loading-spinner"></div>
-            <div class="loading-text">Consulting the GOATs...</div>
+            <div class="loading-text" id="loadingText">Consulting the GOATs...</div>
+            <div class="loading-substeps" id="loadingSubsteps">
+                <span class="substep active" id="stepFetch">Fetching financial data…</span>
+                <span class="substep" id="stepAgents">Running investor agents…</span>
+                <span class="substep" id="stepCharts">Loading charts…</span>
+            </div>
         </div>
 
         <div class="results" id="results">
@@ -2330,16 +2358,37 @@
             showLoading();
             hideError();
 
+            // ── Fire ALL three API calls in parallel ──
+            // The analyze call is the slowest (~8-15s) because it runs the
+            // LangGraph pipeline (data fetch → agents → LLM consensus).
+            // Price history and earnings insights are independent — starting
+            // them at the same time means charts are often ready by the time
+            // the user sees the GOAT scores.
+            const analyzePromise = fetch(`${API_BASE}/api/analyze`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ticker: ticker,
+                    time_period: selectedPeriod,
+                    agents: selectedInvestors
+                })
+            });
+            const pricePromise = fetch(`${API_BASE}/api/price-history/${ticker}?period=${selectedChartPeriod}`);
+            const earningsPromise = fetch(`${API_BASE}/api/earnings/${ticker}`);
+
+            // Stash the secondary promises so displayResults can use them
+            _pendingPricePromise = pricePromise;
+            _pendingEarningsPromise = earningsPromise;
+
+            // Animate loading steps for user feedback
+            _loadingTimer = setTimeout(() => {
+                setLoadingStep('stepAgents');
+            }, 3000);  // After ~3s, data is usually fetched; agents are running
+
             try {
-                const response = await fetch(`${API_BASE}/api/analyze`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        ticker: ticker,
-                        time_period: selectedPeriod,
-                        agents: selectedInvestors
-                    })
-                });
+                const response = await analyzePromise;
+                clearTimeout(_loadingTimer);
+                setLoadingStep('stepCharts');
 
                 if (!response.ok) {
                     const error = await response.json();
@@ -2349,9 +2398,27 @@
                 const data = await response.json();
                 displayResults(data);
             } catch (err) {
+                clearTimeout(_loadingTimer);
                 showError(err.message);
                 hideLoading();
             }
+        }
+
+        // Promises for secondary data (filled by runAnalysis, consumed by displayResults)
+        let _pendingPricePromise = null;
+        let _pendingEarningsPromise = null;
+        let _loadingTimer = null;
+
+        function setLoadingStep(activeId) {
+            document.querySelectorAll('.substep').forEach(el => {
+                if (el.id === activeId) {
+                    el.classList.add('active');
+                    el.classList.remove('done');
+                } else if (el.classList.contains('active') && el.id !== activeId) {
+                    el.classList.remove('active');
+                    el.classList.add('done');
+                }
+            });
         }
 
         async function runDemo() {
@@ -2425,11 +2492,13 @@
             document.getElementById('chartViewPrice').classList.add('active');
             document.getElementById('chartPeriodSelector').style.display = 'flex';
 
-            // Load price chart (separate API call, non-blocking)
-            loadPriceChart(data.ticker, selectedChartPeriod);
+            // Load price chart — reuse the promise that was already fired in runAnalysis()
+            loadPriceChart(data.ticker, selectedChartPeriod, _pendingPricePromise);
+            _pendingPricePromise = null;  // consumed
 
-            // Load earnings reaction insights (separate API call, non-blocking)
-            loadEarningsInsights(data.ticker);
+            // Load earnings reaction insights — reuse pre-fired promise
+            loadEarningsInsights(data.ticker, _pendingEarningsPromise);
+            _pendingEarningsPromise = null;  // consumed
 
             // Agent Cards with Tooltips
             const agentsGrid = document.getElementById('agentsGrid');
@@ -2586,7 +2655,7 @@
         // ==========================================
         // Price Chart (TradingView Lightweight Charts)
         // ==========================================
-        async function loadPriceChart(ticker, period) {
+        async function loadPriceChart(ticker, period, prefetchedPromise) {
             const section = document.getElementById('chartsSection');
             const container = document.getElementById('priceChartContainer');
             const loadingEl = document.getElementById('chartLoading');
@@ -2605,7 +2674,11 @@
             });
 
             try {
-                const resp = await fetch(`${API_BASE}/api/price-history/${ticker}?period=${period}`);
+                // Reuse the pre-started fetch if available (parallel with analyze),
+                // otherwise start a new one (e.g. when switching chart periods).
+                const resp = prefetchedPromise
+                    ? await prefetchedPromise
+                    : await fetch(`${API_BASE}/api/price-history/${ticker}?period=${period}`);
                 if (!resp.ok) throw new Error('Failed to load price data');
                 const data = await resp.json();
 
@@ -2918,7 +2991,7 @@
         // ==========================================
         // Earnings Reaction Insights
         // ==========================================
-        async function loadEarningsInsights(ticker) {
+        async function loadEarningsInsights(ticker, prefetchedPromise) {
             const guidanceCard = document.getElementById('guidanceCard');
             const insightsList = document.getElementById('reactionInsightsList');
 
@@ -2926,7 +2999,10 @@
             insightsList.innerHTML = '<div class="insights-loading"><div class="mini-spinner" style="display:inline-block; margin-right:0.5rem;"></div> Loading insights...</div>';
 
             try {
-                const resp = await fetch(`${API_BASE}/api/earnings/${ticker}`);
+                // Reuse the pre-started fetch if available (parallel with analyze)
+                const resp = prefetchedPromise
+                    ? await prefetchedPromise
+                    : await fetch(`${API_BASE}/api/earnings/${ticker}`);
                 if (!resp.ok) throw new Error('Failed to load earnings insights');
                 const data = await resp.json();
 
@@ -3269,6 +3345,11 @@
             loading.classList.add('active');
             results.classList.remove('active');
             analyzeBtn.disabled = true;
+            // Reset loading substeps
+            document.querySelectorAll('.substep').forEach(el => {
+                el.classList.remove('active', 'done');
+            });
+            document.getElementById('stepFetch')?.classList.add('active');
         }
 
         function hideLoading() {

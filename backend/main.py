@@ -252,6 +252,9 @@ class GOATState(TypedDict):
     earnings_data: Optional[List[Dict[str, Any]]]
     earnings_streak: Optional[Dict[str, Any]]
     
+    # Next earnings date (fetched once in fetch_data_node, shared across nodes)
+    next_earnings_date: Optional[str]
+    
     # Temporal analysis
     temporal_results: Optional[Dict[str, Any]]
     
@@ -269,13 +272,22 @@ class GOATState(TypedDict):
 async def fetch_data_node(state: GOATState) -> GOATState:
     """
     Node: Fetch all financial data from Yahoo Finance,
-    including earnings history (actual vs. consensus).
+    including earnings history and next earnings date.
+
+    Fetches company data + next earnings in parallel so
+    synthesize_node doesn't need a redundant Yahoo call.
     """
     ticker = state["ticker"]
     
     try:
         async with YahooFinanceClient() as client:
-            raw_data = await client.get_company_data(ticker, years=10)
+            # Fetch company data and next earnings date in parallel
+            raw_task = client.get_company_data(ticker, years=10)
+            next_earnings_task = client.get_next_earnings_date(ticker)
+            raw_data, next_earnings = await asyncio.gather(
+                raw_task, next_earnings_task
+            )
+
             normalized = client.normalize_data(raw_data)
             
             # Extract earnings history (EPS actual vs. estimate)
@@ -286,6 +298,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         state["normalized_data"] = normalized.__dict__
         state["earnings_data"] = earnings
         state["earnings_streak"] = streak
+        state["next_earnings_date"] = next_earnings
         
     except YahooFinanceError as e:
         state["error"] = f"Data fetch failed: {str(e)}"
@@ -425,14 +438,7 @@ async def synthesize_node(state: GOATState) -> GOATState:
     # Yahoo Finance uses 'info' instead of 'profile'
     info = raw_data.get("info", {})
     
-    # Fetch next earnings date (lightweight call)
-    next_earnings = None
-    try:
-        async with YahooFinanceClient() as client:
-            next_earnings = await client.get_next_earnings_date(state["ticker"])
-    except Exception:
-        pass
-    
+    # next_earnings_date already fetched in fetch_data_node — no extra call needed
     state["final_report"] = {
         "ticker": state["ticker"],
         "company_name": info.get("longName", info.get("shortName", profile.get("companyName", state["ticker"]))),
@@ -443,7 +449,7 @@ async def synthesize_node(state: GOATState) -> GOATState:
         "comparison_table": comparison_table,
         "earnings_data": state.get("earnings_data", []),
         "earnings_streak": state.get("earnings_streak", {}),
-        "next_earnings_date": next_earnings,
+        "next_earnings_date": state.get("next_earnings_date"),
     }
     
     return state
@@ -554,6 +560,7 @@ async def analyze_company(request: AnalysisRequest):
         "normalized_data": None,
         "earnings_data": None,
         "earnings_streak": None,
+        "next_earnings_date": None,
         "temporal_results": None,
         "agent_results": [],
         "consensus": None,

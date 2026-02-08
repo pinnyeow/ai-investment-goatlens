@@ -12,16 +12,57 @@ Provides comprehensive financial data including:
 - Earnings history (actual vs. consensus estimates)
 
 No API key required!
+
+Performance:
+    Module-level TTL cache prevents redundant Yahoo scrapes when the
+    same ticker is requested by multiple endpoints within a short window
+    (default 5 min).  Cache is keyed by (ticker, method_name, args_hash).
 """
 
 import math
+import time
+import hashlib
 from datetime import datetime, timedelta
 
 import yfinance as yf
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+
+# ─── Module-level TTL cache ───────────────────────────────────────────────
+# Avoids re-scraping Yahoo Finance when /api/analyze, /api/price-history,
+# and /api/earnings all request the same ticker within the TTL window.
+# Format: { cache_key: (timestamp, data) }
+_cache: Dict[str, Tuple[float, Any]] = {}
+_CACHE_TTL = 300  # 5 minutes
+
+
+def _cache_key(namespace: str, *args) -> str:
+    """Build a deterministic cache key from namespace + args."""
+    raw = f"{namespace}:" + ":".join(str(a) for a in args)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _cache_get(key: str):
+    """Return cached value if within TTL, else None."""
+    entry = _cache.get(key)
+    if entry and (time.time() - entry[0]) < _CACHE_TTL:
+        return entry[1]
+    # Expired — remove to free memory
+    _cache.pop(key, None)
+    return None
+
+
+def _cache_set(key: str, value):
+    """Store value with current timestamp."""
+    _cache[key] = (time.time(), value)
+
+
+def clear_cache():
+    """Clear all cached data (useful for testing)."""
+    _cache.clear()
 
 
 def _safe_float(val, default=0) -> Optional[float]:
@@ -139,7 +180,12 @@ class YahooFinanceClient:
         return await loop.run_in_executor(self._executor, func, *args)
     
     def _fetch_all_data_sync(self, ticker: str) -> Dict[str, Any]:
-        """Synchronously fetch all company data."""
+        """Synchronously fetch all company data (cached for TTL)."""
+        key = _cache_key("company", ticker)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
         try:
             stock = self._get_ticker(ticker)
             
@@ -163,7 +209,7 @@ class YahooFinanceClient:
             except Exception:
                 pass  # Some tickers may not have earnings dates
             
-            return {
+            result = {
                 "ticker": ticker,
                 "info": info,
                 "income_statements": income_stmt,
@@ -173,6 +219,8 @@ class YahooFinanceClient:
                 "earnings_dates": earnings_dates,
                 "fetched_at": datetime.now().isoformat(),
             }
+            _cache_set(key, result)
+            return result
         except YahooFinanceError:
             raise
         except Exception as e:
@@ -420,7 +468,7 @@ class YahooFinanceClient:
     
     def get_price_history_sync(self, ticker: str, period: str = "2y") -> List[Dict[str, Any]]:
         """
-        Fetch daily OHLCV price history for a ticker.
+        Fetch daily OHLCV price history for a ticker (cached for TTL).
 
         Args:
             ticker: Stock ticker symbol
@@ -429,6 +477,11 @@ class YahooFinanceClient:
         Returns:
             List of {date, open, high, low, close, volume} dicts sorted by date ascending.
         """
+        key = _cache_key("prices", ticker, period)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
         try:
             stock = self._get_ticker(ticker)
             hist = stock.history(period=period)
@@ -449,6 +502,7 @@ class YahooFinanceClient:
                     "close": round(close_val, 2),
                     "volume": int(_safe_float(row.get("Volume", 0))),
                 })
+            _cache_set(key, records)
             return records
         except Exception:
             return []
@@ -562,30 +616,41 @@ class YahooFinanceClient:
 
     def get_next_earnings_date_sync(self, ticker: str) -> Optional[str]:
         """
-        Get the next upcoming earnings date for a ticker.
+        Get the next upcoming earnings date for a ticker (cached for TTL).
 
         Returns:
             Date string (YYYY-MM-DD) or None if not available.
         """
+        key = _cache_key("next_earnings", ticker)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
         try:
             stock = self._get_ticker(ticker)
             # Try stock.calendar first
             cal = stock.calendar
             if cal is not None:
                 # calendar can be a dict or DataFrame
+                date_val = None
                 if isinstance(cal, dict):
                     ed = cal.get("Earnings Date")
                     if ed:
                         if isinstance(ed, list) and len(ed) > 0:
-                            return str(ed[0])[:10]
-                        return str(ed)[:10]
+                            date_val = str(ed[0])[:10]
+                        else:
+                            date_val = str(ed)[:10]
                 elif hasattr(cal, "loc"):
                     # DataFrame
                     if "Earnings Date" in cal.index:
                         val = cal.loc["Earnings Date"]
                         if hasattr(val, "iloc"):
-                            return str(val.iloc[0])[:10]
-                        return str(val)[:10]
+                            date_val = str(val.iloc[0])[:10]
+                        else:
+                            date_val = str(val)[:10]
+                if date_val:
+                    _cache_set(key, date_val)
+                    return date_val
 
             # Fallback: look at earnings_dates for future dates
             ed = stock.earnings_dates
@@ -594,6 +659,7 @@ class YahooFinanceClient:
                 for idx in ed.index:
                     date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
                     if date_str >= today:
+                        _cache_set(key, date_str)
                         return date_str
             return None
         except Exception:
@@ -609,11 +675,16 @@ class YahooFinanceClient:
 
     def get_analyst_reactions_sync(self, ticker: str) -> List[Dict[str, Any]]:
         """
-        Fetch recent analyst upgrades/downgrades for a ticker.
+        Fetch recent analyst upgrades/downgrades for a ticker (cached for TTL).
 
         Returns the most recent 100 analyst actions, each with:
         date, firm, to_grade, from_grade, action.
         """
+        key = _cache_key("analysts", ticker)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
         try:
             stock = self._get_ticker(ticker)
             ud = stock.upgrades_downgrades
@@ -630,6 +701,7 @@ class YahooFinanceClient:
                     "from_grade": str(row.get("FromGrade", "")),
                     "action": str(row.get("Action", "")),
                 })
+            _cache_set(key, records)
             return records
         except Exception:
             return []
@@ -640,10 +712,15 @@ class YahooFinanceClient:
 
     def get_quarterly_revenue_sync(self, ticker: str) -> List[Dict[str, Any]]:
         """
-        Fetch quarterly revenue from the income statement.
+        Fetch quarterly revenue from the income statement (cached for TTL).
 
         Returns a list of {date, revenue} sorted most-recent first.
         """
+        key = _cache_key("revenue", ticker)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
         try:
             stock = self._get_ticker(ticker)
             qi = stock.quarterly_income_stmt
@@ -667,6 +744,7 @@ class YahooFinanceClient:
                     records.append({"date": date_str, "revenue": val})
 
             records.sort(key=lambda x: x["date"], reverse=True)
+            _cache_set(key, records)
             return records
         except Exception:
             return []
@@ -677,11 +755,16 @@ class YahooFinanceClient:
 
     def get_forward_estimates_sync(self, ticker: str) -> Dict[str, Any]:
         """
-        Fetch forward-looking analyst estimates for revenue, EPS, and price targets.
+        Fetch forward-looking analyst estimates for revenue, EPS, and price targets (cached for TTL).
 
         Used to gauge whether forward guidance is strong/weak relative to
         the most recent quarter.
         """
+        key = _cache_key("estimates", ticker)
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+
         result: Dict[str, Any] = {
             "revenue_estimates": [],
             "eps_estimates": [],
@@ -738,6 +821,7 @@ class YahooFinanceClient:
             except Exception:
                 pass
 
+            _cache_set(key, result)
             return result
         except Exception:
             return result
