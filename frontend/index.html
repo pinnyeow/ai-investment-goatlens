@@ -1816,6 +1816,234 @@
             .about-connect { flex-direction: row; }
         }
 
+        /* Scoring Details Modal */
+        .view-details-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .view-details-btn:hover {
+            border-color: var(--accent-gold);
+            color: var(--accent-gold);
+        }
+
+        .scoring-modal {
+            border: none;
+            border-radius: var(--radius);
+            padding: 0;
+            max-width: 900px;
+            width: 90vw;
+            max-height: 90vh;
+            background: var(--bg-card);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        .scoring-modal::backdrop {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            display: flex;
+            flex-direction: column;
+            max-height: 90vh;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border);
+        }
+        .modal-header h2 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--text-primary);
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 2rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            line-height: 1;
+            padding: 0;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+        }
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 2rem;
+            overflow-y: auto;
+            flex: 1;
+        }
+        .modal-intro {
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            line-height: 1.6;
+        }
+
+        .agent-formula-section {
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+        }
+        .agent-formula-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.25rem 1.5rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .agent-formula-header:hover {
+            background: var(--bg-secondary);
+        }
+        .agent-formula-header h3 {
+            margin: 0 0 0.25rem;
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+        .agent-style {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+        .expand-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.3s, color 0.2s;
+        }
+        .expand-btn.expanded {
+            transform: rotate(45deg);
+        }
+        .expand-btn:hover {
+            color: var(--accent-gold);
+        }
+
+        .agent-summary {
+            padding: 0 1.5rem 1rem;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .formula-details {
+            border-top: 1px solid var(--border);
+            padding: 1.5rem;
+            background: var(--bg-secondary);
+        }
+
+        .formula-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1.5rem;
+        }
+        .formula-table th {
+            background: var(--bg-card);
+            padding: 0.75rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            border-bottom: 2px solid var(--border);
+        }
+        .formula-table td {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+        .formula-table tr:last-child td {
+            border-bottom: none;
+        }
+        .formula-table td:first-child {
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .verdict-table {
+            margin-top: 1.5rem;
+        }
+        .verdict-table h4 {
+            font-size: 0.95rem;
+            margin: 0 0 0.75rem;
+            color: var(--text-primary);
+        }
+        .verdict-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .verdict-table td {
+            padding: 0.5rem 0.75rem;
+            font-size: 0.85rem;
+            border: 1px solid var(--border);
+        }
+        .verdict-table td:first-child {
+            font-weight: 600;
+            background: var(--bg-card);
+            color: var(--text-primary);
+        }
+
+        .modal-disclaimer {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-style: italic;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .scoring-modal {
+                width: 95vw;
+                max-height: 95vh;
+            }
+            .modal-header {
+                padding: 1rem 1.25rem;
+            }
+            .modal-header h2 {
+                font-size: 1.25rem;
+            }
+            .modal-body {
+                padding: 1.25rem;
+            }
+            .agent-formula-header {
+                padding: 1rem;
+            }
+            .formula-details {
+                padding: 1rem;
+            }
+            .formula-table {
+                font-size: 0.8rem;
+            }
+            .formula-table th,
+            .formula-table td {
+                padding: 0.5rem;
+            }
+        }
+
         .disclaimer {
             font-size: 0.72rem;
             color: var(--text-muted);
@@ -1902,7 +2130,10 @@
 
         <!-- Learn More Panel -->
         <div class="learn-more-panel" id="learnMorePanel">
-            <h3 class="learn-more-header">How GOAT Scoring Works</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 class="learn-more-header" style="margin: 0;">How GOAT Scoring Works</h3>
+                <button class="view-details-btn" id="viewScoringDetailsBtn" onclick="openScoringDetailsModal()">View Scoring Details</button>
+            </div>
             <div class="scoring-grid">
                 <div class="scoring-card">
                     <h4>Warren Buffett</h4>
@@ -2210,6 +2441,273 @@
         </div>
     </main>
 
+    <!-- Scoring Details Modal -->
+    <dialog id="scoringDetailsModal" class="scoring-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>How GOAT Scores Are Calculated</h2>
+                <button class="modal-close" onclick="closeScoringDetailsModal()" aria-label="Close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-intro">Each GOAT agent evaluates companies using their unique investment philosophy. Below are the exact formulas and point allocations used to calculate scores from -100 to +100.</p>
+                
+                <!-- Buffett Section -->
+                <div class="agent-formula-section">
+                    <div class="agent-formula-header" onclick="toggleFormula('buffett')">
+                        <div>
+                            <h3>Warren Buffett</h3>
+                            <div class="agent-style">Value Investing with Quality Focus</div>
+                        </div>
+                        <button class="expand-btn" id="buffettExpand">+</button>
+                    </div>
+                    <div class="agent-summary">
+                        <p>ROE ≥15%, profit margins ≥10%, debt-to-equity ≤0.5. Rewards consistent earnings beats and durable competitive advantages.</p>
+                    </div>
+                    <div class="formula-details" id="buffettFormula" style="display: none;">
+                        <table class="formula-table">
+                            <thead>
+                                <tr>
+                                    <th>Component</th>
+                                    <th>Threshold</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td rowspan="2">ROE</td><td>≥15%</td><td>Up to +25 (scaled: ROE/15% × 15)</td></tr>
+                                <tr><td>&lt;15%</td><td>-15</td></tr>
+                                <tr><td rowspan="2">Profit Margin</td><td>≥10%</td><td>Up to +20 (scaled: margin/10% × 10)</td></tr>
+                                <tr><td>&lt;10%</td><td>-10</td></tr>
+                                <tr><td rowspan="3">Debt-to-Equity</td><td>≤0.5</td><td>+20</td></tr>
+                                <tr><td>≤1.0</td><td>+10</td></tr>
+                                <tr><td>&gt;1.0</td><td>-20</td></tr>
+                                <tr><td rowspan="3">Earnings Consistency</td><td>Beat rate ≥80%</td><td>+10</td></tr>
+                                <tr><td>Beat rate ≥60%</td><td>+5</td></tr>
+                                <tr><td>4+ consecutive beats</td><td>+5</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="verdict-table">
+                            <h4>Verdict Thresholds</h4>
+                            <table>
+                                <tr><td>≥60</td><td>Strong Buy</td></tr>
+                                <tr><td>≥20</td><td>Buy</td></tr>
+                                <tr><td>≥-20</td><td>Hold</td></tr>
+                                <tr><td>≥-60</td><td>Sell</td></tr>
+                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lynch Section -->
+                <div class="agent-formula-section">
+                    <div class="agent-formula-header" onclick="toggleFormula('lynch')">
+                        <div>
+                            <h3>Peter Lynch</h3>
+                            <div class="agent-style">Growth at Reasonable Price (GARP)</div>
+                        </div>
+                        <button class="expand-btn" id="lynchExpand">+</button>
+                    </div>
+                    <div class="agent-summary">
+                        <p>PEG &lt;1.0, strong earnings growth, low institutional ownership. Rewards earnings momentum and "ten-bagger" potential.</p>
+                    </div>
+                    <div class="formula-details" id="lynchFormula" style="display: none;">
+                        <table class="formula-table">
+                            <thead>
+                                <tr>
+                                    <th>Component</th>
+                                    <th>Threshold</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td rowspan="5">PEG Ratio</td><td>&lt;0.5</td><td>+35</td></tr>
+                                <tr><td>&lt;1.0</td><td>+25</td></tr>
+                                <tr><td>&lt;1.5</td><td>+10</td></tr>
+                                <tr><td>&lt;2.0</td><td>-10</td></tr>
+                                <tr><td>≥2.0</td><td>-25</td></tr>
+                                <tr><td rowspan="3">Growth Category</td><td>Fast grower (≥20%)</td><td>+25</td></tr>
+                                <tr><td>Stalwart (10-15%)</td><td>+15</td></tr>
+                                <tr><td>Slow grower (&lt;5%)</td><td>-15</td></tr>
+                                <tr><td rowspan="3">Institutional Ownership</td><td>&lt;30%</td><td>+15</td></tr>
+                                <tr><td>&lt;50%</td><td>+10</td></tr>
+                                <tr><td>&gt;80%</td><td>-10</td></tr>
+                                <tr><td>Ten-Bagger Potential</td><td>Based on factors</td><td>Up to +25 (scaled × 0.25)</td></tr>
+                                <tr><td rowspan="2">Earnings Momentum</td><td>4+ consecutive beats</td><td>+15</td></tr>
+                                <tr><td>2+ consecutive beats</td><td>+8</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="verdict-table">
+                            <h4>Verdict Thresholds</h4>
+                            <table>
+                                <tr><td>≥60</td><td>Strong Buy</td></tr>
+                                <tr><td>≥20</td><td>Buy</td></tr>
+                                <tr><td>≥-20</td><td>Hold</td></tr>
+                                <tr><td>≥-60</td><td>Sell</td></tr>
+                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Graham Section -->
+                <div class="agent-formula-section">
+                    <div class="agent-formula-header" onclick="toggleFormula('graham')">
+                        <div>
+                            <h3>Benjamin Graham</h3>
+                            <div class="agent-style">Deep Value / Margin of Safety</div>
+                        </div>
+                        <button class="expand-btn" id="grahamExpand">+</button>
+                    </div>
+                    <div class="agent-summary">
+                        <p>P/E ≤15, P/B ≤1.5, current ratio ≥2.0. Demands margin of safety below intrinsic value. Rewards earnings stability.</p>
+                    </div>
+                    <div class="formula-details" id="grahamFormula" style="display: none;">
+                        <table class="formula-table">
+                            <thead>
+                                <tr>
+                                    <th>Component</th>
+                                    <th>Threshold</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td rowspan="4">Margin of Safety</td><td>≥33%</td><td>+40</td></tr>
+                                <tr><td>≥20%</td><td>+25</td></tr>
+                                <tr><td>≥10%</td><td>+10</td></tr>
+                                <tr><td>&lt;0%</td><td>-30</td></tr>
+                                <tr><td rowspan="4">P/E Ratio</td><td>≤10</td><td>+20</td></tr>
+                                <tr><td>≤15</td><td>+15</td></tr>
+                                <tr><td>≤20</td><td>+5</td></tr>
+                                <tr><td>&gt;20</td><td>-15</td></tr>
+                                <tr><td rowspan="3">Current Ratio</td><td>≥2.0</td><td>+15</td></tr>
+                                <tr><td>≥1.5</td><td>+5</td></tr>
+                                <tr><td>&lt;1.5</td><td>-15</td></tr>
+                                <tr><td rowspan="3">Dividend History</td><td>≥20 years</td><td>+15</td></tr>
+                                <tr><td>≥10 years</td><td>+10</td></tr>
+                                <tr><td>≥5 years</td><td>+5</td></tr>
+                                <tr><td>Net-Net Bonus</td><td>NCAV &gt; current price</td><td>+20</td></tr>
+                                <tr><td rowspan="2">Earnings Stability</td><td>0 misses (4+ quarters)</td><td>+10</td></tr>
+                                <tr><td>Miss rate ≤25%</td><td>+5</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="verdict-table">
+                            <h4>Verdict Thresholds</h4>
+                            <table>
+                                <tr><td>≥60</td><td>Strong Buy</td></tr>
+                                <tr><td>≥20</td><td>Buy</td></tr>
+                                <tr><td>≥-20</td><td>Hold</td></tr>
+                                <tr><td>≥-60</td><td>Sell</td></tr>
+                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Munger Section -->
+                <div class="agent-formula-section">
+                    <div class="agent-formula-header" onclick="toggleFormula('munger')">
+                        <div>
+                            <h3>Charlie Munger</h3>
+                            <div class="agent-style">Quality-Focused Mental Models</div>
+                        </div>
+                        <button class="expand-btn" id="mungerExpand">+</button>
+                    </div>
+                    <div class="agent-summary">
+                        <p>Business quality over cheapness. High margins, ROIC, capital-light models. Heavy penalties for red flags. Rewards earnings quality.</p>
+                    </div>
+                    <div class="formula-details" id="mungerFormula" style="display: none;">
+                        <table class="formula-table">
+                            <thead>
+                                <tr>
+                                    <th>Component</th>
+                                    <th>Threshold</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td>Gross Margin</td><td>≥40%</td><td>+25</td></tr>
+                                <tr><td>Operating Margin</td><td>≥15%</td><td>+20</td></tr>
+                                <tr><td>ROIC</td><td>≥15%</td><td>+25</td></tr>
+                                <tr><td>Capex/Revenue</td><td>&lt;5%</td><td>+15</td></tr>
+                                <tr><td>Revenue Growth (5Y)</td><td>&gt;5%</td><td>+15</td></tr>
+                                <tr><td>Red Flags</td><td>Each flag</td><td>-20</td></tr>
+                                <tr><td rowspan="2">Management Ownership</td><td>≥10%</td><td>+15</td></tr>
+                                <tr><td>≥5%</td><td>+10</td></tr>
+                                <tr><td rowspan="2">Earnings Quality</td><td>Beat rate ≥80%</td><td>+10</td></tr>
+                                <tr><td>Beat rate ≥60%</td><td>+5</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="verdict-table">
+                            <h4>Verdict Thresholds</h4>
+                            <table>
+                                <tr><td>≥60</td><td>Strong Buy</td></tr>
+                                <tr><td>≥20</td><td>Buy</td></tr>
+                                <tr><td>≥-20</td><td>Hold</td></tr>
+                                <tr><td>≥-60</td><td>Sell</td></tr>
+                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dalio Section -->
+                <div class="agent-formula-section">
+                    <div class="agent-formula-header" onclick="toggleFormula('dalio')">
+                        <div>
+                            <h3>Ray Dalio</h3>
+                            <div class="agent-style">Macro & Risk Parity</div>
+                        </div>
+                        <button class="expand-btn" id="dalioExpand">+</button>
+                    </div>
+                    <div class="agent-summary">
+                        <p>Risk-adjusted returns, debt cycle positioning, diversification benefit. Prefers predictable earnings for portfolio construction.</p>
+                    </div>
+                    <div class="formula-details" id="dalioFormula" style="display: none;">
+                        <table class="formula-table">
+                            <thead>
+                                <tr>
+                                    <th>Component</th>
+                                    <th>Threshold</th>
+                                    <th>Points</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr><td rowspan="4">Risk-Adjusted Returns</td><td>Ratio ≥1.0</td><td>+30</td></tr>
+                                <tr><td>Ratio ≥0.5</td><td>+20</td></tr>
+                                <tr><td>Ratio ≥0.25</td><td>+10</td></tr>
+                                <tr><td>Ratio &lt;0</td><td>-20</td></tr>
+                                <tr><td>Diversification</td><td>Based on correlation</td><td>Up to +20 (scaled)</td></tr>
+                                <tr><td rowspan="2">Debt Cycle</td><td>Sustainable leverage</td><td>+15</td></tr>
+                                <tr><td>Unsustainable leverage</td><td>-20</td></tr>
+                                <tr><td rowspan="4">Cycle Phase</td><td>Moderate growth</td><td>+10</td></tr>
+                                <tr><td>Expansion</td><td>+5</td></tr>
+                                <tr><td>Deleveraging</td><td>-5</td></tr>
+                                <tr><td>Aggressive deleveraging</td><td>-15</td></tr>
+                                <tr><td rowspan="3">Beta</td><td>0.8-1.2</td><td>+15</td></tr>
+                                <tr><td>0.5-1.5</td><td>+10</td></tr>
+                                <tr><td>Other</td><td>-10</td></tr>
+                                <tr><td rowspan="2">Earnings Predictability</td><td>Avg surprise &lt;3%</td><td>+10</td></tr>
+                                <tr><td>Avg surprise &lt;5%</td><td>+5</td></tr>
+                            </tbody>
+                        </table>
+                        <div class="verdict-table">
+                            <h4>Verdict Thresholds</h4>
+                            <table>
+                                <tr><td>≥60</td><td>Strong Buy</td></tr>
+                                <tr><td>≥20</td><td>Buy</td></tr>
+                                <tr><td>≥-20</td><td>Hold</td></tr>
+                                <tr><td>≥-60</td><td>Sell</td></tr>
+                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <p class="modal-disclaimer">Scoring weights are GOATlens interpretations based on each investor's published writings, not official formulas.</p>
+            </div>
+        </div>
+    </dialog>
+
     <footer>
         <p class="disclaimer">
             Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Data provided by Yahoo Finance &amp; Financial Modeling Prep.
@@ -2286,6 +2784,44 @@
                 ? '<span>✕</span> Close'
                 : '<span>i</span> About';
         });
+
+        // Scoring Details Modal
+        function openScoringDetailsModal() {
+            const modal = document.getElementById('scoringDetailsModal');
+            if (modal) {
+                modal.showModal();
+            }
+        }
+
+        function closeScoringDetailsModal() {
+            const modal = document.getElementById('scoringDetailsModal');
+            if (modal) {
+                modal.close();
+            }
+        }
+
+        // Close modal on backdrop click
+        const scoringModal = document.getElementById('scoringDetailsModal');
+        if (scoringModal) {
+            scoringModal.addEventListener('click', (e) => {
+                if (e.target === scoringModal) {
+                    closeScoringDetailsModal();
+                }
+            });
+        }
+
+        // Toggle formula expansion
+        function toggleFormula(agentId) {
+            const formula = document.getElementById(`${agentId}Formula`);
+            const expandBtn = document.getElementById(`${agentId}Expand`);
+            
+            if (formula && expandBtn) {
+                const isExpanded = formula.style.display !== 'none';
+                formula.style.display = isExpanded ? 'none' : 'block';
+                expandBtn.textContent = isExpanded ? '+' : '−';
+                expandBtn.classList.toggle('expanded', !isExpanded);
+            }
+        }
 
         // Chart tab selector (Stock Price / EPS / Insights / Track Record)
         const chartTabViews = {
