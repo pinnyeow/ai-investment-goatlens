@@ -8,6 +8,7 @@ Fallback: FMP API (Financial Modeling Prep)
 
 from .yahoo import YahooFinanceClient, YahooFinanceError, FinancialData
 from .fmp import FMPClient, FMPError
+from .news import NewsClient, NewsError
 
 __all__ = [
     "YahooFinanceClient",
@@ -15,4 +16,6 @@ __all__ = [
     "FinancialData",
     "FMPClient",
     "FMPError",
+    "NewsClient",
+    "NewsError",
 ]

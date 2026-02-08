@@ -44,6 +44,9 @@ class DalioAgent:
     name = "Ray Dalio"
     style = "Macro & Risk Parity"
     
+    # Model routing: Dalio analyzes macro cycles (complex), but gpt-4o-mini works for now
+    model_preference = "gpt-4o-mini"
+    
     # Dalio's risk thresholds
     MAX_BETA = 1.5
     MIN_INTEREST_COVERAGE = 3.0

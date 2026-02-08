@@ -48,6 +48,9 @@ class GrahamAgent:
     name = "Benjamin Graham"
     style = "Deep Value / Margin of Safety"
     
+    # Model routing: Graham is rule-based (P/E, P/B thresholds), gpt-4o-mini is sufficient
+    model_preference = "gpt-4o-mini"
+    
     # Graham's defensive investor criteria
     MAX_PE = 15.0
     MAX_PB = 1.5
@@ -63,6 +66,31 @@ class GrahamAgent:
             llm_client: Optional LLM client for narrative analysis
         """
         self.llm_client = llm_client
+    
+    def _get_relevant_context(self, financials: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Context engineering: Return only metrics relevant to Graham's analysis.
+        
+        This reduces token usage in LLM calls by filtering out irrelevant data.
+        Graham focuses on: P/E, P/B, current ratio, dividends, book value.
+        He doesn't need: growth metrics, institutional ownership, beta, etc.
+        
+        Args:
+            financials: Full financial data dict
+            
+        Returns:
+            Filtered dict with only relevant metrics
+        """
+        return {
+            "pe_ratio": financials.get("pe_ratio"),
+            "pb_ratio": financials.get("pb_ratio"),
+            "current_ratio": financials.get("current_ratio"),
+            "dividend_yield": financials.get("dividend_yield"),
+            "dividend_years": financials.get("dividend_years", 0),
+            "book_value_per_share": financials.get("book_value_per_share"),
+            "current_price": financials.get("current_price"),
+            "eps": financials.get("eps"),
+        }
     
     async def analyze(
         self,

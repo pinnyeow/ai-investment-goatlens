@@ -50,9 +50,12 @@ from typing_extensions import TypedDict
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
 from data_sources import YahooFinanceClient, YahooFinanceError
 from data_sources import FMPClient, FMPError
+from data_sources import NewsClient, NewsError
 from temporal import TemporalAnalyzer
 from strategies import calculate_consensus, calculate_consensus_with_llm, StrategyResult, Verdict
 from llm import get_llm_client
+from memory import MemoryStore
+from rag import RAGRetriever
 
 
 # ============================================================================
@@ -255,6 +258,12 @@ class GOATState(TypedDict):
     # Next earnings date (fetched once in fetch_data_node, shared across nodes)
     next_earnings_date: Optional[str]
     
+    # News sentiment (optional tool - agents decide when to use it)
+    news_sentiment: Optional[Dict[str, Any]]
+    
+    # RAG context (earnings transcripts, analyst reports)
+    rag_context: Optional[List[Dict[str, Any]]]
+    
     # Temporal analysis
     temporal_results: Optional[Dict[str, Any]]
     
@@ -300,6 +309,34 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         state["earnings_streak"] = streak
         state["next_earnings_date"] = next_earnings
         
+        # Optional: Fetch news sentiment (tool selection - only if conditions met)
+        # This demonstrates Step 6: Tool Calling - agents decide when to use this tool
+        try:
+            news_client = NewsClient()
+            # Tool selection: only fetch if conditions are met (high volatility, etc.)
+            if await news_client.should_use_tool(ticker, normalized.__dict__):
+                news_sentiment = await news_client.get_sentiment(
+                    ticker,
+                    company_name=normalized.company_name,
+                    days=7
+                )
+                state["news_sentiment"] = news_sentiment
+            else:
+                state["news_sentiment"] = None
+        except Exception as e:
+            # Graceful degradation: news is optional
+            state["news_sentiment"] = None
+        
+        # Optional: Retrieve RAG context (Step 8: RAG)
+        # This enriches agent analysis with earnings transcripts and strategic insights
+        try:
+            rag_retriever = RAGRetriever()
+            rag_context = await rag_retriever.retrieve_earnings_context(ticker, quarters=4)
+            state["rag_context"] = rag_context if rag_context else None
+        except Exception as e:
+            # Graceful degradation: RAG is optional
+            state["rag_context"] = None
+        
     except YahooFinanceError as e:
         state["error"] = f"Data fetch failed: {str(e)}"
     
@@ -341,16 +378,30 @@ async def run_agents_node(state: GOATState) -> GOATState:
     selected = state["selected_agents"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
+    news_sentiment = state.get("news_sentiment")  # Optional tool - agents decide when to use
     
-    # Initialize agents with LLM client
-    llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
-    all_agents = {
-        "buffett": BuffettAgent(llm_client=llm),
-        "lynch": LynchAgent(llm_client=llm),
-        "graham": GrahamAgent(llm_client=llm),
-        "munger": MungerAgent(llm_client=llm),
-        "dalio": DalioAgent(llm_client=llm),
-    }
+    # Initialize agents with model routing
+    # Each agent can specify a preferred model (e.g., Buffett uses gpt-4o for nuanced reasoning)
+    # If OPENAI_API_KEY is not set, all agents work without LLM (rule-based fallback)
+    all_agents = {}
+    if os.getenv("OPENAI_API_KEY"):
+        # Model routing: route each agent to its preferred model
+        all_agents = {
+            "buffett": BuffettAgent(llm_client=get_llm_client(getattr(BuffettAgent, "model_preference", "gpt-4o-mini"))),
+            "lynch": LynchAgent(llm_client=get_llm_client(getattr(LynchAgent, "model_preference", "gpt-4o-mini"))),
+            "graham": GrahamAgent(llm_client=get_llm_client(getattr(GrahamAgent, "model_preference", "gpt-4o-mini"))),
+            "munger": MungerAgent(llm_client=get_llm_client(getattr(MungerAgent, "model_preference", "gpt-4o-mini"))),
+            "dalio": DalioAgent(llm_client=get_llm_client(getattr(DalioAgent, "model_preference", "gpt-4o-mini"))),
+        }
+    else:
+        # No API key: all agents work rule-based (no LLM)
+        all_agents = {
+            "buffett": BuffettAgent(llm_client=None),
+            "lynch": LynchAgent(llm_client=None),
+            "graham": GrahamAgent(llm_client=None),
+            "munger": MungerAgent(llm_client=None),
+            "dalio": DalioAgent(llm_client=None),
+        }
     
     # Filter to selected agents (or use all)
     if selected:
@@ -561,6 +612,8 @@ async def analyze_company(request: AnalysisRequest):
         "earnings_data": None,
         "earnings_streak": None,
         "next_earnings_date": None,
+        "news_sentiment": None,
+        "rag_context": None,
         "temporal_results": None,
         "agent_results": [],
         "consensus": None,
@@ -589,6 +642,25 @@ async def analyze_company(request: AnalysisRequest):
     ]
     streak_data = report.get("earnings_streak", {})
     earnings_streak_obj = EarningsStreak(**streak_data) if streak_data and streak_data.get("total", 0) > 0 else None
+    
+    # Record analysis in memory (Step 9: Memory)
+    try:
+        memory = MemoryStore()
+        selected_agents = request.agents or ["buffett", "lynch", "graham", "munger", "dalio"]
+        memory.record_analysis(
+            ticker=request.ticker.upper(),
+            consensus_verdict=consensus.get("verdict", "hold") if consensus else "hold",
+            consensus_score=consensus.get("score", 0.0) if consensus else 0.0,
+            selected_agents=selected_agents,
+            key_metrics={
+                "pe_ratio": final_state.get("normalized_data", {}).get("pe_ratio"),
+                "roe": final_state.get("normalized_data", {}).get("roe"),
+                "profit_margin": final_state.get("normalized_data", {}).get("profit_margin"),
+            },
+        )
+    except Exception as e:
+        # Memory is optional - don't fail if it errors
+        print(f"[Memory] Failed to record analysis: {e}")
     
     return AnalysisResponse(
         ticker=report["ticker"],

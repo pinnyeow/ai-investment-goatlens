@@ -44,6 +44,10 @@ class MungerAgent:
     name = "Charlie Munger"
     style = "Quality-Focused Mental Models"
     
+    # Model routing: Munger uses mental models (complex reasoning), could benefit from gpt-4o
+    # But for cost efficiency, using gpt-4o-mini. Can be overridden via env var.
+    model_preference = "gpt-4o-mini"
+    
     # Munger's quality thresholds
     MIN_GROSS_MARGIN = 0.40  # 40%
     MIN_ROIC = 0.15  # 15%

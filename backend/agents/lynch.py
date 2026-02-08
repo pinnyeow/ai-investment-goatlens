@@ -44,6 +44,9 @@ class LynchAgent:
     name = "Peter Lynch"
     style = "Growth at Reasonable Price (GARP)"
     
+    # Model routing: Lynch analyzes growth stories, gpt-4o-mini is sufficient
+    model_preference = "gpt-4o-mini"
+    
     # Lynch's preferred thresholds
     MAX_PEG = 1.0
     MIN_EARNINGS_GROWTH = 0.15  # 15%
