@@ -1075,6 +1075,7 @@
             padding: 0.25rem;
             border-radius: var(--radius-sm);
             border: 1px solid var(--border);
+            flex-wrap: wrap;
         }
 
         .chart-tab-btn {
@@ -1261,17 +1262,13 @@
             animation: spin 1s linear infinite;
         }
 
-        /* ── Earnings Reaction Insights Section ── */
-        .insights-section {
-            margin-bottom: 2rem;
-        }
-
+        /* ── Earnings Reaction Insights (inside tab) ── */
         .guidance-card {
-            background: var(--bg-card);
+            background: var(--bg-secondary);
             border: 1px solid var(--border);
-            border-radius: var(--radius);
+            border-radius: var(--radius-sm);
             padding: 1.5rem 2rem;
-            margin-bottom: 1rem;
+            margin-bottom: 1.25rem;
         }
 
         .guidance-header {
@@ -1839,7 +1836,13 @@
                                 <span class="tab-icon">📈</span> Stock Price
                             </button>
                             <button class="chart-tab-btn" data-chart-tab="eps">
-                                <span class="tab-icon">📊</span> EPS Comparison
+                                <span class="tab-icon">📊</span> EPS
+                            </button>
+                            <button class="chart-tab-btn" data-chart-tab="insights">
+                                <span class="tab-icon">💡</span> Insights
+                            </button>
+                            <button class="chart-tab-btn" data-chart-tab="track-record">
+                                <span class="tab-icon">📋</span> Track Record
                             </button>
                         </div>
                         <div class="chart-period-selector" id="chartPeriodSelector">
@@ -1897,47 +1900,43 @@
                             <canvas id="epsChart"></canvas>
                         </div>
                     </div>
-                </div>
-            </section>
 
-            <!-- Earnings Reaction Insights -->
-            <section class="insights-section" id="insightsSection" style="display: none;">
-                <div class="section-header">
-                    <span class="section-title">Earnings Reaction Insights</span>
-                </div>
-                <!-- Forward Guidance Summary -->
-                <div class="guidance-card" id="guidanceCard" style="display: none;"></div>
-                <!-- Per-Quarter Insights -->
-                <div id="reactionInsightsList"></div>
-            </section>
-
-            <!-- Earnings Track Record -->
-            <section class="earnings-section" id="earningsSection" style="display: none;">
-                <div class="section-header">
-                    <span class="section-title">Earnings Track Record</span>
-                </div>
-                <div class="earnings-card">
-                    <div class="earnings-header">
-                        <div class="earnings-title">
-                            <span class="earnings-title-icon">📊</span>
-                            <span class="earnings-title-text">EPS: Actual vs Consensus</span>
+                    <!-- Tab: Earnings Reaction Insights -->
+                    <div class="chart-view" id="chartViewInsights">
+                        <div style="padding: 1.5rem 2rem;">
+                            <!-- Forward Guidance Summary -->
+                            <div class="guidance-card" id="guidanceCard" style="display: none;"></div>
+                            <!-- Per-Quarter Insights -->
+                            <div id="reactionInsightsList">
+                                <div class="insights-loading">Select a stock to see earnings reaction insights.</div>
+                            </div>
                         </div>
-                        <div id="earningsStreakBadge" class="earnings-streak-badge streak-unknown"></div>
                     </div>
-                    <table class="earnings-table">
-                        <thead>
-                            <tr>
-                                <th>Quarter</th>
-                                <th>Date</th>
-                                <th>EPS Actual</th>
-                                <th>EPS Estimate</th>
-                                <th>Surprise</th>
-                                <th>Result</th>
-                            </tr>
-                        </thead>
-                        <tbody id="earningsBody"></tbody>
-                    </table>
-                    <div class="earnings-summary" id="earningsSummary"></div>
+
+                    <!-- Tab: Earnings Track Record -->
+                    <div class="chart-view" id="chartViewTrackRecord">
+                        <div class="earnings-header">
+                            <div class="earnings-title">
+                                <span class="earnings-title-icon">📊</span>
+                                <span class="earnings-title-text">EPS: Actual vs Consensus</span>
+                            </div>
+                            <div id="earningsStreakBadge" class="earnings-streak-badge streak-unknown"></div>
+                        </div>
+                        <table class="earnings-table">
+                            <thead>
+                                <tr>
+                                    <th>Quarter</th>
+                                    <th>Date</th>
+                                    <th>EPS Actual</th>
+                                    <th>EPS Estimate</th>
+                                    <th>Surprise</th>
+                                    <th>Result</th>
+                                </tr>
+                            </thead>
+                            <tbody id="earningsBody"></tbody>
+                        </table>
+                        <div class="earnings-summary" id="earningsSummary"></div>
+                    </div>
                 </div>
             </section>
 
@@ -2037,16 +2036,25 @@
                 : '<span>?</span> How It Works';
         });
 
-        // Chart tab selector (Stock Price vs EPS)
+        // Chart tab selector (Stock Price / EPS / Insights / Track Record)
+        const chartTabViews = {
+            'price': 'chartViewPrice',
+            'eps': 'chartViewEps',
+            'insights': 'chartViewInsights',
+            'track-record': 'chartViewTrackRecord',
+        };
+
         document.querySelectorAll('.chart-tab-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.chart-tab-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
 
                 const tab = btn.dataset.chartTab;
-                // Toggle views
-                document.getElementById('chartViewPrice').classList.toggle('active', tab === 'price');
-                document.getElementById('chartViewEps').classList.toggle('active', tab === 'eps');
+
+                // Toggle all views
+                Object.entries(chartTabViews).forEach(([key, viewId]) => {
+                    document.getElementById(viewId).classList.toggle('active', key === tab);
+                });
 
                 // Show period selector only for price tab
                 document.getElementById('chartPeriodSelector').style.display =
@@ -2175,7 +2183,7 @@
             moatTrendEl.textContent = formatMoatTrend(data.moat_trend);
             moatTrendEl.className = `moat-trend trend-${data.moat_trend}`;
 
-            // Earnings Track Record
+            // Earnings Track Record (rendered inside the Track Record tab)
             renderEarnings(data);
 
             // Store EPS data for tab switching; render if EPS tab is active
@@ -2185,11 +2193,13 @@
                 renderEpsChart(pendingEpsData);
             }
 
-            // Reset to price tab
+            // Reset to price tab (hide all other tab views)
             document.querySelectorAll('.chart-tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelector('.chart-tab-btn[data-chart-tab="price"]')?.classList.add('active');
+            Object.values(chartTabViews).forEach(viewId => {
+                document.getElementById(viewId).classList.remove('active');
+            });
             document.getElementById('chartViewPrice').classList.add('active');
-            document.getElementById('chartViewEps').classList.remove('active');
             document.getElementById('chartPeriodSelector').style.display = 'flex';
 
             // Load price chart (separate API call, non-blocking)
@@ -2246,16 +2256,12 @@
         }
 
         function renderEarnings(data) {
-            const section = document.getElementById('earningsSection');
             const earningsHistory = data.earnings_history || [];
             const streak = data.earnings_streak;
 
             if (!earningsHistory.length) {
-                section.style.display = 'none';
                 return;
             }
-
-            section.style.display = 'block';
 
             // Streak badge
             const badge = document.getElementById('earningsStreakBadge');
@@ -2690,12 +2696,10 @@
         // Earnings Reaction Insights
         // ==========================================
         async function loadEarningsInsights(ticker) {
-            const section = document.getElementById('insightsSection');
             const guidanceCard = document.getElementById('guidanceCard');
             const insightsList = document.getElementById('reactionInsightsList');
 
-            // Show loading state
-            section.style.display = 'block';
+            // Show loading state inside the tab
             insightsList.innerHTML = '<div class="insights-loading"><div class="mini-spinner" style="display:inline-block; margin-right:0.5rem;"></div> Loading insights...</div>';
 
             try {
