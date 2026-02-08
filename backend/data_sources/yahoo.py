@@ -952,7 +952,7 @@ class YahooFinanceClient:
         Build a forward-looking guidance summary from analyst estimates.
 
         Computes growth trend (accelerating/decelerating/stable), price-target
-        upside, and a human-readable summary sentence.
+        upside, estimate ranges (low/avg/high), and a human-readable summary.
         """
         result: Dict[str, Any] = {
             "current_q_eps_growth": None,
@@ -963,12 +963,72 @@ class YahooFinanceClient:
             "analyst_price_target_mean": None,
             "analyst_price_target_upside_pct": None,
             "num_analysts": None,
+            # Full estimate ranges for analyst vs company guidance comparison
+            "estimate_ranges": [],
+            "consensus_confidence": "unknown",
+            "price_targets": None,
             "summary": "No forward estimate data available.",
         }
 
         rev_ests = forward_estimates.get("revenue_estimates", [])
         eps_ests = forward_estimates.get("eps_estimates", [])
         pt = forward_estimates.get("analyst_price_targets")
+
+        # ── Build estimate ranges (analyst low → consensus → high) ──
+        estimate_ranges: List[Dict[str, Any]] = []
+
+        for i, label in enumerate(["Current Q", "Next Q"]):
+            row: Dict[str, Any] = {"period": label}
+
+            # EPS range
+            if i < len(eps_ests):
+                e = eps_ests[i]
+                row["eps_low"] = _safe_float(e.get("low"), default=None)
+                row["eps_avg"] = _safe_float(e.get("avg"), default=None)
+                row["eps_high"] = _safe_float(e.get("high"), default=None)
+                row["eps_year_ago"] = _safe_float(e.get("year_ago_eps"), default=None)
+                row["eps_growth"] = _safe_float(e.get("growth"), default=None)
+                row["eps_num_analysts"] = int(_safe_float(e.get("num_analysts"), default=0))
+
+            # Revenue range
+            if i < len(rev_ests):
+                r = rev_ests[i]
+                row["rev_low"] = _safe_float(r.get("low"), default=None)
+                row["rev_avg"] = _safe_float(r.get("avg"), default=None)
+                row["rev_high"] = _safe_float(r.get("high"), default=None)
+                row["rev_year_ago"] = _safe_float(r.get("year_ago_revenue"), default=None)
+                row["rev_growth"] = _safe_float(r.get("growth"), default=None)
+                row["rev_num_analysts"] = int(_safe_float(r.get("num_analysts"), default=0))
+
+            if len(row) > 1:  # More than just "period"
+                estimate_ranges.append(row)
+
+        result["estimate_ranges"] = estimate_ranges
+
+        # ── Consensus confidence (EPS spread relative to avg) ──
+        if estimate_ranges and estimate_ranges[0].get("eps_avg"):
+            cq = estimate_ranges[0]
+            eps_low = cq.get("eps_low")
+            eps_high = cq.get("eps_high")
+            eps_avg = cq.get("eps_avg")
+            if eps_low is not None and eps_high is not None and eps_avg and eps_avg != 0:
+                spread_pct = abs(eps_high - eps_low) / abs(eps_avg) * 100
+                if spread_pct < 10:
+                    result["consensus_confidence"] = "high"
+                elif spread_pct < 25:
+                    result["consensus_confidence"] = "moderate"
+                else:
+                    result["consensus_confidence"] = "low"
+
+        # ── Price target range ──
+        if pt:
+            result["price_targets"] = {
+                "current": _safe_float(pt.get("current"), default=None),
+                "low": _safe_float(pt.get("low"), default=None),
+                "mean": _safe_float(pt.get("mean"), default=None),
+                "median": _safe_float(pt.get("median"), default=None),
+                "high": _safe_float(pt.get("high"), default=None),
+            }
 
         # Revenue growth: current quarter vs next quarter
         if len(rev_ests) >= 2:
@@ -1001,10 +1061,10 @@ class YahooFinanceClient:
             else:
                 result["growth_trend"] = "stable"
 
-        # Price target
+        # Price target (backward compat)
         if pt:
             mean_pt = pt.get("mean")
-            result["analyst_price_target_mean"] = mean_pt
+            result["analyst_price_target_mean"] = _safe_float(mean_pt, default=None)
             if mean_pt and current_price > 0:
                 upside = ((mean_pt - current_price) / current_price) * 100
                 result["analyst_price_target_upside_pct"] = round(upside, 1)
@@ -1022,6 +1082,12 @@ class YahooFinanceClient:
             upside = result["analyst_price_target_upside_pct"]
             direction = "upside" if upside > 0 else "downside"
             parts.append(f"Mean analyst PT ${result['analyst_price_target_mean']:.0f} ({abs(upside):.1f}% {direction}).")
+
+        conf = result["consensus_confidence"]
+        if conf == "high":
+            parts.append("Tight analyst spread signals high confidence in guidance.")
+        elif conf == "low":
+            parts.append("Wide analyst spread signals uncertainty around company guidance.")
 
         if result["num_analysts"]:
             parts.append(f"{result['num_analysts']} analysts covering.")

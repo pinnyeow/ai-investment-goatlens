@@ -151,6 +151,32 @@ class EarningsReactionInsight(BaseModel):
     insight: str = ""
 
 
+class EstimateRange(BaseModel):
+    """Analyst estimate range for a single period (current Q or next Q)."""
+    period: str = ""
+    eps_low: Optional[float] = None
+    eps_avg: Optional[float] = None
+    eps_high: Optional[float] = None
+    eps_year_ago: Optional[float] = None
+    eps_growth: Optional[float] = None
+    eps_num_analysts: int = 0
+    rev_low: Optional[float] = None
+    rev_avg: Optional[float] = None
+    rev_high: Optional[float] = None
+    rev_year_ago: Optional[float] = None
+    rev_growth: Optional[float] = None
+    rev_num_analysts: int = 0
+
+
+class PriceTargetRange(BaseModel):
+    """Analyst price target range."""
+    current: Optional[float] = None
+    low: Optional[float] = None
+    mean: Optional[float] = None
+    median: Optional[float] = None
+    high: Optional[float] = None
+
+
 class ForwardGuidanceSummary(BaseModel):
     """Forward-looking guidance summary from analyst estimates."""
     current_q_eps_growth: Optional[float] = None
@@ -161,6 +187,10 @@ class ForwardGuidanceSummary(BaseModel):
     analyst_price_target_mean: Optional[float] = None
     analyst_price_target_upside_pct: Optional[float] = None
     num_analysts: Optional[int] = None
+    # New: full estimate ranges and confidence
+    estimate_ranges: List[EstimateRange] = []
+    consensus_confidence: str = "unknown"
+    price_targets: Optional[PriceTargetRange] = None
     summary: str = ""
 
 

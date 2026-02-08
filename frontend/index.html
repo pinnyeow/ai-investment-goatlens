@@ -1355,6 +1355,144 @@
             border-top: 1px solid var(--border);
         }
 
+        .guidance-badges {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .consensus-conf-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid var(--border);
+        }
+        .conf-badge-high { background: rgba(76, 175, 80, 0.1); color: var(--accent-green); border-color: rgba(76, 175, 80, 0.3); }
+        .conf-badge-moderate { background: rgba(255, 193, 7, 0.1); color: var(--accent-gold); border-color: rgba(255, 193, 7, 0.3); }
+        .conf-badge-low { background: rgba(244, 67, 54, 0.1); color: var(--accent-red); border-color: rgba(244, 67, 54, 0.3); }
+        .conf-badge-unknown { background: var(--bg-secondary); color: var(--text-muted); }
+
+        /* ── Estimate Range Bars ── */
+        .estimate-ranges-section {
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+        }
+        .estimate-ranges-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 0.75rem;
+            letter-spacing: 0.02em;
+        }
+        .estimate-period-block {
+            margin-bottom: 1rem;
+        }
+        .estimate-period-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .range-bar-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+        }
+        .range-bar-label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            min-width: 100px;
+            padding-top: 0.3rem;
+        }
+        .range-analysts {
+            font-weight: 400;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+        .range-bar-visual {
+            flex: 1;
+        }
+        .range-bar-track {
+            position: relative;
+            height: 10px;
+            background: var(--bg-secondary);
+            border-radius: 5px;
+            border: 1px solid var(--border);
+            overflow: visible;
+        }
+        .range-bar-fill {
+            position: absolute;
+            top: 0; bottom: 0;
+            background: linear-gradient(90deg, rgba(244,67,54,0.15), rgba(255,193,7,0.15), rgba(76,175,80,0.15));
+            border-radius: 5px;
+        }
+        .range-marker-consensus {
+            position: absolute;
+            top: -4px;
+            width: 14px; height: 18px;
+            background: var(--accent-blue, #42a5f5);
+            border: 2px solid #fff;
+            border-radius: 3px;
+            transform: translateX(-50%);
+            cursor: help;
+            z-index: 2;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+        }
+        .range-marker-ya {
+            position: absolute;
+            top: -3px;
+            width: 3px; height: 16px;
+            background: var(--text-muted);
+            transform: translateX(-50%);
+            border-radius: 1px;
+            opacity: 0.7;
+            cursor: help;
+            z-index: 1;
+        }
+        .range-bar-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 4px;
+        }
+        .range-val-low, .range-val-high {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+        .range-val-consensus {
+            font-size: 0.72rem;
+            color: var(--accent-blue, #42a5f5);
+            font-weight: 600;
+        }
+        .range-bar-meta {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 2px;
+        }
+        .range-ya-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+        .range-growth {
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .growth-positive { color: var(--accent-green); }
+        .growth-negative { color: var(--accent-red); }
+        .range-bar-value {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
         /* Per-Quarter Insight Rows */
         .insight-row {
             background: var(--bg-card);
@@ -2725,7 +2863,7 @@
 
         function renderForwardGuidance(fg) {
             const card = document.getElementById('guidanceCard');
-            if (!fg || fg.growth_trend === 'unknown' && !fg.analyst_price_target_mean) {
+            if (!fg || (fg.growth_trend === 'unknown' && !fg.analyst_price_target_mean && (!fg.estimate_ranges || fg.estimate_ranges.length === 0))) {
                 card.style.display = 'none';
                 return;
             }
@@ -2739,13 +2877,15 @@
             const trendLabel = fg.growth_trend.charAt(0).toUpperCase() + fg.growth_trend.slice(1);
             const trendClass = `trend-badge-${fg.growth_trend}`;
 
-            // Metrics
-            const metrics = [];
+            // Consensus confidence badge
+            const confLabel = fg.consensus_confidence || 'unknown';
+            const confIcon = confLabel === 'high' ? '🟢' : confLabel === 'moderate' ? '🟡' : confLabel === 'low' ? '🔴' : '⚪';
+            const confClass = `conf-badge-${confLabel}`;
 
+            // Metrics row (growth + price target)
+            const metrics = [];
             if (fg.current_q_rev_growth != null) {
-                const arrow = fg.next_q_rev_growth != null
-                    ? ` → ${fg.next_q_rev_growth}%`
-                    : '';
+                const arrow = fg.next_q_rev_growth != null ? ` → ${fg.next_q_rev_growth}%` : '';
                 metrics.push({
                     label: 'Revenue Growth',
                     value: `${fg.current_q_rev_growth}%${arrow}`,
@@ -2753,11 +2893,8 @@
                     color: fg.current_q_rev_growth > 0 ? 'var(--accent-green)' : 'var(--accent-red)',
                 });
             }
-
             if (fg.current_q_eps_growth != null) {
-                const arrow = fg.next_q_eps_growth != null
-                    ? ` → ${fg.next_q_eps_growth}%`
-                    : '';
+                const arrow = fg.next_q_eps_growth != null ? ` → ${fg.next_q_eps_growth}%` : '';
                 metrics.push({
                     label: 'EPS Growth',
                     value: `${fg.current_q_eps_growth}%${arrow}`,
@@ -2765,14 +2902,10 @@
                     color: fg.current_q_eps_growth > 0 ? 'var(--accent-green)' : 'var(--accent-red)',
                 });
             }
-
             if (fg.analyst_price_target_mean != null) {
                 const upside = fg.analyst_price_target_upside_pct;
-                const upsideStr = upside != null
-                    ? ` (${upside > 0 ? '+' : ''}${upside}%)`
-                    : '';
-                const upsideColor = upside > 5 ? 'var(--accent-green)' :
-                                    upside < -5 ? 'var(--accent-red)' : 'var(--text-primary)';
+                const upsideStr = upside != null ? ` (${upside > 0 ? '+' : ''}${upside}%)` : '';
+                const upsideColor = upside > 5 ? 'var(--accent-green)' : upside < -5 ? 'var(--accent-red)' : 'var(--text-primary)';
                 metrics.push({
                     label: 'Analyst Price Target',
                     value: `$${fg.analyst_price_target_mean.toFixed(0)}${upsideStr}`,
@@ -2781,14 +2914,76 @@
                 });
             }
 
+            // ── Build estimate range rows ──
+            const ranges = fg.estimate_ranges || [];
+            let rangeHTML = '';
+
+            if (ranges.length > 0) {
+                rangeHTML = `
+                    <div class="estimate-ranges-section">
+                        <div class="estimate-ranges-title">Analyst Estimate Ranges vs Last Year</div>
+                        ${ranges.map(r => {
+                            let epsRangeBar = '';
+                            let revRangeBar = '';
+
+                            // EPS range bar
+                            if (r.eps_avg != null) {
+                                epsRangeBar = buildRangeBar(
+                                    'EPS', r.eps_low, r.eps_avg, r.eps_high,
+                                    r.eps_year_ago, r.eps_growth, r.eps_num_analysts, '$'
+                                );
+                            }
+
+                            // Revenue range bar
+                            if (r.rev_avg != null) {
+                                const fmtRev = (v) => {
+                                    if (v == null) return null;
+                                    if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+                                    if (v >= 1e6) return '$' + (v / 1e6).toFixed(0) + 'M';
+                                    return '$' + v.toFixed(0);
+                                };
+                                revRangeBar = buildRangeBar(
+                                    'Revenue', r.rev_low, r.rev_avg, r.rev_high,
+                                    r.rev_year_ago, r.rev_growth, r.rev_num_analysts, '$',
+                                    fmtRev
+                                );
+                            }
+
+                            return `
+                                <div class="estimate-period-block">
+                                    <div class="estimate-period-label">${r.period}</div>
+                                    ${epsRangeBar}
+                                    ${revRangeBar}
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                `;
+            }
+
+            // ── Price target range bar ──
+            let ptRangeHTML = '';
+            if (fg.price_targets && fg.price_targets.mean != null) {
+                const pt = fg.price_targets;
+                ptRangeHTML = buildRangeBar(
+                    'Price Target', pt.low, pt.mean, pt.high,
+                    pt.current, null, null, '$', null, 'Current Price'
+                );
+            }
+
             card.innerHTML = `
                 <div class="guidance-header">
                     <div class="guidance-title">
                         <span>🔮</span> Forward Guidance
                     </div>
-                    <span class="growth-trend-badge ${trendClass}">
-                        ${trendIcon} ${trendLabel}
-                    </span>
+                    <div class="guidance-badges">
+                        <span class="growth-trend-badge ${trendClass}">
+                            ${trendIcon} ${trendLabel}
+                        </span>
+                        <span class="consensus-conf-badge ${confClass}">
+                            ${confIcon} ${confLabel.charAt(0).toUpperCase() + confLabel.slice(1)} Confidence
+                        </span>
+                    </div>
                 </div>
                 <div class="guidance-metrics">
                     ${metrics.map(m => `
@@ -2799,7 +2994,65 @@
                         </div>
                     `).join('')}
                 </div>
+                ${rangeHTML}
+                ${ptRangeHTML ? `<div class="estimate-ranges-section" style="margin-top: 0.5rem;">${ptRangeHTML}</div>` : ''}
                 <div class="guidance-summary-text">${fg.summary}</div>
+            `;
+        }
+
+        /**
+         * Build a visual range bar: Low ◄─── Consensus ───► High
+         * with optional year-ago marker and growth %.
+         */
+        function buildRangeBar(label, low, avg, high, yearAgo, growthPct, numAnalysts, prefix, fmtFn, yearAgoLabel) {
+            prefix = prefix || '';
+            const fmt = fmtFn || ((v) => v != null ? `${prefix}${v.toFixed(2)}` : '—');
+            const yaLabel = yearAgoLabel || 'Year Ago';
+
+            // If low/high are missing, only show consensus
+            if (low == null || high == null) {
+                return `
+                    <div class="range-bar-row">
+                        <span class="range-bar-label">${label}</span>
+                        <span class="range-bar-value">${fmt(avg)}</span>
+                        ${growthPct != null ? `<span class="range-growth ${growthPct >= 0 ? 'growth-positive' : 'growth-negative'}">${growthPct >= 0 ? '+' : ''}${(growthPct * 100).toFixed(1)}% YoY</span>` : ''}
+                    </div>
+                `;
+            }
+
+            // Compute positions on the bar (0-100%)
+            const range = high - low;
+            const consensusPos = range > 0 ? ((avg - low) / range) * 100 : 50;
+
+            // Year-ago marker
+            let yaMarkerHTML = '';
+            let yaLegendHTML = '';
+            if (yearAgo != null && range > 0) {
+                const yaPos = Math.max(0, Math.min(100, ((yearAgo - low) / range) * 100));
+                yaMarkerHTML = `<div class="range-marker-ya" style="left: ${yaPos}%;" title="${yaLabel}: ${fmt(yearAgo)}"></div>`;
+                yaLegendHTML = `<span class="range-ya-label">${yaLabel}: ${fmt(yearAgo)}</span>`;
+            }
+
+            return `
+                <div class="range-bar-row">
+                    <span class="range-bar-label">${label}${numAnalysts ? ` <span class="range-analysts">(${numAnalysts} analysts)</span>` : ''}</span>
+                    <div class="range-bar-visual">
+                        <div class="range-bar-track">
+                            <div class="range-bar-fill" style="left: 0%; width: 100%;"></div>
+                            <div class="range-marker-consensus" style="left: ${consensusPos}%;" title="Consensus: ${fmt(avg)}"></div>
+                            ${yaMarkerHTML}
+                        </div>
+                        <div class="range-bar-labels">
+                            <span class="range-val-low">${fmt(low)}</span>
+                            <span class="range-val-consensus">Consensus: ${fmt(avg)}</span>
+                            <span class="range-val-high">${fmt(high)}</span>
+                        </div>
+                        <div class="range-bar-meta">
+                            ${yaLegendHTML}
+                            ${growthPct != null ? `<span class="range-growth ${growthPct >= 0 ? 'growth-positive' : 'growth-negative'}">${growthPct >= 0 ? '+' : ''}${(growthPct * 100).toFixed(1)}% YoY</span>` : ''}
+                        </div>
+                    </div>
+                </div>
             `;
         }
 
