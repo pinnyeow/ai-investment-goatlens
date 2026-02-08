@@ -577,8 +577,14 @@ async def root():
 
 
 @app.get("/health")
+@app.get("/ping")  # Alias for keep-alive services
 async def health():
-    """Health check endpoint."""
+    """
+    Health check endpoint.
+    
+    Also serves as a keep-alive endpoint for external monitoring services
+    (UptimeRobot, cron-job.org, etc.) to prevent Render from sleeping.
+    """
     return {"status": "healthy", "service": "goatlens"}
 
 
