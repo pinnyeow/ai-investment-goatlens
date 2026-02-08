@@ -49,6 +49,7 @@ from typing_extensions import TypedDict
 # Local imports
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
 from data_sources import YahooFinanceClient, YahooFinanceError
+from data_sources import FMPClient, FMPError
 from temporal import TemporalAnalyzer
 from strategies import calculate_consensus, calculate_consensus_with_llm, StrategyResult, Verdict
 from llm import get_llm_client
@@ -151,6 +152,14 @@ class EarningsReactionInsight(BaseModel):
     revenue_growth_yoy: Optional[float] = None
     guidance_signal: str = "unknown"
     insight: str = ""
+    # FMP guidance fields (None when FMP unavailable — graceful degradation)
+    revenue_actual: Optional[float] = None
+    revenue_yoy_pct: Optional[float] = None
+    capex: Optional[float] = None
+    capex_prev_quarter: Optional[float] = None
+    capex_qoq_pct: Optional[float] = None
+    capex_pct_revenue: Optional[float] = None
+    fcf: Optional[float] = None
 
 
 class EstimateRange(BaseModel):
@@ -652,15 +661,18 @@ async def get_earnings(ticker: str):
     
     Returns last 8 quarters of EPS actual vs. consensus estimate,
     beat/miss classification, streak summary, price reactions,
-    per-quarter reaction insights, forward guidance summary,
-    and the next upcoming earnings date.
-    Free data from Yahoo Finance — no API key required.
+    per-quarter reaction insights (enriched with FMP revenue + CapEx
+    when FMP_API_KEY is set), forward guidance summary, and the next
+    upcoming earnings date.
+
+    Primary data: Yahoo Finance (free, no API key)
+    Supplementary: FMP (revenue actuals + CapEx — graceful degradation)
     """
     ticker = ticker.upper()
     
     try:
         async with YahooFinanceClient() as client:
-            # Fetch all data in parallel
+            # Fetch all Yahoo data in parallel
             raw_task = client.get_company_data(ticker, years=1)
             price_task = client.get_price_history(ticker, period="2y")
             analyst_task = client.get_analyst_reactions(ticker)
@@ -681,9 +693,24 @@ async def get_earnings(ticker: str):
             # Enrich with price reactions
             earnings = client.calculate_earnings_reactions(price_history, earnings)
 
-            # Build per-quarter reaction insights
+            # ── FMP supplementary data (graceful degradation) ──
+            # If FMP_API_KEY is set, fetch revenue actuals + CapEx.
+            # If not, fmp_guidance stays empty and the frontend shows
+            # EPS-only cards — the core experience is unaffected.
+            fmp_guidance = None
+            fmp_api_key = os.environ.get("FMP_API_KEY")
+            if fmp_api_key:
+                try:
+                    async with FMPClient(api_key=fmp_api_key) as fmp:
+                        fmp_guidance = await fmp.get_quarterly_guidance_data(ticker)
+                except Exception as fmp_err:
+                    # Log but don't fail — Yahoo data is sufficient
+                    print(f"[FMP] Guidance data fetch failed for {ticker}: {fmp_err}")
+
+            # Build per-quarter reaction insights (with FMP enrichment)
             reaction_insights = client.build_earnings_insights(
                 earnings, price_history, analyst_reactions, quarterly_revenue,
+                fmp_guidance=fmp_guidance,
             )
 
             # Build forward guidance summary

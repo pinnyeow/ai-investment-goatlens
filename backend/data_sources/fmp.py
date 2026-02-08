@@ -1,18 +1,20 @@
 """
 Financial Modeling Prep (FMP) API Client
 
-Primary data source for GOATlens.
-FMP provides comprehensive financial data including:
-- Income statements
-- Balance sheets
-- Cash flow statements
-- Key ratios
-- Historical prices
-- Earnings data
+Supplementary data source for GOATlens earnings insights.
+FMP provides data that Yahoo Finance does NOT:
+- Quarterly revenue actuals (for Company Delivered vs Street Expected)
+- Quarterly CapEx actuals (investment intensity / guidance signal)
+- Annual analyst estimates (forward consensus)
 
-Free tier: 250 API calls/day
+Yahoo Finance remains the primary free source for price data, EPS
+estimates, and earnings history.
+
+Free tier: 250 API calls/day, max 5 records per quarterly call.
+API base changed from /api/v3 (deprecated Aug 2025) to /stable.
 """
 
+import math
 import os
 import httpx
 from typing import Dict, Any, List, Optional
@@ -76,6 +78,19 @@ class FinancialData:
     institutional_ownership: float
 
 
+def _safe_float(val, default=0) -> Optional[float]:
+    """Sanitize a float value for JSON serialization (same helper as yahoo.py)."""
+    if val is None:
+        return default
+    try:
+        f = float(val)
+        if math.isnan(f) or math.isinf(f):
+            return default
+        return f
+    except (ValueError, TypeError):
+        return default
+
+
 class FMPClient:
     """
     Async client for Financial Modeling Prep API.
@@ -85,7 +100,8 @@ class FMPClient:
         data = await client.get_company_data("AAPL", years=10)
     """
     
-    BASE_URL = "https://financialmodelingprep.com/api/v3"
+    # FMP deprecated /api/v3 in Aug 2025. New base is /stable.
+    BASE_URL = "https://financialmodelingprep.com/stable"
     
     def __init__(self, api_key: Optional[str] = None):
         """
@@ -114,8 +130,11 @@ class FMPClient:
         """
         Make authenticated request to FMP API.
         
+        The /stable API uses query-param based routing (?symbol=AMZN)
+        instead of the old path-based routing (/income-statement/AMZN).
+        
         Args:
-            endpoint: API endpoint path
+            endpoint: API endpoint path (e.g. "income-statement")
             params: Additional query parameters
             
         Returns:
@@ -142,176 +161,145 @@ class FMPClient:
         except httpx.RequestError as e:
             raise FMPError(f"Request failed: {str(e)}") from e
     
+    # ------------------------------------------------------------------
+    # Core financial data methods (updated for /stable query-param API)
+    # ------------------------------------------------------------------
+
     async def get_company_profile(self, ticker: str) -> Dict[str, Any]:
-        """
-        Get company profile and basic info.
-        
-        Args:
-            ticker: Stock ticker symbol
-            
-        Returns:
-            Company profile data
-        """
-        data = await self._request(f"profile/{ticker}")
+        """Get company profile and basic info."""
+        data = await self._request("profile", {"symbol": ticker})
         if data and len(data) > 0:
             return data[0]
         raise FMPError(f"No data found for ticker: {ticker}")
-    
+
     async def get_income_statements(
-        self,
-        ticker: str,
-        limit: int = 10,
-        period: str = "annual",
+        self, ticker: str, limit: int = 5, period: str = "annual",
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical income statements.
-        
-        Args:
-            ticker: Stock ticker symbol
-            limit: Number of years to fetch
-            period: "annual" or "quarter"
-            
-        Returns:
-            List of income statements
-        """
+        """Get historical income statements (annual or quarterly)."""
         return await self._request(
-            f"income-statement/{ticker}",
-            {"limit": limit, "period": period},
+            "income-statement",
+            {"symbol": ticker, "limit": limit, "period": period},
         )
-    
+
     async def get_balance_sheets(
-        self,
-        ticker: str,
-        limit: int = 10,
-        period: str = "annual",
+        self, ticker: str, limit: int = 5, period: str = "annual",
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical balance sheets.
-        
-        Args:
-            ticker: Stock ticker symbol
-            limit: Number of years to fetch
-            period: "annual" or "quarter"
-            
-        Returns:
-            List of balance sheets
-        """
+        """Get historical balance sheets."""
         return await self._request(
-            f"balance-sheet-statement/{ticker}",
-            {"limit": limit, "period": period},
+            "balance-sheet-statement",
+            {"symbol": ticker, "limit": limit, "period": period},
         )
-    
+
     async def get_cash_flow_statements(
-        self,
-        ticker: str,
-        limit: int = 10,
-        period: str = "annual",
+        self, ticker: str, limit: int = 5, period: str = "annual",
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical cash flow statements.
-        
-        Args:
-            ticker: Stock ticker symbol
-            limit: Number of years to fetch
-            period: "annual" or "quarter"
-            
-        Returns:
-            List of cash flow statements
-        """
+        """Get historical cash flow statements."""
         return await self._request(
-            f"cash-flow-statement/{ticker}",
-            {"limit": limit, "period": period},
+            "cash-flow-statement",
+            {"symbol": ticker, "limit": limit, "period": period},
         )
-    
+
     async def get_key_metrics(
-        self,
-        ticker: str,
-        limit: int = 10,
-        period: str = "annual",
+        self, ticker: str, limit: int = 5, period: str = "annual",
     ) -> List[Dict[str, Any]]:
-        """
-        Get key financial metrics (ratios, per-share data).
-        
-        Args:
-            ticker: Stock ticker symbol
-            limit: Number of years to fetch
-            period: "annual" or "quarter"
-            
-        Returns:
-            List of key metrics by year
-        """
+        """Get key financial metrics (ratios, per-share data)."""
         return await self._request(
-            f"key-metrics/{ticker}",
-            {"limit": limit, "period": period},
+            "key-metrics",
+            {"symbol": ticker, "limit": limit, "period": period},
         )
-    
+
     async def get_financial_ratios(
-        self,
-        ticker: str,
-        limit: int = 10,
-        period: str = "annual",
+        self, ticker: str, limit: int = 5, period: str = "annual",
     ) -> List[Dict[str, Any]]:
-        """
-        Get financial ratios (profitability, liquidity, leverage).
-        
-        Args:
-            ticker: Stock ticker symbol
-            limit: Number of years to fetch
-            period: "annual" or "quarter"
-            
-        Returns:
-            List of ratios by year
-        """
+        """Get financial ratios (profitability, liquidity, leverage)."""
         return await self._request(
-            f"ratios/{ticker}",
-            {"limit": limit, "period": period},
+            "ratios",
+            {"symbol": ticker, "limit": limit, "period": period},
         )
-    
+
     async def get_historical_prices(
-        self,
-        ticker: str,
-        from_date: Optional[str] = None,
-        to_date: Optional[str] = None,
+        self, ticker: str, from_date: Optional[str] = None, to_date: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical stock prices.
-        
-        Args:
-            ticker: Stock ticker symbol
-            from_date: Start date (YYYY-MM-DD)
-            to_date: End date (YYYY-MM-DD)
-            
-        Returns:
-            List of historical prices
-        """
-        params = {}
+        """Get historical stock prices."""
+        params: Dict[str, Any] = {"symbol": ticker}
         if from_date:
             params["from"] = from_date
         if to_date:
             params["to"] = to_date
-        
-        data = await self._request(f"historical-price-full/{ticker}", params)
-        return data.get("historical", [])
-    
+        data = await self._request("historical-price-full", params)
+        if isinstance(data, dict):
+            return data.get("historical", [])
+        return data if isinstance(data, list) else []
+
     async def get_earnings_history(
-        self,
-        ticker: str,
-        limit: int = 40,
+        self, ticker: str, limit: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Get historical earnings (actual vs estimates).
-        
-        Args:
-            ticker: Stock ticker symbol
-            limit: Number of quarters to fetch
-            
-        Returns:
-            List of earnings data
-        """
+        """Get historical earnings (actual vs estimates)."""
         return await self._request(
-            f"historical/earning_calendar/{ticker}",
-            {"limit": limit},
+            "historical/earning_calendar",
+            {"symbol": ticker, "limit": limit},
         )
+
+    # ------------------------------------------------------------------
+    # Guidance data — Revenue actuals + CapEx (for earnings story cards)
+    # ------------------------------------------------------------------
+
+    async def get_quarterly_guidance_data(
+        self, ticker: str, limit: int = 5,
+    ) -> Dict[str, Any]:
+        """
+        Fetch quarterly revenue + CapEx data in parallel for guidance
+        comparison in the earnings Insights tab.
+
+        FMP free tier allows max 5 records per quarterly call.
+
+        Returns:
+            {
+                "revenue_by_quarter": {"2025-12-31": {"revenue": ..., "operating_income": ..., ...}},
+                "capex_by_quarter":   {"2025-12-31": {"capex": ..., "fcf": ..., ...}},
+            }
+        """
+        try:
+            income, cash_flow = await asyncio.gather(
+                self.get_income_statements(ticker, limit=limit, period="quarter"),
+                self.get_cash_flow_statements(ticker, limit=limit, period="quarter"),
+            )
+        except FMPError:
+            # If FMP fails, return empty — Yahoo-only mode still works
+            return {"revenue_by_quarter": {}, "capex_by_quarter": {}}
+
+        # Index by quarter-end date for easy lookup
+        revenue_by_q: Dict[str, Dict[str, Any]] = {}
+        for rec in (income if isinstance(income, list) else []):
+            date = rec.get("date", "")
+            if not date:
+                continue
+            revenue_by_q[date] = {
+                "revenue": _safe_float(rec.get("revenue"), default=None),
+                "operating_income": _safe_float(rec.get("operatingIncome"), default=None),
+                "net_income": _safe_float(rec.get("netIncome"), default=None),
+                "gross_profit": _safe_float(rec.get("grossProfit"), default=None),
+                "eps": _safe_float(rec.get("epsDiluted") or rec.get("eps"), default=None),
+                "period": rec.get("period", ""),
+            }
+
+        capex_by_q: Dict[str, Dict[str, Any]] = {}
+        for rec in (cash_flow if isinstance(cash_flow, list) else []):
+            date = rec.get("date", "")
+            if not date:
+                continue
+            raw_capex = _safe_float(rec.get("capitalExpenditure"), default=None)
+            capex_by_q[date] = {
+                "capex": abs(raw_capex) if raw_capex is not None else None,
+                "fcf": _safe_float(rec.get("freeCashFlow"), default=None),
+                "operating_cash_flow": _safe_float(rec.get("operatingCashFlow"), default=None),
+                "period": rec.get("period", ""),
+            }
+
+        return {
+            "revenue_by_quarter": revenue_by_q,
+            "capex_by_quarter": capex_by_q,
+        }
     
     async def get_company_data(
         self,

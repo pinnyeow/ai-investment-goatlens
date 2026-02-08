@@ -1,0 +1,14 @@
+# Don't send these to Docker (faster builds, smaller images)
+.git
+.gitignore
+.env
+.env.*
+backend/venv/
+backend/.venv/
+__pycache__/
+*.pyc
+*.md
+.cursor/
+.idea/
+.vscode/
+.DS_Store

@@ -1502,31 +1502,54 @@
             display: block;
         }
         .story-comparison {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 0.75rem;
             margin-bottom: 1rem;
         }
-        .story-delivered, .story-expected {
+        /* Comparison table — 3 columns: Metric | Company Delivered | Context */
+        .story-compare-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
             background: var(--bg-secondary);
             border-radius: var(--radius-sm);
-            padding: 0.75rem 1rem;
             border: 1px solid var(--border);
+            overflow: hidden;
         }
-        .story-col-label {
-            font-size: 0.65rem;
+        .story-compare-table th,
+        .story-compare-table td {
+            padding: 0.5rem 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        .story-compare-table tr:last-child td { border-bottom: none; }
+        .story-compare-table th {
+            font-size: 0.6rem;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            margin-bottom: 0.4rem;
+            color: var(--text-muted);
+            background: var(--bg-primary);
         }
-        .story-delivered .story-col-label { color: var(--accent-green); }
-        .story-expected .story-col-label { color: var(--accent-blue, #42a5f5); }
-        .story-col-value {
-            font-size: 1.15rem;
+        .story-compare-table th:nth-child(2) { color: var(--accent-green); }
+        .story-compare-table .metric-label {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            white-space: nowrap;
+            width: 1%;
+        }
+        .story-compare-table .metric-value {
+            font-size: 0.95rem;
             font-weight: 700;
             color: var(--text-primary);
         }
+        .story-compare-table .metric-context {
+            font-size: 0.8rem;
+            font-weight: 400;
+            color: var(--text-muted);
+            margin-left: 0.5rem;
+        }
+        .story-compare-table .metric-context .up { color: var(--accent-green); }
+        .story-compare-table .metric-context .down { color: var(--accent-red); }
         .story-explanation {
             background: var(--bg-secondary);
             border-left: 3px solid var(--accent-gold);
@@ -1690,17 +1713,92 @@
         /* Footer */
         footer {
             text-align: center;
-            padding: 3rem 2rem;
+            padding: 2.5rem 2rem;
             border-top: 1px solid var(--border);
             margin-top: 4rem;
         }
 
-        .disclaimer {
-            font-size: 0.9rem;
+        /* About Panel (same slide-down pattern as learn-more-panel) */
+        .about-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            margin-bottom: 2rem;
+            overflow: hidden;
+            max-height: 0;
+            opacity: 0;
+            transition: all 0.4s ease;
+        }
+        .about-panel.active {
+            max-height: 500px;
+            opacity: 1;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        .about-panel h3 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin: 0 0 1.25rem;
+        }
+        .about-content {
+            display: flex;
+            gap: 2rem;
+            align-items: flex-start;
+        }
+        .about-story {
+            flex: 1;
+        }
+        .about-story p {
+            font-size: 0.88rem;
+            color: var(--text-secondary);
+            line-height: 1.75;
+            margin: 0 0 0.5rem;
+        }
+        .about-story strong { color: var(--text-primary); }
+        .about-story .about-label {
+            display: block;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
             color: var(--text-muted);
-            max-width: 700px;
+            margin-bottom: 0.25rem;
+            font-weight: 600;
+        }
+        .about-connect {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            flex-shrink: 0;
+        }
+        .about-connect a {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.82rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .about-connect a:hover {
+            border-color: var(--accent-gold);
+            color: var(--accent-gold);
+        }
+        .about-connect svg { width: 16px; height: 16px; fill: currentColor; }
+        @media (max-width: 600px) {
+            .about-content { flex-direction: column; gap: 1rem; }
+            .about-connect { flex-direction: row; }
+        }
+
+        .disclaimer {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            max-width: 100%;
             margin: 0 auto;
-            line-height: 1.7;
+            line-height: 1.5;
         }
 
         /* Responsive */
@@ -1765,6 +1863,9 @@
                 <button class="help-btn" id="helpBtn">
                     <span>?</span> How It Works
                 </button>
+                <button class="help-btn" id="aboutBtn" style="margin-left: 0.5rem;">
+                    <span>i</span> About
+                </button>
             </div>
         </div>
     </header>
@@ -1783,7 +1884,7 @@
                 <div class="scoring-card">
                     <h4>Warren Buffett</h4>
                     <div class="style">Value + Quality</div>
-                    <p>ROE &gt;15%, high margins, low debt. Seeks durable moats and owner earnings. Max +100 for quality at fair price.</p>
+                    <p>ROE &gt;15%, high margins, low debt. Seeks durable moats and owner earnings. Rewards consistent earnings beats.</p>
                 </div>
                 <div class="scoring-card">
                     <h4>Peter Lynch</h4>
@@ -1806,6 +1907,7 @@
                     <p>Debt cycles, risk-adjusted returns, diversification. Prefers all-weather performers.</p>
                 </div>
             </div>
+            <p style="font-size: 0.75rem; color: var(--text-muted); text-align: center; margin: 0.75rem 0 0.5rem; font-style: italic;">Investment philosophies and thresholds are based on each investor's published writings. Scoring weights are GOATlens interpretations and not endorsed by these individuals.</p>
             <div class="score-legend">
                 <h4>Score Scale (-100 to +100)</h4>
                 <div class="legend-items">
@@ -1814,6 +1916,29 @@
                     <div class="legend-item"><span class="legend-dot gold"></span> -19 to +19: Hold</div>
                     <div class="legend-item"><span class="legend-dot red"></span> -20 to -59: Sell</div>
                     <div class="legend-item"><span class="legend-dot red"></span> -60 to -100: Strong Sell</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- About Panel (slides open like "How It Works") -->
+        <div class="about-panel" id="aboutPanel">
+            <h3>Built by Pin</h3>
+            <div class="about-content">
+                <div class="about-story">
+                    <span class="about-label">Why I built this</span>
+                    <p>I wanted to develop my AI product sense and learning by building felt like the best starting point. GOATlens combines real financial data, multi-agent AI, and legendary investor frameworks into one tool.</p>
+                    <span class="about-label">Feedback welcome</span>
+                    <p>This is a work in progress. If you have ideas, see bugs, or just want to chat about AI &amp; investing, I'd love to hear from you.</p>
+                </div>
+                <div class="about-connect">
+                    <a href="https://github.com/pinnyeow/ai-investment-goatlens" target="_blank" rel="noopener">
+                        <svg viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.39.6.11.79-.26.79-.58v-2.17c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.3-1.55 3.3-1.23 3.3-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.48 5.93.43.37.81 1.1.81 2.22v3.29c0 .32.19.7.8.58A12.01 12.01 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+                        View Source
+                    </a>
+                    <a href="https://www.linkedin.com/in/pinmanee/" target="_blank" rel="noopener">
+                        <svg viewBox="0 0 24 24"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.36V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.12 2.06 2.06 0 0 1 0 4.12zM7.12 20.45H3.56V9h3.56v11.45zM22.23 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.46c.98 0 1.77-.77 1.77-1.72V1.72C24 .77 23.21 0 22.23 0z"/></svg>
+                        Connect
+                    </a>
                 </div>
             </div>
         </div>
@@ -2059,8 +2184,7 @@
 
     <footer>
         <p class="disclaimer">
-            GOATlens is for educational and research purposes only. This is not financial advice. 
-            Always conduct your own research and consult with a qualified financial advisor before making investment decisions.
+            Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Data provided by Yahoo Finance &amp; Financial Modeling Prep.
         </p>
     </footer>
 
@@ -2076,7 +2200,7 @@
         
         // Score tooltips for each investor
         const investorTooltips = {
-            'Warren Buffett': 'Buffett scores based on ROE (25pts), profit margins (20pts), debt levels (20pts), and moat quality (35pts). Loves durable competitive advantages.',
+            'Warren Buffett': 'Buffett scores based on ROE (25pts), profit margins (20pts), debt levels (20pts), and earnings consistency (15pts). Loves durable competitive advantages.',
             'Peter Lynch': 'Lynch scores PEG ratio (35pts), growth rate (25pts), institutional ownership (15pts), and ten-bagger potential (25pts). Seeks growth at fair prices.',
             'Benjamin Graham': 'Graham scores margin of safety (40pts), P/E ratio (20pts), current ratio (15pts), and dividend history (15pts). Demands deep value.',
             'Charlie Munger': 'Munger scores business quality (100pts base) minus red flags (-20 each). Focuses on avoiding mistakes and finding quality.',
@@ -2089,6 +2213,8 @@
         const demoBtn = document.getElementById('demoBtn');
         const helpBtn = document.getElementById('helpBtn');
         const learnMorePanel = document.getElementById('learnMorePanel');
+        const aboutBtn = document.getElementById('aboutBtn');
+        const aboutPanel = document.getElementById('aboutPanel');
         const loading = document.getElementById('loading');
         const results = document.getElementById('results');
         const errorMessage = document.getElementById('errorMessage');
@@ -2123,6 +2249,14 @@
             helpBtn.innerHTML = learnMorePanel.classList.contains('active') 
                 ? '<span>✕</span> Close' 
                 : '<span>?</span> How It Works';
+        });
+
+        // About panel toggle (same pattern as How It Works)
+        aboutBtn.addEventListener('click', () => {
+            aboutPanel.classList.toggle('active');
+            aboutBtn.innerHTML = aboutPanel.classList.contains('active')
+                ? '<span>✕</span> Close'
+                : '<span>i</span> About';
         });
 
         // Chart tab selector (Stock Price / EPS / Insights / Track Record)
@@ -2972,14 +3106,67 @@
                 else if (bm === 'miss') borderClass = 'story-border-miss';
                 else if (bm === 'beat') borderClass = 'story-border-beat';
 
-                // EPS values for "Company Delivered vs Street Expected"
-                const epsActual = ins.eps_actual != null ? '$' + ins.eps_actual.toFixed(2) : '—';
-                const epsEstimate = ins.eps_estimate != null ? '$' + ins.eps_estimate.toFixed(2) : '—';
+                // Helper: format dollars in billions
+                const fmtBn = (val) => val != null ? '$' + (val / 1e9).toFixed(1) + 'B' : '—';
+                const fmtEpsVal = (val) => val != null ? '$' + val.toFixed(2) : '—';
+                const fmtPct = (val) => val != null ? `${val > 0 ? '+' : ''}${val.toFixed(1)}%` : '';
+                const pctClass = (val) => val != null ? (val > 0 ? 'up' : val < 0 ? 'down' : '') : '';
+
+                // EPS values
+                const epsActual = fmtEpsVal(ins.eps_actual);
+                const epsEstimate = fmtEpsVal(ins.eps_estimate);
 
                 // Surprise
                 const surpriseStr = ins.eps_surprise_pct != null
                     ? `${ins.eps_surprise_pct > 0 ? '+' : ''}${ins.eps_surprise_pct.toFixed(1)}%`
                     : '';
+
+                // Build comparison table rows dynamically (graceful degradation)
+                // Simplified to 2 columns: Metric | Result + context
+                // No more confusing "Context / Prior" column with mixed meanings
+                let tableRows = '';
+
+                // Row 1: EPS — always present (Yahoo)
+                const epsSurprise = ins.eps_surprise_pct != null
+                    ? ` <span class="metric-context"><span class="${pctClass(ins.eps_surprise_pct)}">${fmtPct(ins.eps_surprise_pct)} vs est ${epsEstimate}</span></span>`
+                    : (ins.eps_estimate != null ? ` <span class="metric-context">est ${epsEstimate}</span>` : '');
+                tableRows += `<tr>
+                    <td class="metric-label">EPS</td>
+                    <td class="metric-value">${epsActual}${epsSurprise}</td>
+                </tr>`;
+
+                // Row 2: Revenue (FMP — only if data exists)
+                if (ins.revenue_actual != null) {
+                    const revYoY = ins.revenue_yoy_pct != null
+                        ? ` <span class="metric-context"><span class="${pctClass(ins.revenue_yoy_pct)}">${fmtPct(ins.revenue_yoy_pct)} YoY</span></span>`
+                        : '';
+                    tableRows += `<tr>
+                        <td class="metric-label">Revenue</td>
+                        <td class="metric-value">${fmtBn(ins.revenue_actual)}${revYoY}</td>
+                    </tr>`;
+                }
+
+                // Row 3: CapEx (FMP — only if data exists)
+                if (ins.capex != null) {
+                    const capexChange = ins.capex_qoq_pct != null
+                        ? ` <span class="metric-context"><span class="${pctClass(ins.capex_qoq_pct)}">${fmtPct(ins.capex_qoq_pct)} QoQ</span></span>`
+                        : '';
+                    const capexIntensity = ins.capex_pct_revenue != null
+                        ? ` <span class="metric-context">${ins.capex_pct_revenue.toFixed(0)}% of revenue</span>`
+                        : '';
+                    tableRows += `<tr>
+                        <td class="metric-label">CapEx</td>
+                        <td class="metric-value">${fmtBn(ins.capex)}${capexChange}${capexIntensity}</td>
+                    </tr>`;
+                }
+
+                // Row 4: FCF (FMP — only if CapEx shown)
+                if (ins.fcf != null && ins.capex != null) {
+                    tableRows += `<tr>
+                        <td class="metric-label">Free Cash Flow</td>
+                        <td class="metric-value">${fmtBn(ins.fcf)}</td>
+                    </tr>`;
+                }
 
                 // Stats for the expanded detail
                 const stats = [];
@@ -3001,14 +3188,17 @@
                         </div>
                         <div class="story-body" id="storyBody${idx}">
                             <div class="story-comparison">
-                                <div class="story-delivered">
-                                    <div class="story-col-label">Company Delivered</div>
-                                    <div class="story-col-value">${epsActual} EPS</div>
-                                </div>
-                                <div class="story-expected">
-                                    <div class="story-col-label">Street Expected</div>
-                                    <div class="story-col-value">${epsEstimate} EPS</div>
-                                </div>
+                                <table class="story-compare-table">
+                                    <thead>
+                                        <tr>
+                                            <th></th>
+                                            <th>Company Delivered</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${tableRows}
+                                    </tbody>
+                                </table>
                             </div>
                             ${ins.insight ? `
                                 <div class="story-explanation">

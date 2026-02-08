@@ -1,0 +1,24 @@
+# Render Blueprint – defines the infrastructure for GOATlens
+# Docs: https://docs.render.com/blueprint-spec
+#
+# To deploy:
+#   1. Push this file to your GitHub repo
+#   2. Go to https://dashboard.render.com/blueprints
+#   3. Click "New Blueprint Instance" and connect your repo
+#   4. Render will read this file and create the service automatically
+#   5. Add your environment variables (OPENAI_API_KEY, FMP_API_KEY) in the Render dashboard
+
+services:
+  - type: web
+    name: goatlens
+    runtime: docker
+    plan: free
+    # Render auto-detects the Dockerfile at the repo root
+    dockerfilePath: ./Dockerfile
+    envVars:
+      # These are placeholder keys – you'll set the actual values
+      # in the Render dashboard under Environment > Secret Files
+      - key: OPENAI_API_KEY
+        sync: false   # means "I'll enter this manually in the dashboard"
+      - key: FMP_API_KEY
+        sync: false

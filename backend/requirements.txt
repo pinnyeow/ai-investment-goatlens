@@ -17,6 +17,7 @@ httpx>=0.26.0
 
 # Data Sources
 yfinance>=0.2.0
+lxml>=5.0.0          # required by yfinance for earnings data parsing
 
 # Data Processing
 pydantic>=2.5.0

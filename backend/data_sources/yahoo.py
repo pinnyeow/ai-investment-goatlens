@@ -756,6 +756,7 @@ class YahooFinanceClient:
         price_history: List[Dict[str, Any]],
         analyst_reactions: List[Dict[str, Any]],
         quarterly_revenue: List[Dict[str, Any]],
+        fmp_guidance: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Build per-quarter earnings reaction insights.
@@ -766,6 +767,7 @@ class YahooFinanceClient:
         - revenue_growth_yoy from quarterly income statement
         - guidance_signal inferred from analyst behavior after the result
         - insight: a 1-2 sentence human-readable explanation
+        - revenue_actual / capex / capex_pct_revenue (from FMP, if available)
         """
         if not earnings_data:
             return []
@@ -776,6 +778,12 @@ class YahooFinanceClient:
 
         # Revenue lookup: quarter-end date -> revenue
         rev_lookup: Dict[str, float] = {r["date"]: r["revenue"] for r in quarterly_revenue}
+
+        # FMP data lookups (revenue actuals + CapEx by quarter-end date)
+        fmp_rev = (fmp_guidance or {}).get("revenue_by_quarter", {})
+        fmp_capex = (fmp_guidance or {}).get("capex_by_quarter", {})
+        # Sorted quarter-end dates for matching to earnings announcement dates
+        fmp_quarter_dates = sorted(fmp_rev.keys()) if fmp_rev else []
 
         insights: List[Dict[str, Any]] = []
 
@@ -796,12 +804,89 @@ class YahooFinanceClient:
                 "revenue_growth_yoy": None,
                 "guidance_signal": "unknown",
                 "insight": "",
+                # FMP guidance fields (None if FMP unavailable)
+                "revenue_actual": None,
+                "revenue_yoy_pct": None,
+                "capex": None,
+                "capex_prev_quarter": None,
+                "capex_qoq_pct": None,
+                "capex_pct_revenue": None,
+                "fcf": None,
             }
 
             earnings_date = e.get("date", "")
             if not earnings_date:
                 insights.append(rec)
                 continue
+
+            # ── 0. FMP guidance data (revenue + CapEx) ──
+            # Match earnings announcement date → quarter-end date.
+            # e.g. earnings on 2026-02-06 maps to Q4 ending 2025-12-31.
+            # The quarter-end is always 0-90 days before the announcement.
+            if fmp_quarter_dates:
+                matched_q = None
+                try:
+                    ear_dt_fmp = datetime.strptime(earnings_date, "%Y-%m-%d")
+                    for qd in reversed(fmp_quarter_dates):
+                        qd_dt = datetime.strptime(qd, "%Y-%m-%d")
+                        diff_days = (ear_dt_fmp - qd_dt).days
+                        if 0 <= diff_days <= 90:
+                            matched_q = qd
+                            break
+                except Exception:
+                    pass
+
+                if matched_q:
+                    # Revenue
+                    fmp_rev_rec = fmp_rev.get(matched_q, {})
+                    rev_actual = fmp_rev_rec.get("revenue")
+                    if rev_actual:
+                        rec["revenue_actual"] = round(rev_actual, 0)
+                        # YoY: find same quarter previous year in FMP data
+                        try:
+                            mq_dt = datetime.strptime(matched_q, "%Y-%m-%d")
+                            yoy_q = mq_dt.replace(year=mq_dt.year - 1).strftime("%Y-%m-%d")
+                            yoy_rev_rec = fmp_rev.get(yoy_q, {})
+                            yoy_rev = yoy_rev_rec.get("revenue")
+                            if yoy_rev and yoy_rev > 0:
+                                rec["revenue_yoy_pct"] = round(
+                                    ((rev_actual - yoy_rev) / yoy_rev) * 100, 1
+                                )
+                        except Exception:
+                            pass
+
+                    # CapEx
+                    capex_rec = fmp_capex.get(matched_q, {})
+                    capex_val = capex_rec.get("capex")
+                    if capex_val is not None:
+                        rec["capex"] = round(capex_val, 0)
+                        rec["fcf"] = round(capex_rec.get("fcf") or 0, 0)
+
+                        # CapEx as % of revenue
+                        if rev_actual and rev_actual > 0:
+                            rec["capex_pct_revenue"] = round(
+                                (capex_val / rev_actual) * 100, 1
+                            )
+
+                        # QoQ: find previous quarter's CapEx
+                        try:
+                            mq_dt = datetime.strptime(matched_q, "%Y-%m-%d")
+                            # Approximate prev quarter: go back ~90 days
+                            prev_candidates = [
+                                d for d in fmp_quarter_dates
+                                if d < matched_q
+                            ]
+                            if prev_candidates:
+                                prev_q = prev_candidates[-1]
+                                prev_capex = fmp_capex.get(prev_q, {}).get("capex")
+                                if prev_capex is not None:
+                                    rec["capex_prev_quarter"] = round(prev_capex, 0)
+                                    if prev_capex > 0:
+                                        rec["capex_qoq_pct"] = round(
+                                            ((capex_val - prev_capex) / prev_capex) * 100, 1
+                                        )
+                        except Exception:
+                            pass
 
             # ── 1. Pre-earnings run-up (20 trading days) ──
             nearest_idx = None
@@ -934,6 +1019,17 @@ class YahooFinanceClient:
             parts.append(f"Stock ran up +{runup:.1f}% before earnings, beat may have been priced in.")
         elif runup is not None and runup > 5:
             parts.append(f"Modest pre-earnings run-up of +{runup:.1f}%.")
+
+        # CapEx / investment story (from FMP)
+        capex_qoq = rec.get("capex_qoq_pct")
+        capex_pct_rev = rec.get("capex_pct_revenue")
+        if capex_qoq is not None and abs(capex_qoq) > 10:
+            if capex_qoq > 0:
+                parts.append(f"CapEx surged +{capex_qoq:.0f}% QoQ — heavy investment cycle.")
+            else:
+                parts.append(f"CapEx dropped {capex_qoq:.0f}% QoQ — pulling back on spending.")
+        elif capex_pct_rev is not None and capex_pct_rev > 15:
+            parts.append(f"CapEx is {capex_pct_rev:.0f}% of revenue — high capital intensity.")
 
         # Guidance signal
         if guidance == "weak":
