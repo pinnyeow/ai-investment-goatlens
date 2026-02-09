@@ -2268,6 +2268,52 @@
                 font-size: 0.72rem;
             }
 
+            /* ── 13b. Earnings Track Record table ── */
+            .earnings-header {
+                flex-direction: column;
+                gap: 0.5rem;
+                padding: 0.75rem 1rem;
+                align-items: flex-start;
+            }
+            .earnings-title-text {
+                font-size: 1rem;
+            }
+            .earnings-title-icon {
+                font-size: 1.2rem;
+            }
+            .earnings-streak-badge {
+                font-size: 0.75rem;
+                padding: 0.35rem 0.75rem;
+            }
+            /* Make the 6-col table scrollable + compact */
+            #chartViewTrackRecord {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            .earnings-table th,
+            .earnings-table td {
+                padding: 0.5rem 0.5rem;
+                font-size: 0.75rem;
+                white-space: nowrap;
+            }
+            .earnings-table th {
+                font-size: 0.65rem;
+            }
+            .beat-miss-indicator {
+                font-size: 0.65rem;
+                padding: 0.15rem 0.35rem;
+            }
+            .earnings-summary {
+                padding: 0.75rem 1rem;
+                gap: 1rem;
+            }
+            .earnings-stat-value {
+                font-size: 1rem;
+            }
+            .earnings-stat-label {
+                font-size: 0.65rem;
+            }
+
             /* ── 14. Agents grid ── */
             .agents-grid {
                 grid-template-columns: 1fr;
@@ -2434,6 +2480,16 @@
             .story-guidance-tag {
                 grid-column: 1 / -1;
                 justify-self: start;
+            }
+            /* Hide the "Date" column on tiny screens — quarter + data is enough */
+            .earnings-table th:nth-child(2),
+            .earnings-table td:nth-child(2) {
+                display: none;
+            }
+            .earnings-table th,
+            .earnings-table td {
+                padding: 0.4rem 0.35rem;
+                font-size: 0.7rem;
             }
         }
     </style>
