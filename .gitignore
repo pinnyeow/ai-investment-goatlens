@@ -37,3 +37,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Eval results (generated, not source code)
+backend/evals/results/
