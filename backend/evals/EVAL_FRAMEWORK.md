@@ -190,21 +190,59 @@ If a code change pushes a score outside its expected range, the eval catches the
 
 ## How to Run
 
+### Usage Modes
+
+**1. Quick Sanity Check** — free, ~30 seconds
+
 ```bash
-# All evals
-python -m backend.evals.run_evals
-
-# Just data pipeline checks
-python -m backend.evals.run_evals --layer 1
-
-# Just agent evals
-python -m backend.evals.run_evals --layer 2
-
-# Just consensus evals
-python -m backend.evals.run_evals --layer 3
+python -m backend.evals.run_evals --ticker AAPL --no-llm
 ```
 
-LLM-as-Judge evals require `OPENAI_API_KEY`. If not set, only code-based evals run.
+Runs only code-based checks (no OpenAI calls). Verifies data is clean, scores are valid, and consensus isn't contradictory. Use this the way you'd run `npm test` — fast confidence before pushing.
+
+**2. Full Quality Check** — ~$0.01-0.03, ~2 minutes
+
+```bash
+python -m backend.evals.run_evals --ticker AAPL
+```
+
+Adds LLM-as-judge evals on top of code checks. GPT-4o-mini evaluates whether insights are grounded, agents stay in character, and output is actionable. Use this after changing agent prompts or scoring logic.
+
+**3. Regression Test** — runs all 5 golden tickers, ~5-10 minutes
+
+```bash
+python -m backend.evals.run_evals --all-golden --save
+```
+
+Tests AAPL, MSFT, JPM, NVDA, and KO. Saves results to `backend/evals/results/` as JSON for comparison over time. Use this before major releases or sharing GOATlens publicly.
+
+### Layer Flags
+
+Run a single layer when you know where the change happened:
+
+```bash
+python -m backend.evals.run_evals --layer 1   # Data pipeline — is the data clean?
+python -m backend.evals.run_evals --layer 2   # Agent quality — are insights correct and on-brand?
+python -m backend.evals.run_evals --layer 3   # Consensus — does the synthesis make sense?
+```
+
+LLM-as-Judge evals require `OPENAI_API_KEY`. If the key is not set, only code-based evals run (graceful degradation).
+
+### When to Run
+
+| Trigger | Command | Why |
+|---------|---------|-----|
+| After any code change to agents, scoring, or data pipeline | `--no-llm --ticker AAPL` | Catch structural bugs instantly (free, 30s) |
+| Before pushing to GitHub | `--no-llm --ticker AAPL` | Don't ship broken code to Render |
+| After changing agent prompts or scoring weights | Full run on 1 ticker (no `--no-llm`) | Ensure insight quality didn't degrade |
+| Weekly, or before sharing publicly | `--all-golden --save` | Full regression check across diverse stocks |
+| After upgrading dependencies (yfinance, OpenAI, etc.) | `--all-golden --no-llm` | Catch data format changes from upstream |
+
+### Layer Mental Model
+
+- **Layer 1 (Data)** — "Is the ingredient fresh?" Catches NaN values, wrong beat/miss labels, broken JSON. Run every time.
+- **Layer 2 (Agents)** — "Does the dish taste right?" Catches hallucinated numbers, off-brand tone, vague insights. Run when you change agent code.
+- **Layer 3 (Consensus)** — "Does the menu match the dish?" Catches contradictions between agents and the final recommendation. Run when you change synthesis logic.
 
 ---
 
