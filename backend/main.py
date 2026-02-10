@@ -15,7 +15,6 @@ import os
 import asyncio
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
-from opentelemetry import context as otel_context
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -409,18 +408,15 @@ async def run_agents_node(state: GOATState) -> GOATState:
     else:
         agents = all_agents
     
-    # Run all agents in parallel with context propagation
-    current_ctx = otel_context.get_current()
-    
-    async def run_with_context(agent):
-        token = otel_context.attach(current_ctx)
-        try:
-            return await agent.analyze(ticker, financials, earnings_data=earnings_data, earnings_streak=earnings_streak)
-        finally:
-            otel_context.detach(token)
-    
-    tasks = [asyncio.create_task(run_with_context(agent)) for agent in agents.values()]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Run all agents in parallel
+    # Pass coroutines directly to gather() so they inherit the current
+    # OTel context (LangGraph's run_agents span). Using create_task()
+    # previously caused LLM spans to orphan into separate root traces.
+    results = await asyncio.gather(
+        *[agent.analyze(ticker, financials, earnings_data=earnings_data, earnings_streak=earnings_streak)
+          for agent in agents.values()],
+        return_exceptions=True,
+    )
     
     # Process results
     agent_results = []

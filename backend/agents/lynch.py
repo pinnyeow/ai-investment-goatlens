@@ -99,8 +99,13 @@ class LynchAgent:
         earnings_bonus = self._earnings_momentum_bonus(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, category, ten_bagger_potential) + earnings_bonus
         score = round(max(-100, min(100, score)), 2)
+        verdict = self._score_to_verdict(score)
         
-        insights = self._generate_insights(metrics, category)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, category, ten_bagger_potential, score, verdict)
+        else:
+            insights = self._generate_insights(metrics, category)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
         
         concerns = self._identify_concerns(metrics)
@@ -248,6 +253,41 @@ class LynchAgent:
         else:
             return "strong_sell"
     
+    def _get_relevant_context(self, metrics: LynchMetrics, category: str, ten_bagger: Dict[str, Any]) -> Dict[str, Any]:
+        """Context engineering: only pass Lynch-relevant metrics to reduce tokens."""
+        return {
+            "peg_ratio": metrics.peg_ratio,
+            "earnings_growth": metrics.earnings_growth,
+            "pe_ratio": metrics.pe_ratio,
+            "institutional_ownership": metrics.institutional_ownership,
+            "stock_category": category,
+            "ten_bagger_potential": ten_bagger.get("assessment", "Unknown"),
+        }
+
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: LynchMetrics,
+        category: str,
+        ten_bagger: Dict[str, Any],
+        score: float,
+        verdict: str,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Lynch's voice."""
+        relevant = self._get_relevant_context(metrics, category, ten_bagger)
+        prompt = (
+            f"Analyze {ticker}: PEG {relevant['peg_ratio']:.2f}, "
+            f"Earnings Growth {relevant['earnings_growth']:.1%}, "
+            f"P/E {relevant['pe_ratio']:.1f}, "
+            f"Category {relevant['stock_category']}, "
+            f"Ten-Bagger Potential {relevant['ten_bagger_potential']}"
+        )
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Peter Lynch", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, category)
+        except Exception:
+            return self._generate_insights(metrics, category)
+
     def _generate_insights(
         self,
         metrics: LynchMetrics,

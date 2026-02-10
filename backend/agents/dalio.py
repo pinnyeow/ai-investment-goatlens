@@ -98,8 +98,13 @@ class DalioAgent:
         earnings_adj = self._earnings_predictability_bonus(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, risk_assessment, cycle_analysis) + earnings_adj
         score = round(max(-100, min(100, score)), 2)
+        verdict = self._score_to_verdict(score)
         
-        insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, risk_assessment, score, verdict)
+        else:
+            insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
         
         concerns = self._identify_concerns(metrics, cycle_analysis)
@@ -325,6 +330,40 @@ class DalioAgent:
         else:
             return "strong_sell"
     
+    def _get_relevant_context(self, metrics: DalioMetrics, cycle_analysis: Dict[str, Any], risk_assessment: Dict[str, Any]) -> Dict[str, Any]:
+        """Context engineering: only pass Dalio-relevant metrics to reduce tokens."""
+        return {
+            "beta": metrics.beta,
+            "debt_to_equity": metrics.debt_to_equity,
+            "interest_coverage": metrics.interest_coverage,
+            "cycle_phase": cycle_analysis.get("cycle_phase", "unknown"),
+            "risk_level": cycle_analysis.get("risk_level", "unknown"),
+            "diversification_score": risk_assessment.get("diversification_score", 0),
+        }
+
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: DalioMetrics,
+        cycle_analysis: Dict[str, Any],
+        risk_assessment: Dict[str, Any],
+        score: float,
+        verdict: str,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Dalio's voice."""
+        relevant = self._get_relevant_context(metrics, cycle_analysis, risk_assessment)
+        prompt = (
+            f"Analyze {ticker}: Beta {relevant['beta']:.2f}, "
+            f"D/E {relevant['debt_to_equity']:.2f}, "
+            f"Interest Coverage {relevant['interest_coverage']:.1f}x, "
+            f"Cycle {relevant['cycle_phase']}, Risk {relevant['risk_level']}"
+        )
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, cycle_analysis, {})
+        except Exception:
+            return self._generate_insights(metrics, cycle_analysis, {})
+
     def _generate_insights(
         self,
         metrics: DalioMetrics,

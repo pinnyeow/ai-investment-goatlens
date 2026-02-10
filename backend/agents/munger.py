@@ -102,8 +102,13 @@ class MungerAgent:
         earnings_adj = self._earnings_quality_adjustment(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, quality_assessment, red_flags) + earnings_adj
         score = round(max(-100, min(100, score)), 2)
+        verdict = self._score_to_verdict(score)
         
-        insights = self._generate_insights(metrics, quality_assessment)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict)
+        else:
+            insights = self._generate_insights(metrics, quality_assessment)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
         
         concerns = list(red_flags)  # Copy so we don't modify the original
@@ -304,6 +309,40 @@ class MungerAgent:
         else:
             return "strong_sell"
     
+    def _get_relevant_context(self, metrics: MungerMetrics, quality_assessment: Dict[str, Any], red_flags: List[str]) -> Dict[str, Any]:
+        """Context engineering: only pass Munger-relevant metrics to reduce tokens."""
+        return {
+            "gross_margin": metrics.gross_margin,
+            "operating_margin": metrics.operating_margin,
+            "roic": metrics.roic,
+            "management_ownership": metrics.management_ownership,
+            "quality_level": quality_assessment.get("level", "Unknown"),
+            "red_flags_count": len(red_flags),
+        }
+
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: MungerMetrics,
+        quality_assessment: Dict[str, Any],
+        red_flags: List[str],
+        score: float,
+        verdict: str,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Munger's voice."""
+        relevant = self._get_relevant_context(metrics, quality_assessment, red_flags)
+        prompt = (
+            f"Analyze {ticker}: Gross Margin {relevant['gross_margin']:.1%}, "
+            f"Operating Margin {relevant['operating_margin']:.1%}, "
+            f"ROIC {relevant['roic']:.1%}, Quality {relevant['quality_level']}, "
+            f"Red Flags {relevant['red_flags_count']}"
+        )
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, quality_assessment)
+        except Exception:
+            return self._generate_insights(metrics, quality_assessment)
+
     def _generate_insights(
         self,
         metrics: MungerMetrics,

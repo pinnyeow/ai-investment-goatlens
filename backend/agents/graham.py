@@ -120,8 +120,13 @@ class GrahamAgent:
         earnings_bonus = self._earnings_stability_bonus(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, margin_of_safety, defensive_criteria) + earnings_bonus
         score = round(max(-100, min(100, score)), 2)
+        verdict = self._score_to_verdict(score)
         
-        insights = self._generate_insights(metrics, margin_of_safety)
+        # Generate LLM-powered insights if client available
+        if self.llm_client:
+            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score, verdict)
+        else:
+            insights = self._generate_insights(metrics, margin_of_safety)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
         
         concerns = self._identify_concerns(metrics)
@@ -307,6 +312,27 @@ class GrahamAgent:
         else:
             return "strong_sell"
     
+    async def _generate_llm_insights(
+        self,
+        ticker: str,
+        metrics: GrahamMetrics,
+        margin_of_safety: Dict[str, Any],
+        score: float,
+        verdict: str,
+    ) -> List[str]:
+        """Generate LLM-powered insights using Graham's voice."""
+        prompt = (
+            f"Analyze {ticker}: P/E {metrics.pe_ratio:.1f}, P/B {metrics.pb_ratio:.1f}, "
+            f"Current Ratio {metrics.current_ratio:.1f}, Dividend Yield {metrics.dividend_yield:.1%}, "
+            f"Graham Number ${metrics.graham_number:.0f} vs Price ${metrics.current_price:.0f}, "
+            f"Margin of Safety {margin_of_safety['percentage']:.1%}"
+        )
+        try:
+            response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict)
+            return [response] if response else self._generate_insights(metrics, margin_of_safety)
+        except Exception:
+            return self._generate_insights(metrics, margin_of_safety)
+
     def _generate_insights(
         self,
         metrics: GrahamMetrics,
