@@ -1064,7 +1064,7 @@
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: var(--radius);
-            overflow: hidden;
+            overflow: visible;
         }
 
         .charts-header {
@@ -1133,6 +1133,9 @@
 
         .chart-view {
             display: none;
+            width: 100%;
+            max-width: 100%;
+            overflow-x: auto;
         }
 
         .chart-view.active {
@@ -1175,6 +1178,9 @@
             padding: 1rem 1rem 0 1rem;
             height: 400px;
             position: relative;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
         }
 
         .price-chart-container .tv-lightweight-charts {
@@ -1241,6 +1247,9 @@
             padding: 1.5rem 2rem;
             height: 300px;
             position: relative;
+            width: 100%;
+            max-width: 100%;
+            box-sizing: border-box;
         }
 
         .eps-chart-legend {
@@ -2176,7 +2185,9 @@
             /* ── 9. Price chart ── */
             .price-chart-container {
                 height: 280px;
-                padding: 0.5rem 0.5rem 0;
+                padding: 0.5rem;
+                width: 100%;
+                overflow-x: visible;
             }
             .price-chart-legend {
                 padding: 0.5rem 0.75rem;
@@ -2195,8 +2206,10 @@
 
             /* ── 10. EPS chart ── */
             .eps-chart-container {
-                height: 220px;
-                padding: 1rem;
+                height: 250px;
+                padding: 1rem 0.5rem;
+                width: 100%;
+                overflow-x: visible;
             }
             .eps-chart-legend {
                 padding: 0 1rem 0.75rem;
@@ -2455,10 +2468,12 @@
                 font-size: 0.9rem;
             }
             .price-chart-container {
-                height: 220px;
+                height: 240px;
+                padding: 0.25rem;
             }
             .eps-chart-container {
-                height: 180px;
+                height: 220px;
+                padding: 0.75rem 0.25rem;
             }
             .agent-score {
                 font-size: 1.5rem;
@@ -3856,6 +3871,14 @@
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    layout: {
+                        padding: {
+                            left: 0,
+                            right: 0,
+                            top: 0,
+                            bottom: 0
+                        }
+                    },
                     interaction: {
                         intersect: false,
                         mode: 'index',
