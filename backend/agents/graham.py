@@ -18,6 +18,7 @@ Key Metrics:
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import math
+import traceback
 
 
 @dataclass
@@ -99,6 +100,7 @@ class GrahamAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Graham-style analysis on a company.
@@ -108,6 +110,7 @@ class GrahamAgent:
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            config: LangChain RunnableConfig for trace propagation
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -124,7 +127,7 @@ class GrahamAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score, verdict)
+            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, margin_of_safety)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -319,6 +322,7 @@ class GrahamAgent:
         margin_of_safety: Dict[str, Any],
         score: float,
         verdict: str,
+        config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Graham's voice."""
         prompt = (
@@ -328,9 +332,11 @@ class GrahamAgent:
             f"Margin of Safety {margin_of_safety['percentage']:.1%}"
         )
         try:
-            response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict)
+            response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, margin_of_safety)
-        except Exception:
+        except Exception as e:
+            print(f"[{self.name}] LLM insight generation failed: {e}")
+            traceback.print_exc()
             return self._generate_insights(metrics, margin_of_safety)
 
     def _generate_insights(

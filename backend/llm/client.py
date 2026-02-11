@@ -34,8 +34,17 @@ class LLMClient:
         )
         self.model_name = model
     
-    async def analyze(self, prompt: str, persona: str = "investment analyst", verdict: str = "hold") -> str:
-        """Generate analysis using LLM."""
+    async def analyze(self, prompt: str, persona: str = "investment analyst", verdict: str = "hold", config: dict = None) -> str:
+        """Generate analysis using LLM.
+        
+        Args:
+            prompt: The analysis prompt
+            persona: The persona to adopt
+            verdict: The quantitative verdict for context
+            config: Optional LangChain RunnableConfig for trace propagation.
+                    When provided, the LLM span is nested under the caller's
+                    trace via LangChain's parent_run_id mechanism.
+        """
         system = f"""You are {persona}. The quantitative analysis resulted in a "{verdict}" verdict.
 
 Your job: Explain WHY this verdict makes sense based on the metrics provided. Speak naturally in first person as {persona} would.
@@ -46,10 +55,13 @@ Rules:
 - Be specific about the numbers
 - Stay consistent with the {verdict} verdict"""
         
-        response = await self._llm.ainvoke([
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ])
+        response = await self._llm.ainvoke(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            config=config,
+        )
         return response.content or ""
 
 

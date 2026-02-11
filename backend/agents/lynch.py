@@ -16,6 +16,7 @@ Key Metrics:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+import traceback
 
 
 @dataclass
@@ -78,6 +79,7 @@ class LynchAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Lynch-style analysis on a company.
@@ -87,6 +89,7 @@ class LynchAgent:
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            config: LangChain RunnableConfig for trace propagation
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -103,7 +106,7 @@ class LynchAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, category, ten_bagger_potential, score, verdict)
+            insights = await self._generate_llm_insights(ticker, metrics, category, ten_bagger_potential, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, category)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -272,6 +275,7 @@ class LynchAgent:
         ten_bagger: Dict[str, Any],
         score: float,
         verdict: str,
+        config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Lynch's voice."""
         relevant = self._get_relevant_context(metrics, category, ten_bagger)
@@ -283,9 +287,11 @@ class LynchAgent:
             f"Ten-Bagger Potential {relevant['ten_bagger_potential']}"
         )
         try:
-            response = await self.llm_client.analyze(prompt, persona="Peter Lynch", verdict=verdict)
+            response = await self.llm_client.analyze(prompt, persona="Peter Lynch", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, category)
-        except Exception:
+        except Exception as e:
+            print(f"[{self.name}] LLM insight generation failed: {e}")
+            traceback.print_exc()
             return self._generate_insights(metrics, category)
 
     def _generate_insights(

@@ -16,6 +16,7 @@ Key Metrics:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+import traceback
 
 
 @dataclass
@@ -69,6 +70,7 @@ class BuffettAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Buffett-style analysis on a company.
@@ -78,6 +80,7 @@ class BuffettAgent:
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            config: LangChain RunnableConfig for trace propagation
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -94,7 +97,7 @@ class BuffettAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, score, verdict)
+            insights = await self._generate_llm_insights(ticker, metrics, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, moat_analysis)
         
@@ -243,15 +246,18 @@ class BuffettAgent:
         metrics: BuffettMetrics,
         score: float,
         verdict: str,
+        config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Buffett's voice."""
         # Context optimization: only pass relevant metrics to reduce token usage
         relevant = self._get_relevant_context(metrics)
         prompt = f"""Analyze {ticker}: ROE {relevant['roe']:.1%}, Profit Margin {relevant['profit_margin']:.1%}, Debt/Equity {relevant['debt_to_equity']:.2f}, Moat {relevant['moat_strength']}"""
         try:
-            response = await self.llm_client.analyze(prompt, persona="Warren Buffett", verdict=verdict)
+            response = await self.llm_client.analyze(prompt, persona="Warren Buffett", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, {"strength": metrics.moat_strength})
-        except Exception:
+        except Exception as e:
+            print(f"[{self.name}] LLM insight generation failed: {e}")
+            traceback.print_exc()
             return self._generate_insights(metrics, {"strength": metrics.moat_strength})
     
     def _generate_insights(

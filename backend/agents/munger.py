@@ -16,6 +16,7 @@ Key Focus:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+import traceback
 
 
 @dataclass
@@ -80,6 +81,7 @@ class MungerAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Munger-style analysis on a company.
@@ -89,6 +91,7 @@ class MungerAgent:
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            config: LangChain RunnableConfig for trace propagation
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -106,7 +109,7 @@ class MungerAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict)
+            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, quality_assessment)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -328,6 +331,7 @@ class MungerAgent:
         red_flags: List[str],
         score: float,
         verdict: str,
+        config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Munger's voice."""
         relevant = self._get_relevant_context(metrics, quality_assessment, red_flags)
@@ -338,9 +342,11 @@ class MungerAgent:
             f"Red Flags {relevant['red_flags_count']}"
         )
         try:
-            response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict)
+            response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, quality_assessment)
-        except Exception:
+        except Exception as e:
+            print(f"[{self.name}] LLM insight generation failed: {e}")
+            traceback.print_exc()
             return self._generate_insights(metrics, quality_assessment)
 
     def _generate_insights(

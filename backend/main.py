@@ -364,10 +364,14 @@ async def temporal_analysis_node(state: GOATState) -> GOATState:
     return state
 
 
-async def run_agents_node(state: GOATState) -> GOATState:
+async def run_agents_node(state: GOATState, config: dict = None) -> GOATState:
     """
     Node: Run all GOAT agents in parallel.
     Now passes earnings data so agents can factor beat/miss history.
+    
+    Args:
+        config: LangGraph RunnableConfig — threaded to each agent's LLM call
+                so spans nest under the main chain trace in Arize.
     """
     if state.get("error"):
         return state
@@ -408,12 +412,10 @@ async def run_agents_node(state: GOATState) -> GOATState:
     else:
         agents = all_agents
     
-    # Run all agents in parallel
-    # Pass coroutines directly to gather() so they inherit the current
-    # OTel context (LangGraph's run_agents span). Using create_task()
-    # previously caused LLM spans to orphan into separate root traces.
+    # Run all agents in parallel, threading LangGraph's RunnableConfig so
+    # each agent's LLM call is nested under this node's trace span.
     results = await asyncio.gather(
-        *[agent.analyze(ticker, financials, earnings_data=earnings_data, earnings_streak=earnings_streak)
+        *[agent.analyze(ticker, financials, earnings_data=earnings_data, earnings_streak=earnings_streak, config=config)
           for agent in agents.values()],
         return_exceptions=True,
     )
@@ -430,9 +432,13 @@ async def run_agents_node(state: GOATState) -> GOATState:
     return state
 
 
-async def synthesize_node(state: GOATState) -> GOATState:
+async def synthesize_node(state: GOATState, config: dict = None) -> GOATState:
     """
     Node: Synthesize results and calculate consensus.
+    
+    Args:
+        config: LangGraph RunnableConfig — threaded to the consensus LLM call
+                so its span nests under the main chain trace in Arize.
     """
     if state.get("error"):
         return state
@@ -457,7 +463,7 @@ async def synthesize_node(state: GOATState) -> GOATState:
         ))
     
     llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
-    consensus = await calculate_consensus_with_llm(strategy_results, llm, state["ticker"]) if llm else calculate_consensus(strategy_results)
+    consensus = await calculate_consensus_with_llm(strategy_results, llm, state["ticker"], config=config) if llm else calculate_consensus(strategy_results)
     
     state["consensus"] = {
         "verdict": consensus.consensus_verdict.value,

@@ -16,6 +16,7 @@ Key Focus:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
+import traceback
 
 
 @dataclass
@@ -76,6 +77,7 @@ class DalioAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Dalio-style analysis on a company.
@@ -85,6 +87,7 @@ class DalioAgent:
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            config: LangChain RunnableConfig for trace propagation
             
         Returns:
             Analysis result with verdict, score, and insights
@@ -102,7 +105,7 @@ class DalioAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, risk_assessment, score, verdict)
+            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, risk_assessment, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -349,6 +352,7 @@ class DalioAgent:
         risk_assessment: Dict[str, Any],
         score: float,
         verdict: str,
+        config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Dalio's voice."""
         relevant = self._get_relevant_context(metrics, cycle_analysis, risk_assessment)
@@ -359,9 +363,11 @@ class DalioAgent:
             f"Cycle {relevant['cycle_phase']}, Risk {relevant['risk_level']}"
         )
         try:
-            response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict)
+            response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, cycle_analysis, {})
-        except Exception:
+        except Exception as e:
+            print(f"[{self.name}] LLM insight generation failed: {e}")
+            traceback.print_exc()
             return self._generate_insights(metrics, cycle_analysis, {})
 
     def _generate_insights(

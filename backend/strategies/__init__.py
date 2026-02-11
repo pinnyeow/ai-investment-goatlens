@@ -95,8 +95,17 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     )
 
 
-async def calculate_consensus_with_llm(results: List[StrategyResult], llm_client, ticker: str) -> ConsensusResult:
-    """LLM-powered consensus with rich insights."""
+async def calculate_consensus_with_llm(results: List[StrategyResult], llm_client, ticker: str, config: dict = None) -> ConsensusResult:
+    """LLM-powered consensus with rich insights.
+    
+    Args:
+        results: Individual agent strategy results
+        llm_client: LLM client for generating consensus narrative
+        ticker: Stock ticker symbol
+        config: LangChain RunnableConfig for trace propagation.
+                When provided, the consensus LLM span nests under the
+                caller's trace via LangChain's parent_run_id mechanism.
+    """
     base = calculate_consensus(results)
     
     summaries = "\n".join([
@@ -113,7 +122,7 @@ DEBATE1: [one sentence, <30 words, where investors disagree]
 DEBATE2: [one sentence, <30 words, another disagreement]"""
 
     try:
-        response = await llm_client.analyze(prompt, persona="analyst", verdict=base.consensus_verdict.value)
+        response = await llm_client.analyze(prompt, persona="analyst", verdict=base.consensus_verdict.value, config=config)
         consensus_points, divergence_points = [], []
         for line in response.split("\n"):
             clean = line.strip()
@@ -123,7 +132,8 @@ DEBATE2: [one sentence, <30 words, another disagreement]"""
                 divergence_points.append(clean.split(":", 1)[-1].strip())
         consensus_points = consensus_points or base.consensus_points
         divergence_points = divergence_points or base.divergence_points
-    except Exception:
+    except Exception as e:
+        print(f"[Consensus] LLM consensus generation failed: {e}")
         consensus_points, divergence_points = base.consensus_points, base.divergence_points
     
     return ConsensusResult(
