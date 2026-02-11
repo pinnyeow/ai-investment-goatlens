@@ -29,7 +29,7 @@ class LLMClient:
         model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self._llm = ChatOpenAI(
             model=model,
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "200")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "120")),
             temperature=0.7,
         )
         self.model_name = model
@@ -44,6 +44,9 @@ class LLMClient:
             config: Optional LangChain RunnableConfig for trace propagation.
                     When provided, the LLM span is nested under the caller's
                     trace via LangChain's parent_run_id mechanism.
+        
+        Returns:
+            Analysis text, guaranteed to be under 150 words.
         """
         system = f"""You are {persona}. The quantitative analysis resulted in a "{verdict}" verdict.
 
@@ -51,8 +54,11 @@ Your job: Explain WHY this verdict makes sense based on the metrics provided. Sp
 
 Rules:
 - No markdown, no headers, no bullet points, no asterisks
-- Write 2-3 flowing sentences
-- Be specific about the numbers
+- Write 2-3 concise, direct sentences (aim for 50-100 words)
+- Maximum 150 words — prioritize clarity and brevity
+- Avoid filler words, unnecessary elaboration, or verbose phrasing
+- Get straight to the point: explain the verdict with specific numbers
+- Be punchy and direct, not flowery or wordy
 - Stay consistent with the {verdict} verdict"""
         
         response = await self._llm.ainvoke(
@@ -62,7 +68,45 @@ Rules:
             ],
             config=config,
         )
-        return response.content or ""
+        
+        # Post-process to ensure word limit (safety net)
+        text = response.content or ""
+        return self._truncate_to_word_limit(text, max_words=150)
+    
+    @staticmethod
+    def _truncate_to_word_limit(text: str, max_words: int = 150) -> str:
+        """
+        Truncate text to a maximum word count, preserving sentence boundaries.
+        
+        Args:
+            text: Input text
+            max_words: Maximum number of words allowed
+            
+        Returns:
+            Truncated text (guaranteed <= max_words)
+        """
+        if not text:
+            return ""
+        
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        
+        # Truncate to max_words, then find the last sentence boundary
+        truncated = " ".join(words[:max_words])
+        
+        # Try to end at a sentence boundary (period, exclamation, question mark)
+        last_period = max(
+            truncated.rfind("."),
+            truncated.rfind("!"),
+            truncated.rfind("?")
+        )
+        
+        if last_period > max_words * 3:  # Only use if it's reasonably close
+            return truncated[:last_period + 1].strip()
+        
+        # Otherwise, just truncate and add ellipsis
+        return truncated.rstrip(".,!?") + "..."
 
 
 def get_llm_client(model: Optional[str] = None) -> LLMClient:
