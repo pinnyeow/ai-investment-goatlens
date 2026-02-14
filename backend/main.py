@@ -25,15 +25,55 @@ env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
 # --- Arize AX Auto-Instrumentation (MUST be before LangGraph imports) ---
-if os.getenv("ARIZE_SPACE_ID") and os.getenv("ARIZE_API_KEY"):
+_arize_tracing_enabled = False
+_arize_tracer_provider = None
+
+space_id = os.getenv("ARIZE_SPACE_ID")
+api_key = os.getenv("ARIZE_API_KEY")
+
+if space_id and api_key:
     try:
         from arize.otel import register
         from openinference.instrumentation.langchain import LangChainInstrumentor
-        tp = register(space_id=os.getenv("ARIZE_SPACE_ID"), api_key=os.getenv("ARIZE_API_KEY"), project_name="goatlens")
-        LangChainInstrumentor().instrument(tracer_provider=tp, include_chains=True, include_agents=True, include_tools=True)
-        print("Arize AX tracing enabled for project 'goatlens'")
+        
+        print(f"[Arize] Initializing tracing...")
+        print(f"[Arize] Space ID: {space_id[:8]}... (length: {len(space_id)})")
+        print(f"[Arize] API Key: {'*' * 8}... (length: {len(api_key)})")
+        
+        _arize_tracer_provider = register(
+            space_id=space_id,
+            api_key=api_key,
+            project_name="goatlens"
+        )
+        
+        LangChainInstrumentor().instrument(
+            tracer_provider=_arize_tracer_provider,
+            include_chains=True,
+            include_agents=True,
+            include_tools=True
+        )
+        
+        _arize_tracing_enabled = True
+        print("[Arize] ✓ Tracing enabled successfully for project 'goatlens'")
+        print("[Arize] ✓ LangChain instrumentor active (chains, agents, tools)")
+    except ImportError as e:
+        print(f"[Arize] ✗ Import error: {e}")
+        print("[Arize]   Make sure arize-otel and openinference-instrumentation-langchain are installed")
+        import traceback
+        traceback.print_exc()
     except Exception as e:
-        print(f"Arize tracing setup failed: {e}")
+        print(f"[Arize] ✗ Setup failed: {e}")
+        print(f"[Arize]   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+else:
+    missing = []
+    if not space_id:
+        missing.append("ARIZE_SPACE_ID")
+    if not api_key:
+        missing.append("ARIZE_API_KEY")
+    print(f"[Arize] ⚠ Tracing disabled: Missing environment variables: {', '.join(missing)}")
+    print("[Arize]   Set ARIZE_SPACE_ID and ARIZE_API_KEY in your .env file or environment to enable tracing")
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +83,7 @@ from pydantic import BaseModel, Field
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
+from langchain_core.runnables import RunnableLambda, RunnableConfig
 from typing_extensions import TypedDict
 
 # Local imports
@@ -364,10 +405,24 @@ async def temporal_analysis_node(state: GOATState) -> GOATState:
     return state
 
 
-async def run_agents_node(state: GOATState, config: dict = None) -> GOATState:
+# Agent registry: (key, class) — single source of truth for all 5 GOATs
+AGENT_REGISTRY = [
+    ("buffett", BuffettAgent),
+    ("lynch", LynchAgent),
+    ("graham", GrahamAgent),
+    ("munger", MungerAgent),
+    ("dalio", DalioAgent),
+]
+
+
+async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GOATState:
     """
     Node: Run all GOAT agents in parallel.
-    Now passes earnings data so agents can factor beat/miss history.
+    
+    Each agent is wrapped in a RunnableLambda with a descriptive run_name
+    so the LangChain instrumentor creates a named span per agent.
+    ChatOpenAI calls inside each agent inherit parent_run_id via config,
+    nesting them under the agent span in Arize.
     
     Args:
         config: LangGraph RunnableConfig — threaded to each agent's LLM call
@@ -381,58 +436,45 @@ async def run_agents_node(state: GOATState, config: dict = None) -> GOATState:
     selected = state["selected_agents"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
-    news_sentiment = state.get("news_sentiment")  # Optional tool - agents decide when to use
     
-    # Initialize agents with model routing
-    # Each agent can specify a preferred model (e.g., Buffett uses gpt-4o for nuanced reasoning)
-    # If OPENAI_API_KEY is not set, all agents work without LLM (rule-based fallback)
-    all_agents = {}
-    if os.getenv("OPENAI_API_KEY"):
-        # Model routing: route each agent to its preferred model
-        all_agents = {
-            "buffett": BuffettAgent(llm_client=get_llm_client(getattr(BuffettAgent, "model_preference", "gpt-4o-mini"))),
-            "lynch": LynchAgent(llm_client=get_llm_client(getattr(LynchAgent, "model_preference", "gpt-4o-mini"))),
-            "graham": GrahamAgent(llm_client=get_llm_client(getattr(GrahamAgent, "model_preference", "gpt-4o-mini"))),
-            "munger": MungerAgent(llm_client=get_llm_client(getattr(MungerAgent, "model_preference", "gpt-4o-mini"))),
-            "dalio": DalioAgent(llm_client=get_llm_client(getattr(DalioAgent, "model_preference", "gpt-4o-mini"))),
-        }
-    else:
-        # No API key: all agents work rule-based (no LLM)
-        all_agents = {
-            "buffett": BuffettAgent(llm_client=None),
-            "lynch": LynchAgent(llm_client=None),
-            "graham": GrahamAgent(llm_client=None),
-            "munger": MungerAgent(llm_client=None),
-            "dalio": DalioAgent(llm_client=None),
-        }
+    # Build agents: single loop handles both LLM and rule-based modes
+    has_llm = bool(os.getenv("OPENAI_API_KEY"))
+    all_agents = {
+        name: cls(
+            llm_client=get_llm_client(getattr(cls, "model_preference", "gpt-4o-mini"))
+            if has_llm else None
+        )
+        for name, cls in AGENT_REGISTRY
+    }
     
     # Filter to selected agents (or use all)
-    if selected:
-        agents = {k: v for k, v in all_agents.items() if k in selected}
-    else:
-        agents = all_agents
+    agents = {k: v for k, v in all_agents.items() if k in selected} if selected else all_agents
     
-    # Run all agents in parallel, threading LangGraph's RunnableConfig so
-    # each agent's LLM call is nested under this node's trace span.
-    results = await asyncio.gather(
-        *[agent.analyze(ticker, financials, earnings_data=earnings_data, earnings_streak=earnings_streak, config=config)
-          for agent in agents.values()],
-        return_exceptions=True,
-    )
+    # Wrap each agent in a RunnableLambda so the LangChain instrumentor
+    # creates a named span. Config flows through automatically, linking
+    # the ChatOpenAI child span via parent_run_id.
+    tasks = []
+    for name, agent in agents.items():
+        async def _analyze(_, *, _agent=agent, config=None):
+            return await _agent.analyze(
+                ticker, financials,
+                earnings_data=earnings_data,
+                earnings_streak=earnings_streak,
+                config=config,
+            )
+        
+        runnable = RunnableLambda(_analyze).with_config({"run_name": f"agent.{name}"})
+        tasks.append(runnable.ainvoke(None, config=config))
     
-    # Process results
-    agent_results = []
-    for result in results:
-        if isinstance(result, Exception):
-            continue
-        agent_results.append(result)
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    state["agent_results"] = agent_results
+    # Collect successful results, skip exceptions
+    state["agent_results"] = [r for r in results if not isinstance(r, Exception)]
     
     return state
 
 
-async def synthesize_node(state: GOATState, config: dict = None) -> GOATState:
+async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GOATState:
     """
     Node: Synthesize results and calculate consensus.
     
@@ -463,7 +505,23 @@ async def synthesize_node(state: GOATState, config: dict = None) -> GOATState:
         ))
     
     llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
-    consensus = await calculate_consensus_with_llm(strategy_results, llm, state["ticker"], config=config) if llm else calculate_consensus(strategy_results)
+    
+    if llm:
+        # Wrap in RunnableLambda so the LangChain instrumentor creates a
+        # named "consensus.synthesis" span, with the ChatOpenAI call nested
+        # underneath via parent_run_id from config.
+        async def _consensus_fn(_, config=None):
+            return await calculate_consensus_with_llm(
+                strategy_results, llm, state["ticker"], config=config,
+            )
+        
+        consensus = await (
+            RunnableLambda(_consensus_fn)
+            .with_config({"run_name": "consensus.synthesis"})
+            .ainvoke(None, config=config)
+        )
+    else:
+        consensus = calculate_consensus(strategy_results)
     
     state["consensus"] = {
         "verdict": consensus.consensus_verdict.value,
@@ -588,6 +646,65 @@ async def health():
     (UptimeRobot, cron-job.org, etc.) to prevent Render from sleeping.
     """
     return {"status": "healthy", "service": "goatlens"}
+
+
+@app.get("/api/debug/tracing")
+async def debug_tracing():
+    """
+    Diagnostic endpoint to check Arize tracing status.
+    
+    Returns tracing configuration and status without exposing sensitive credentials.
+    """
+    import sys
+    
+    # Check environment variables (without exposing values)
+    space_id = os.getenv("ARIZE_SPACE_ID")
+    api_key = os.getenv("ARIZE_API_KEY")
+    
+    # Check package imports
+    packages_status = {}
+    packages_to_check = {
+        "arize.otel": "arize-otel",
+        "openinference.instrumentation.langchain": "openinference-instrumentation-langchain",
+        "opentelemetry.sdk": "opentelemetry-sdk",
+    }
+    
+    for module_name, package_name in packages_to_check.items():
+        try:
+            __import__(module_name)
+            packages_status[package_name] = {"installed": True, "importable": True}
+        except ImportError:
+            packages_status[package_name] = {"installed": False, "importable": False}
+        except Exception as e:
+            packages_status[package_name] = {"installed": True, "importable": False, "error": str(e)}
+    
+    # Get package versions if available
+    versions = {}
+    try:
+        import arize
+        versions["arize-otel"] = getattr(arize, "__version__", "unknown")
+    except:
+        pass
+    
+    try:
+        import openinference
+        versions["openinference"] = getattr(openinference, "__version__", "unknown")
+    except:
+        pass
+    
+    return {
+        "tracing_enabled": _arize_tracing_enabled,
+        "environment": {
+            "ARIZE_SPACE_ID_set": bool(space_id),
+            "ARIZE_SPACE_ID_length": len(space_id) if space_id else 0,
+            "ARIZE_API_KEY_set": bool(api_key),
+            "ARIZE_API_KEY_length": len(api_key) if api_key else 0,
+        },
+        "packages": packages_status,
+        "versions": versions,
+        "tracer_provider": "configured" if _arize_tracer_provider else "not_configured",
+        "python_version": sys.version.split()[0],
+    }
 
 
 @app.post("/api/analyze", response_model=AnalysisResponse)
