@@ -464,7 +464,7 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
             )
         
         runnable = RunnableLambda(_analyze).with_config({"run_name": f"agent.{name}"})
-        tasks.append(runnable.ainvoke(None, config=config))
+        tasks.append(runnable.ainvoke({"ticker": ticker, "agent": name}, config=config))
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
@@ -518,7 +518,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
         consensus = await (
             RunnableLambda(_consensus_fn)
             .with_config({"run_name": "consensus.synthesis"})
-            .ainvoke(None, config=config)
+            .ainvoke({"ticker": state["ticker"]}, config=config)
         )
     else:
         consensus = calculate_consensus(strategy_results)
