@@ -1,0 +1,40 @@
+name: Smoke Tests
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Homepage loads
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://goatlens.onrender.com/)
+          echo "Homepage status: $STATUS"
+          [ "$STATUS" = "200" ] || (echo "FAIL: Homepage returned $STATUS" && exit 1)
+
+      - name: Health check returns healthy
+        run: |
+          BODY=$(curl -s https://goatlens.onrender.com/health)
+          echo "Health response: $BODY"
+          echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: Health check unexpected response" && exit 1)
+
+      - name: Demo API returns valid data
+        run: |
+          BODY=$(curl -s https://goatlens.onrender.com/api/demo)
+          echo "Demo response (truncated): ${BODY:0:200}"
+          echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: Demo missing ticker" && exit 1)
+          echo "$BODY" | grep -q '"consensus_verdict"' || (echo "FAIL: Demo missing consensus_verdict" && exit 1)
+          echo "$BODY" | grep -q '"agent_results"' || (echo "FAIL: Demo missing agent_results" && exit 1)
+
+      - name: Agents endpoint returns all 5 investors
+        run: |
+          BODY=$(curl -s https://goatlens.onrender.com/api/agents)
+          echo "Agents response: $BODY"
+          echo "$BODY" | grep -q '"buffett"' || (echo "FAIL: Missing buffett agent" && exit 1)
+          echo "$BODY" | grep -q '"lynch"'   || (echo "FAIL: Missing lynch agent" && exit 1)
+          echo "$BODY" | grep -q '"graham"'  || (echo "FAIL: Missing graham agent" && exit 1)
+          echo "$BODY" | grep -q '"munger"'  || (echo "FAIL: Missing munger agent" && exit 1)
+          echo "$BODY" | grep -q '"dalio"'   || (echo "FAIL: Missing dalio agent" && exit 1)
