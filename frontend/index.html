@@ -474,6 +474,172 @@
             text-decoration: line-through;
         }
 
+        /* Sample Preview */
+        .sample-preview {
+            max-width: 800px;
+            margin: 0 auto 1.5rem;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .sample-preview-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.85rem 1.25rem;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            background: var(--bg-card);
+        }
+
+        .sample-preview-header:hover {
+            color: var(--text-primary);
+        }
+
+        .sample-preview-toggle {
+            color: var(--accent-gold);
+            font-size: 0.85rem;
+        }
+
+        .sample-preview-body {
+            padding: 1.25rem;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+        }
+
+        .sample-preview-note {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            text-align: center;
+            font-style: italic;
+        }
+
+        .sample-consensus {
+            text-align: center;
+            margin-bottom: 1.25rem;
+        }
+
+        .sample-consensus-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .sample-consensus-verdict {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin: 0.25rem 0;
+        }
+
+        .sample-agreement {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        .sample-scores {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 0.5rem;
+        }
+
+        @media (max-width: 600px) {
+            .sample-scores { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .sample-score-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 0.75rem 0.5rem;
+            text-align: center;
+        }
+
+        .sample-investor {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-bottom: 0.35rem;
+        }
+
+        .sample-score {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 0.25rem;
+        }
+
+        .sample-verdict {
+            font-size: 0.7rem;
+            padding: 0.15rem 0.4rem;
+            border-radius: 4px;
+            display: inline-block;
+        }
+
+        /* Error ticker suggestion buttons */
+        .error-ticker-btn {
+            background: var(--bg-elevated);
+            border: 1px solid var(--accent-red);
+            color: var(--text-primary);
+            padding: 0.2rem 0.6rem;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 0.85rem;
+            margin: 0.2rem;
+        }
+
+        .error-ticker-btn:hover {
+            background: var(--accent-red-dim);
+        }
+
+        /* What's Next Panel */
+        .whats-next-panel {
+            margin-top: 2.5rem;
+            padding: 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            text-align: center;
+        }
+
+        .whats-next-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 1rem;
+        }
+
+        .whats-next-actions {
+            display: flex;
+            gap: 0.75rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .whats-next-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-hover);
+            color: var(--text-primary);
+            padding: 0.7rem 1.25rem;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        .whats-next-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-gold);
+        }
+
+        .whats-next-icon {
+            font-size: 1.1rem;
+        }
+
         /* Error State */
         .error-message {
             display: none;
@@ -2637,6 +2803,50 @@
             </div>
         </div>
 
+        <!-- Sample Preview: shows output format before user commits to waiting -->
+        <div class="sample-preview" id="samplePreview">
+            <div class="sample-preview-header" onclick="toggleSamplePreview()">
+                <span>See what your analysis will look like</span>
+                <span class="sample-preview-toggle" id="samplePreviewToggle">▼ Show sample (AAPL)</span>
+            </div>
+            <div class="sample-preview-body" id="samplePreviewBody" style="display:none;">
+                <div class="sample-preview-note">This is a real sample output for Apple (AAPL). Your analysis will look like this.</div>
+                <div class="sample-consensus">
+                    <div class="sample-consensus-label">Consensus Verdict</div>
+                    <div class="sample-consensus-verdict verdict-buy">Buy</div>
+                    <div class="sample-agreement">72% GOAT Agreement</div>
+                </div>
+                <div class="sample-scores">
+                    <div class="sample-score-card">
+                        <div class="sample-investor">Warren Buffett</div>
+                        <div class="sample-score score-positive">+68</div>
+                        <div class="sample-verdict badge-buy">Buy</div>
+                    </div>
+                    <div class="sample-score-card">
+                        <div class="sample-investor">Peter Lynch</div>
+                        <div class="sample-score score-positive">+45</div>
+                        <div class="sample-verdict badge-buy">Buy</div>
+                    </div>
+                    <div class="sample-score-card">
+                        <div class="sample-investor">Benjamin Graham</div>
+                        <div class="sample-score score-neutral">+12</div>
+                        <div class="sample-verdict badge-hold">Hold</div>
+                    </div>
+                    <div class="sample-score-card">
+                        <div class="sample-investor">Charlie Munger</div>
+                        <div class="sample-score score-positive">+75</div>
+                        <div class="sample-verdict badge-strong_buy">Strong Buy</div>
+                    </div>
+                    <div class="sample-score-card">
+                        <div class="sample-investor">Ray Dalio</div>
+                        <div class="sample-score score-positive">+38</div>
+                        <div class="sample-verdict badge-buy">Buy</div>
+                    </div>
+                </div>
+                <button class="analyze-btn" style="margin-top:1rem; width:100%;" onclick="document.getElementById('tickerInput').value='AAPL'; document.getElementById('samplePreviewBody').style.display='none'; document.getElementById('samplePreviewToggle').textContent='▼ Show sample (AAPL)';">Analyze AAPL yourself →</button>
+            </div>
+        </div>
+
         <div class="error-message" id="errorMessage"></div>
 
         <div class="loading" id="loading">
@@ -2844,6 +3054,25 @@
                     <tbody id="comparisonBody"></tbody>
                 </table>
             </section>
+
+            <!-- What's Next CTA Panel -->
+            <div class="whats-next-panel">
+                <div class="whats-next-title">What would you like to do next?</div>
+                <div class="whats-next-actions">
+                    <button class="whats-next-btn" onclick="scrollToSearch()">
+                        <span class="whats-next-icon">🔍</span>
+                        <span>Analyze another stock</span>
+                    </button>
+                    <button class="whats-next-btn" onclick="shareResults()">
+                        <span class="whats-next-icon">🔗</span>
+                        <span id="shareBtn-label">Share these results</span>
+                    </button>
+                    <button class="whats-next-btn" onclick="compareStock()">
+                        <span class="whats-next-icon">⚖️</span>
+                        <span>Compare with a competitor</span>
+                    </button>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -4308,12 +4537,58 @@
         }
 
         function showError(message) {
-            errorMessage.textContent = message;
+            const popularTickers = ['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'GOOGL'];
+            const isTickerError = /invalid|not found|analysis failed|ticker|symbol/i.test(message);
+            if (isTickerError) {
+                const suggestions = popularTickers.map(t =>
+                    `<button class="error-ticker-btn" onclick="document.getElementById('tickerInput').value='${t}'; hideError();">${t}</button>`
+                ).join('');
+                errorMessage.innerHTML = `
+                    <div><strong>Couldn't find that ticker.</strong> ${message}</div>
+                    <div style="margin-top:0.5rem; font-size:0.85rem; color:var(--text-secondary);">GoatLens supports US-listed equities. Enter the ticker symbol, not the company name.</div>
+                    <div style="margin-top:0.75rem;">Try one of these: ${suggestions}</div>
+                `;
+            } else {
+                errorMessage.textContent = message;
+            }
             errorMessage.classList.add('active');
         }
 
         function hideError() {
             errorMessage.classList.remove('active');
+        }
+
+        function toggleSamplePreview() {
+            const body = document.getElementById('samplePreviewBody');
+            const toggle = document.getElementById('samplePreviewToggle');
+            const isOpen = body.style.display !== 'none';
+            body.style.display = isOpen ? 'none' : 'block';
+            toggle.textContent = isOpen ? '▼ Show sample (AAPL)' : '▲ Hide sample';
+        }
+
+        function scrollToSearch() {
+            document.getElementById('tickerInput').focus();
+            document.getElementById('tickerInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        function shareResults() {
+            const ticker = currentTicker || '';
+            const url = ticker
+                ? `${window.location.origin}${window.location.pathname}?ticker=${ticker}`
+                : window.location.href;
+            navigator.clipboard.writeText(url).then(() => {
+                const label = document.getElementById('shareBtn-label');
+                label.textContent = 'Link copied!';
+                setTimeout(() => { label.textContent = 'Share these results'; }, 2500);
+            });
+        }
+
+        function compareStock() {
+            const competitor = prompt(`You're viewing ${currentTicker || 'this stock'}. Enter a competitor ticker to compare:`);
+            if (competitor) {
+                document.getElementById('tickerInput').value = competitor.trim().toUpperCase();
+                scrollToSearch();
+            }
         }
     </script>
 </body>
