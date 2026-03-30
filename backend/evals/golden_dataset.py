@@ -15,7 +15,7 @@ HOW TO UPDATE:
 3. Document why you expect that range (e.g., "AAPL has high ROE = Buffett likes it")
 """
 
-from typing import Dict, Tuple, List
+from typing import Dict, List
 
 
 # Each ticker maps to:

@@ -17,8 +17,8 @@ Groups:
 import asyncio
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any, List
+from unittest.mock import AsyncMock
+from typing import Dict, Any
 
 import pytest
 

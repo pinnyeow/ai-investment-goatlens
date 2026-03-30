@@ -6,7 +6,6 @@ This is a learning exercise for Step 9: Memory in AI Product Sense.
 """
 
 import json
-import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from pathlib import Path

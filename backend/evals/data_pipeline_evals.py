@@ -11,7 +11,7 @@ agent insights will be bad no matter how good the agent code is.
 
 import json
 import math
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List
 from dataclasses import dataclass, field
 
 
