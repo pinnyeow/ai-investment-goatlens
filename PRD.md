@@ -2,8 +2,8 @@
 
 ## Product Requirements Document (PRD)
 
-**Version:** 1.0  
-**Last Updated:** January 2026  
+**Version:** 1.1  
+**Last Updated:** March 2026  
 **Status:** In Development
 
 ---
@@ -127,17 +127,75 @@ consensus_points = insights where count >= (num_agents // 2 + 1)
 divergence_points = cases where verdict_spread > 2 levels
 ```
 
-### 3.3 Automated Data Pipeline
+### 3.3 Context Engineering (v1.1)
 
-All financial data is fetched automatically via the Financial Modeling Prep (FMP) API.
+Each agent receives only the data relevant to their investment philosophy, not a dump of everything. This reduces context window usage, improves output quality, and prevents context rot.
+
+#### Agent context profiles
+
+| Agent | Metrics received | RAG query (for SEC filings) | Excluded from context |
+|-------|-----------------|----------------------------|----------------------|
+| **Buffett** | ROE, margins, debt, FCF, owner earnings | "competitive advantage, pricing power, moat durability" | Macro commentary, beta |
+| **Lynch** | PEG, revenue growth, EPS growth | "growth rate, new products, market expansion" | Debt ratios, dividend history |
+| **Graham** | P/E, P/B, current ratio, dividend yield | "book value, debt repayment, dividend policy" | Growth narrative, market share |
+| **Munger** | ROIC, management tenure, capital allocation | "management quality, capital allocation, pricing decisions" | Technical ratios, beta |
+| **Dalio** | Debt/equity, interest coverage, beta | "macro environment, debt cycle, interest rate sensitivity" | PEG, ten-bagger potential |
+
+#### LLM vs deterministic boundary
+
+| Task | Approach | Rationale |
+|------|----------|-----------|
+| Data fetching | Deterministic (API calls) | No judgment needed |
+| Moat trend detection | Deterministic (formula) | Clear thresholds, right/wrong answers |
+| Agent scoring | Deterministic (rule-based) | Point system with defined weights |
+| Score interpretation | **LLM** | Requires reasoning about what numbers mean |
+| Consensus synthesis | **LLM** | Comparing 5 perspectives, finding patterns |
+| Narrative generation | **LLM** | Writing quality, nuance, persuasion |
+
+Rule of thumb: if you can write an `if` statement for it, keep it deterministic. If the output needs the word "because," use an LLM.
+
+### 3.4 RAG: SEC Filing Retrieval (v1.1 — planned)
+
+Agents currently analyze numbers in a vacuum. RAG grounds their insights in real management commentary from SEC filings.
+
+#### Without RAG (current)
+> "Strong ROE suggests durable competitive advantage" — generic, could apply to any company with 22% ROE.
+
+#### With RAG (planned)
+> "The 2.2 billion device installed base creates significant switching costs. The shift to services (14% growth, now $24.2B) suggests the moat is evolving from hardware lock-in to ecosystem lock-in." — specific, grounded in management's own words.
+
+#### Data source: SEC EDGAR (free)
+
+| Filing | Content | Agent value |
+|--------|---------|-------------|
+| **10-K** (annual) | MD&A, risk factors, business description | Strategy, moat analysis |
+| **10-Q** (quarterly) | Quarterly MD&A, updated risks | Recent performance, emerging concerns |
+| **8-K** (event-driven) | Material events, leadership changes | Breaking news, management shifts |
+
+#### Tech stack (all free, all local)
+
+| Component | Tool | Cost |
+|-----------|------|------|
+| Filing source | SEC EDGAR via `edgartools` | Free |
+| Embeddings | `sentence-transformers` (all-MiniLM-L6-v2) | Free, local |
+| Vector store | ChromaDB | Free, local |
+| Retrieval | Top 3 chunks per agent, agent-specific query | Free, local |
+
+#### Caching
+
+SEC filings are immutable historical records. Once indexed in ChromaDB, they persist permanently. Only new quarterly filings trigger re-fetching. Second analysis of the same company costs zero retrieval API calls.
+
+### 3.5 Automated Data Pipeline
+
+All financial data is fetched automatically via the Financial Modeling Prep (FMP) API and Yahoo Finance.
 
 #### Data Sources
 
-| Source | Type | Usage |
-|--------|------|-------|
-| **FMP API** (Primary) | Financials, ratios, prices, earnings | All analysis |
-| Alpha Vantage (Future) | Backup data source | Failover |
-| Yahoo Finance (Future) | Price validation | Cross-reference |
+| Source | Type | Usage | Cost |
+|--------|------|-------|------|
+| **Yahoo Finance** (Primary) | Financials, ratios, prices, earnings | Core analysis | Free (scraping) |
+| **FMP API** (Enrichment) | Guidance, structured financials | Supplemental data | Free tier (250 calls/day) |
+| **SEC EDGAR** (Planned) | 10-K, 10-Q, 8-K filings | RAG for agent insights | Free |
 
 #### FMP API Endpoints Used
 
@@ -151,11 +209,15 @@ All financial data is fetched automatically via the Financial Modeling Prep (FMP
 | `/ratios/{ticker}` | Profitability, liquidity, leverage ratios |
 | `/historical-price-full/{ticker}` | Historical prices (for volatility) |
 
-#### Rate Limits
+#### Rate Limits & API Budget
 
-- Free Tier: 250 API calls/day
-- Single analysis: ~6 API calls
-- Max analyses per day: ~40
+- FMP Free Tier: 250 API calls/day
+- Single analysis (without RAG): ~6 API calls → ~40 analyses/day
+- Single analysis (with RAG, first time): ~9 API calls → ~27 analyses/day
+- Single analysis (with RAG, cached): ~6 API calls → ~40 analyses/day
+- SEC EDGAR: 10 requests/second (generous, no daily limit)
+- Multi-stock comparison (5 stocks, first time): ~45 API calls
+- Multi-stock comparison (5 stocks, all cached): ~30 API calls
 
 ---
 
@@ -368,6 +430,11 @@ Health check endpoint.
 - httpx 0.26+
 - pydantic 2.5+
 
+**Backend (v1.1 — RAG):**
+- chromadb (local vector store)
+- sentence-transformers (local embeddings)
+- edgartools (SEC EDGAR filing retrieval)
+
 **Frontend:**
 - Vanilla HTML/CSS/JavaScript
 - No build process required
@@ -391,22 +458,34 @@ Health check endpoint.
 
 ---
 
-## 8. Future Enhancements (Post-v1.0)
+## 8. Future Enhancements
 
-### Phase 2: Enhanced Analysis
-- LLM-powered narrative generation
+### v1.1: Context Engineering & RAG (next)
+- Selective context per agent (agent context profiles)
+- SEC EDGAR filing retrieval via ChromaDB
+- Agent-specific RAG queries grounded in investment philosophy
+- Permanent caching of immutable filings
+
+### v1.2: Model Routing
+- Route cheaper models to rule-heavy agents (Graham: mostly thresholds)
+- Route capable models to synthesis and narrative (consensus, user-facing text)
+- Evaluate cost/quality tradeoff per agent
+
+### Phase 2: Memory & Continuity
+- Persist last N analyses for comparison ("AAPL was a buy last quarter, what changed?")
+- User preferences (favorite agents, default anchor years)
+- Investment style profile to weight agent opinions
+
+### Phase 3: Premium Data Sources
+- Earnings call transcripts (FMP Ultimate or alternative) for CEO tone, analyst Q&A
 - News sentiment integration
 - Peer comparison analysis
-
-### Phase 3: Portfolio Features
-- Save/compare analyses
-- Watchlist functionality
-- Historical analysis tracking
 
 ### Phase 4: Advanced Features
 - Custom agent creation
 - Backtesting against historical data
 - API for programmatic access
+- Context pruning and progressive disclosure
 
 ---
 

@@ -80,15 +80,6 @@ BASE_URL = "https://financialmodelingprep.com/stable"
 
 **Tradeoff:** Free tier limitation. Paid tiers don't have this issue.
 
-### 6. Context Window Management
-
-**The Issue:** Long conversations in Cursor hit context limits. The system resets when it gets too full.
-
-**The Fix:** 
-- Start new chats for new topics
-- Use selective context (only include relevant files)
-- The system automatically manages this, but be aware
-
 ---
 
 ## 🏗️ Architecture Decisions
@@ -457,38 +448,291 @@ async with YahooFinanceClient() as client:
 
 ---
 
-## 🔮 Future Enhancements (Steps 8-10)
+## 🧠 AI Decision Framework: Task → Paradigm → Framework → Model
 
-### Step 8: RAG
-- Add vector store for earnings transcripts
-- Retrieve relevant context before agent analysis
-- Enrich insights with CEO commentary
+Every AI product decision should follow this sequence. Starting from the model and working backwards leads to over-engineered, expensive solutions.
 
-### Step 9: Memory
-- Remember user's favorite agents
-- Store last 5 analyses for comparison
-- Track user preferences
+### Step 1: Task — what job are you asking AI to do?
 
-### Step 10: Context Engineering
-- Selective context per agent (Graham doesn't need growth metrics)
-- Progressive disclosure (only send earnings if agent needs it)
-- Context pruning (summarize old data if context too long)
+Not every task needs an LLM. The rule of thumb: if you can write an `if` statement for it, don't use an LLM. If the output needs the word "because," you probably should.
+
+| Task | LLM needed? | Rationale |
+|------|-------------|-----------|
+| Fetch & normalize financial data | **No** | API calls, no judgment |
+| Moat trend detection | **No** | Formula with clear thresholds |
+| Score a company per investor | **No** | Rule-based point system |
+| Interpret what scores mean | **Yes** | Judgment, narrative, reasoning |
+| Synthesize consensus across agents | **Yes** | Comparing perspectives, finding patterns |
+| Generate readable insights | **Yes** | Writing, nuance, persuasion |
+
+### Step 2: Paradigm — what AI pattern fits?
+
+GOATlens uses **multi-agent (fan-out/fan-in) + chain**, layered together:
+
+```
+fetch_data ──► temporal_analysis ──► run_agents ──► synthesize
+                                        │
+    ◄──────── CHAIN ────────────►       │
+    (sequential, output feeds next)     │
+                                        │
+                                   ┌────┴────┐
+                                   │ MULTI-  │
+                              ┌────┤ AGENT   ├────┐
+                              │    └────┬────┘    │
+                              ▼         ▼         ▼
+                          Buffett    Graham     Lynch ...
+                              │         │         │
+                              └────┬────┘─────────┘
+                                   ▼
+                              synthesize
+```
+
+Why multi-agent: agents are independent (no cross-dependency), apply diverse philosophies to the same data, and a synthesis step needs to see all outputs. A single LLM call doing "pretend to be 5 investors" produces blurred perspectives.
+
+Why chain: the pipeline is sequential — you can't run agents before fetching data, and you can't synthesize before agents complete.
+
+**Next paradigm to add: RAG** — retrieval of SEC filings to ground agent insights in real management commentary (see RAG Design below).
+
+### Step 3: Framework — how do you orchestrate it?
+
+**LangGraph** (built on LangChain) — a state machine with explicit nodes, edges, and shared state (`GOATState`).
+
+| Layer | Role | Car analogy |
+|-------|------|-------------|
+| **Paradigm** (multi-agent + chain) | The design intent | "Sedan that can go off-road" |
+| **Framework** (LangGraph) | Connects everything | Chassis and drivetrain |
+| **Library** (LangChain) | Individual components | Engine, brakes, steering |
+
+### Step 4: Model — which LLM(s)?
+
+Match model power to task complexity. Better context + cheap model often beats poor context + expensive model.
+
+| Task | Recommended model | Rationale |
+|------|-------------------|-----------|
+| Agent interpretation (C2) | `gpt-4o-mini` | Single-perspective reasoning, philosophy is well-defined |
+| Consensus synthesis (D) | `gpt-4o` or `claude-sonnet` | Must hold 5 viewpoints simultaneously |
+| Narrative generation (E) | Same as D | Writing quality directly impacts UX |
+
+**Current state:** All agents use `gpt-4o-mini`. Model routing is a future optimization — context engineering has higher ROI first.
 
 ---
 
-## 📚 Key Concepts from AI Product Sense
+## 🎯 Context Engineering
+
+Context engineering is the most important lever for improving GOATlens output quality. It's the art of deciding what goes into the LLM's context window (its working memory) for each call.
+
+### The problem: context is a zero-sum game
+
+Every LLM has a hard limit on tokens it can process at once:
+
+| Model | Context window | Roughly |
+|-------|---------------|---------|
+| gpt-4o-mini | 128K tokens | ~200 pages |
+| claude-sonnet | 200K tokens | ~300 pages |
+| gemini-2.5-pro | 1M tokens | ~1,500 pages |
+
+Everything competes for that space: system prompt, financial data, retrieved documents, conversation history, and the model's own response. More context ≠ better — **context rot** degrades performance as the window fills, especially for precision tasks like financial analysis.
+
+### Current state: same context to all agents (naive)
+
+```
+Every agent gets:
+  - Full 10-year financials         (~3,000 tokens)
+  - All earnings data               (~800 tokens)
+  - Moat analysis                   (~400 tokens)
+  - Agent philosophy prompt         (~500 tokens)
+  Total per agent:                  ~4,700 tokens
+  × 5 agents = ~23,500 tokens
+```
+
+This works today because context is lean. But adding RAG (filings, transcripts) without selective filtering would bloat each agent to ~44,000 tokens — mostly wasted on data the agent doesn't use.
+
+### Target state: selective context per agent
+
+Each agent gets a **context profile** — only the metrics and retrieved documents relevant to their investment philosophy:
+
+| Agent | Metrics they need | RAG retrieval query | What to exclude |
+|-------|-------------------|---------------------|-----------------|
+| **Buffett** | ROE, margins, debt, FCF, owner earnings | "competitive advantage, pricing power, moat durability" | Macro commentary, beta |
+| **Lynch** | PEG, revenue growth, EPS growth | "growth rate, new products, market expansion" | Debt ratios, dividend history |
+| **Graham** | P/E, P/B, current ratio, dividend yield | "book value, debt repayment, dividend policy" | Growth narrative, market share |
+| **Munger** | ROIC, management tenure, capital allocation | "management quality, capital allocation, pricing decisions" | Technical ratios, beta |
+| **Dalio** | Debt/equity, interest coverage, beta | "macro environment, debt cycle, interest rate sensitivity" | PEG, ten-bagger potential |
+
+**Impact:** ~3,400 tokens per agent (down from ~44,000 with naive RAG). 13x reduction. Less context rot, faster responses, lower cost, better results.
+
+### The synthesis agent is the exception
+
+The synthesis node *should* get broad context — all 5 agent outputs — because its job is finding consensus and divergence across perspectives. Broad context is correct here.
+
+### Caching strategy by data type
+
+| Data type | How often it changes | Cache TTL |
+|-----------|---------------------|-----------|
+| Stock price | Every second | 1 minute or don't cache |
+| Financial statements | Every quarter | 24 hours |
+| SEC filings (10-K, 10-Q) | **Never** (historical records) | **Permanent** (refresh quarterly) |
+
+SEC filings are immutable. Once AAPL's 2024 10-K is in ChromaDB, it stays forever. The second user analyzing AAPL costs zero retrieval API calls.
+
+---
+
+## 📄 RAG Design: SEC EDGAR Filings
+
+### Why SEC EDGAR (not earnings call transcripts)
+
+| | SEC Filings (EDGAR) | Earnings Calls (FMP) |
+|---|--------------------|-----------------------|
+| **Cost** | Free (government, public domain) | $149/month (Ultimate plan) |
+| **Reliability** | Government infrastructure | API may change |
+| **Legal** | Public domain, meant to be accessed | Varies by source |
+| **Content** | Strategy, risks, MD&A, financials explained | CEO sentiment, analyst Q&A |
+| **Best for** | Graham, Dalio (risk-focused) | Buffett, Munger (management quality) |
+
+Earnings call transcripts can be added later as a premium data source. SEC filings are the right v1 foundation.
+
+### What to retrieve from filings
+
+| Filing | Section | Value for agents |
+|--------|---------|-----------------|
+| **10-K** (annual) | MD&A (Management Discussion & Analysis) | Strategy, moat narrative, long-term view |
+| **10-K** | Risk Factors | Red flags, competitive threats |
+| **10-Q** (quarterly) | MD&A updates | Recent performance, emerging concerns |
+| **8-K** (event-driven) | Material events | Leadership changes, guidance updates |
+
+### Free RAG tech stack
+
+```
+SEC EDGAR (free, public)         ← filing source
+       │
+       ▼
+edgartools (Python library)      ← fetch + parse filings
+       │
+       ▼
+sentence-transformers            ← local embeddings (all-MiniLM-L6-v2, free)
+       │
+       ▼
+ChromaDB                         ← local vector store (free, persists to disk)
+       │
+       ▼
+Agent prompt                     ← top 3 relevant chunks injected per agent
+```
+
+Total additional cost: $0. Everything runs locally.
+
+### Updated LangGraph workflow with RAG
+
+```
+START
+  │
+  ▼
+┌─────────────┐
+│ fetch_data  │  ← Yahoo/FMP API (parallel)
+└─────────────┘
+  │
+  ▼
+┌──────────────────┐
+│ retrieve_filings │  ← NEW: SEC EDGAR → chunk → embed → ChromaDB
+└──────────────────┘     (skipped if already cached)
+  │
+  ▼
+┌─────────────────┐
+│temporal_analysis│  ← Moat trend detection (deterministic)
+└─────────────────┘
+  │
+  ▼
+┌─────────────┐
+│ run_agents  │  ← Each agent retrieves top 3 chunks using
+└─────────────┘     agent-specific query (selective context)
+  │
+  ▼
+┌─────────────┐
+│ synthesize  │  ← Consensus across all agent outputs
+└─────────────┘
+  │
+  ▼
+ END
+```
+
+### Updated GOATState with RAG fields
+
+```python
+{
+    # ... existing fields ...
+
+    # After retrieve_filings_node (NEW)
+    "filings_indexed": True,          # Whether filings are in ChromaDB
+    "filings_metadata": {
+        "latest_10k": "2024",
+        "latest_10q": "Q3 2024",
+        "total_chunks": 142
+    },
+
+    # Inside run_agents_node (CHANGED)
+    # Each agent now includes retrieved_context in its output
+    "agent_results": [
+        {
+            "agent": "buffett",
+            "score": 65,
+            "verdict": "buy",
+            "retrieved_context": [       # NEW: what the agent grounded on
+                "10-K MD&A: installed base of 2.2B active devices...",
+                "10-K MD&A: services revenue grew 14% to $24.2B...",
+                "10-Q Risk: increasing regulatory scrutiny in EU..."
+            ],
+            "insights": [...],
+            "concerns": [...]
+        }
+    ]
+}
+```
+
+### API budget with RAG
+
+| Scenario | API calls | Within free tier? |
+|----------|----------|-------------------|
+| Single stock (first time) | 6 (financials) + 3 (filings) = 9 | Yes (250/day) |
+| Single stock (cached) | 6 (financials) + 0 (cached) = 6 | Yes |
+| 5-stock comparison (first time) | 45 | Yes |
+| 5-stock comparison (all cached) | 30 | Yes |
+
+---
+
+## 🔮 Future Enhancements
+
+### Phase 2: Memory
+- Persist last N analyses for comparison ("AAPL was a buy last quarter, what changed?")
+- User preferences (favorite agents, default anchor years)
+- Investment style profile to weight agent opinions
+
+### Phase 3: Earnings Call Transcripts
+- Add FMP Ultimate ($149/month) or alternative source when product value justifies cost
+- Richer grounding: CEO tone, analyst Q&A, forward guidance
+- Strongest benefit for Buffett and Munger agents (management quality focus)
+
+### Phase 4: Advanced Context Engineering
+- Context pruning: summarize old filings instead of passing raw text
+- Progressive disclosure: pull in context only when the agent requests it
+- Subagent pattern: spawn focused sub-queries for deep-dive questions
+
+---
+
+## 📚 Key Concepts
 
 ### Context Engineering
-You're already doing this! Passing `financials`, `earnings_data`, `earnings_streak` to agents is context engineering — filling the context window with relevant data.
+Deciding what goes into the LLM's context window for each call. The most important lever for output quality. Better context + cheap model > poor context + expensive model.
 
 ### Tool Calling
-Your "tools" are: Yahoo Finance scraping, FMP API, LLM calls. They're orchestrated by LangGraph workflow (not directly by agents), similar to how Cursor uses tools.
+GOATlens' "tools" are: Yahoo Finance scraping, FMP API, SEC EDGAR, LLM calls. They're orchestrated by LangGraph (the "agent harness"), not called directly by agents.
+
+### RAG (Retrieval Augmented Generation)
+"Before I start talking, I gotta go look everything up first." Retrieve relevant filing chunks, inject them into the agent prompt, then generate insights grounded in real management commentary.
 
 ### Model Routing
-Currently all agents use `gpt-4o-mini`. Step 5-6 will experiment with routing different models to different agents based on complexity.
+Matching model capability to task complexity. Rule-based scoring → no model. Agent interpretation → cheap model. Consensus synthesis → capable model.
 
 ### Graceful Degradation
-System works without FMP API key, without OpenAI API key. Core experience is always available.
+System works without FMP API key, without OpenAI API key, without SEC filings. Each layer enriches but never blocks the core experience.
 
 ---
 
@@ -519,5 +763,5 @@ System works without FMP API key, without OpenAI API key. Core experience is alw
 
 ---
 
-**Last Updated:** February 2026  
+**Last Updated:** March 2026  
 **Maintained by:** Pin (with help from AI agents)
