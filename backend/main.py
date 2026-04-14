@@ -636,14 +636,15 @@ async def root():
     )
 
 
-@app.get("/health")
-@app.get("/ping")  # Alias for keep-alive services
+@app.api_route("/health", methods=["GET", "HEAD"])
+@app.api_route("/ping", methods=["GET", "HEAD"])  # Alias for keep-alive services
 async def health():
     """
     Health check endpoint.
-    
+
     Also serves as a keep-alive endpoint for external monitoring services
     (UptimeRobot, cron-job.org, etc.) to prevent Render from sleeping.
+    HEAD is supported because UptimeRobot defaults to HEAD requests.
     """
     return {"status": "healthy", "service": "goatlens"}
 
