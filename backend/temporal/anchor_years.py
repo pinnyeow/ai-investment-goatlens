@@ -108,27 +108,43 @@ class TemporalAnalyzer:
         de = financials.get("debt_to_equity", 0)
         
         # Score calculation
-        if gm >= 0.50: score += 30
-        elif gm >= 0.40: score += 25
-        elif gm >= 0.30: score += 20
-        elif gm >= 0.20: score += 10
-        
-        if om >= 0.25: score += 30
-        elif om >= 0.15: score += 20
-        elif om >= 0.10: score += 10
-        
-        if roe >= 0.25: score += 25
-        elif roe >= 0.15: score += 20
-        elif roe >= 0.10: score += 10
-        
-        if de < 0.3: score += 15
-        elif de < 0.5: score += 10
-        elif de < 1.0: score += 5
-        
+        if gm >= 0.50:
+            score += 30
+        elif gm >= 0.40:
+            score += 25
+        elif gm >= 0.30:
+            score += 20
+        elif gm >= 0.20:
+            score += 10
+
+        if om >= 0.25:
+            score += 30
+        elif om >= 0.15:
+            score += 20
+        elif om >= 0.10:
+            score += 10
+
+        if roe >= 0.25:
+            score += 25
+        elif roe >= 0.15:
+            score += 20
+        elif roe >= 0.10:
+            score += 10
+
+        if de < 0.3:
+            score += 15
+        elif de < 0.5:
+            score += 10
+        elif de < 1.0:
+            score += 5
+
         # Observations
-        if gm >= 0.40: observations.append(f"Strong pricing power ({gm:.0%} gross margin)")
-        if roe >= 0.20: observations.append(f"Excellent capital efficiency ({roe:.0%} ROE)")
-        if de < 0.5: observations.append("Conservative debt levels")
+        if gm >= 0.40:
+            observations.append(f"Strong pricing power ({gm:.0%} gross margin)")
+        if roe >= 0.20:
+            observations.append(f"Excellent capital efficiency ({roe:.0%} ROE)")
+        if de < 0.5:
+            observations.append("Conservative debt levels")
         
         # Label based on period
         if time_period in ["ytd", "3m", "6m"]:
@@ -154,7 +170,6 @@ class TemporalAnalyzer:
             AnchorYearSnapshot with key metrics
         """
         income = year_data.get("income", {}) or {}
-        balance = year_data.get("balance", {}) or {}
         cash_flow = year_data.get("cash_flow", {}) or {}
         ratios = year_data.get("ratios", {}) or {}
         

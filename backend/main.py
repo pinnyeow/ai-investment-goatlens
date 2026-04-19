@@ -682,13 +682,13 @@ async def debug_tracing():
     try:
         import arize
         versions["arize-otel"] = getattr(arize, "__version__", "unknown")
-    except:
+    except Exception:
         pass
-    
+
     try:
         import openinference
         versions["openinference"] = getattr(openinference, "__version__", "unknown")
-    except:
+    except Exception:
         pass
     
     return {

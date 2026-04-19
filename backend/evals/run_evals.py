@@ -164,7 +164,6 @@ def print_layer_results(layer: LayerResults):
     # Summary line
     total = len(layer.results)
     passed = layer.pass_count
-    failed = layer.fail_count
     rate = layer.pass_rate * 100
 
     colour = GREEN if rate == 100 else (YELLOW if rate >= 80 else RED)
@@ -178,8 +177,8 @@ def print_summary(all_layers: List[LayerResults]):
     print(f"  {BOLD}EVAL SUMMARY{RESET}")
     print(f"{'═' * 64}")
 
-    total_passed = sum(l.pass_count for l in all_layers)
-    total_failed = sum(l.fail_count for l in all_layers)
+    total_passed = sum(layer.pass_count for layer in all_layers)
+    total_failed = sum(layer.fail_count for layer in all_layers)
     total = total_passed + total_failed
     rate = total_passed / total * 100 if total else 0
 
@@ -192,11 +191,11 @@ def print_summary(all_layers: List[LayerResults]):
 
     if total_failed > 0:
         errors = [
-            r for l in all_layers for r in l.results
+            r for layer in all_layers for r in layer.results
             if not r.passed and r.severity == "error"
         ]
         warnings = [
-            r for l in all_layers for r in l.results
+            r for layer in all_layers for r in layer.results
             if not r.passed and r.severity == "warning"
         ]
         if errors:

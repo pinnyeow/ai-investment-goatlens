@@ -555,8 +555,6 @@ async def run_agent_evals(
     layer = LayerResults(layer="Layer 2: Agent Quality")
 
     for output in agent_outputs:
-        agent = output.get("agent", "Unknown")
-
         # Code-based checks (always run)
         layer.results.extend(eval_output_structure(output))
         layer.results.extend(eval_score_range(output))

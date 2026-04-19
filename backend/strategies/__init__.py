@@ -4,7 +4,7 @@ GOATlens - Strategy Evaluation Logic
 Contains the core evaluation strategies and scoring mechanisms.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, List
 from dataclasses import dataclass
 from enum import Enum
 
@@ -71,8 +71,7 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     
     # Find consensus and divergence points
     all_insights = [insight for r in results for insight in r.key_insights]
-    all_concerns = [concern for r in results for concern in r.concerns]
-    
+
     # Simple frequency-based consensus (insights mentioned by multiple agents)
     insight_counts: Dict[str, int] = {}
     for insight in all_insights:

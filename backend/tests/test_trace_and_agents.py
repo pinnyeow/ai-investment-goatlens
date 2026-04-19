@@ -384,7 +384,6 @@ class TestTracePropagation:
         should inherit the caller's OTel context (same trace_id).
         """
         try:
-            from opentelemetry import trace
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         except ImportError:
@@ -401,7 +400,7 @@ class TestTracePropagation:
                 return f"{name}_result"
 
         with tracer.start_as_current_span("run_agents_node"):
-            results = await asyncio.gather(
+            await asyncio.gather(
                 mock_agent_work("buffett"),
                 mock_agent_work("lynch"),
                 mock_agent_work("graham"),
@@ -434,7 +433,7 @@ class TestTracePropagation:
         are caused by the LangChain instrumentor, not asyncio context.
         """
         try:
-            from opentelemetry import trace, context as otel_context
+            from opentelemetry import context as otel_context
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         except ImportError:
@@ -464,7 +463,7 @@ class TestTracePropagation:
                 asyncio.create_task(run_with_context("buffett")),
                 asyncio.create_task(run_with_context("lynch")),
             ]
-            results = await asyncio.gather(*tasks)
+            await asyncio.gather(*tasks)
 
         provider.force_flush()
         spans = exporter.spans
