@@ -13,7 +13,7 @@ This is a learning exercise for Step 6: Tool Calling in AI Product Sense.
 
 import os
 import httpx
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
 
@@ -145,7 +145,7 @@ class NewsClient:
                     "source": "rate_limited",
                 }
             raise NewsError(f"News API error: {e.response.status_code}")
-        except Exception as e:
+        except Exception:
             # Graceful degradation: return neutral if anything fails
             return {
                 "sentiment": "neutral",

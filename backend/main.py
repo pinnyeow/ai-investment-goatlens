@@ -36,7 +36,7 @@ if space_id and api_key:
         from arize.otel import register
         from openinference.instrumentation.langchain import LangChainInstrumentor
         
-        print(f"[Arize] Initializing tracing...")
+        print("[Arize] Initializing tracing...")
         print(f"[Arize] Space ID: {space_id[:8]}... (length: {len(space_id)})")
         print(f"[Arize] API Key: {'*' * 8}... (length: {len(api_key)})")
         
@@ -75,9 +75,8 @@ else:
     print(f"[Arize] ⚠ Tracing disabled: Missing environment variables: {', '.join(missing)}")
     print("[Arize]   Set ARIZE_SPACE_ID and ARIZE_API_KEY in your .env file or environment to enable tracing")
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -89,8 +88,8 @@ from typing_extensions import TypedDict
 # Local imports
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
 from data_sources import YahooFinanceClient, YahooFinanceError
-from data_sources import FMPClient, FMPError
-from data_sources import NewsClient, NewsError
+from data_sources import FMPClient
+from data_sources import NewsClient
 from temporal import TemporalAnalyzer
 from strategies import calculate_consensus, calculate_consensus_with_llm, StrategyResult, Verdict
 from llm import get_llm_client
@@ -363,7 +362,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
                 state["news_sentiment"] = news_sentiment
             else:
                 state["news_sentiment"] = None
-        except Exception as e:
+        except Exception:
             # Graceful degradation: news is optional
             state["news_sentiment"] = None
         
@@ -373,7 +372,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             rag_retriever = RAGRetriever()
             rag_context = await rag_retriever.retrieve_earnings_context(ticker, quarters=4)
             state["rag_context"] = rag_context if rag_context else None
-        except Exception as e:
+        except Exception:
             # Graceful degradation: RAG is optional
             state["rag_context"] = None
         
@@ -684,13 +683,13 @@ async def debug_tracing():
     try:
         import arize
         versions["arize-otel"] = getattr(arize, "__version__", "unknown")
-    except:
+    except Exception:
         pass
-    
+
     try:
         import openinference
         versions["openinference"] = getattr(openinference, "__version__", "unknown")
-    except:
+    except Exception:
         pass
     
     return {

@@ -17,8 +17,7 @@ Layer 2 checks each agent independently. Layer 3 checks the
 *combination*. You can have 5 perfect agents and a broken consensus.
 """
 
-import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from .data_pipeline_evals import EvalResult, LayerResults
 

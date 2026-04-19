@@ -331,19 +331,16 @@ class YahooFinanceClient:
             df = earnings_dates
             
             # yfinance earnings_dates columns vary; find the right ones
-            # Common columns: "EPS Estimate", "Reported EPS", "Surprise(%)"
+            # Common columns: "EPS Estimate", "Reported EPS"
             eps_est_col = None
             eps_act_col = None
-            surprise_col = None
-            
+
             for col in df.columns:
                 col_lower = str(col).lower()
                 if "estimate" in col_lower and "eps" in col_lower:
                     eps_est_col = col
                 elif "reported" in col_lower and "eps" in col_lower:
                     eps_act_col = col
-                elif "surprise" in col_lower:
-                    surprise_col = col
             
             if eps_est_col is None or eps_act_col is None:
                 return []
@@ -858,7 +855,6 @@ class YahooFinanceClient:
 
         # Build price-date helpers
         price_dates: List[str] = [p["date"] for p in price_history]
-        price_by_date: Dict[str, int] = {p["date"]: i for i, p in enumerate(price_history)}
 
         # Revenue lookup: quarter-end date -> revenue
         rev_lookup: Dict[str, float] = {r["date"]: r["revenue"] for r in quarterly_revenue}
@@ -1305,9 +1301,9 @@ class YahooFinanceClient:
                 return 0
             
             return (end_value / start_value) ** (1 / years) - 1
-        except:
+        except Exception:
             return 0
-    
+
     def _calculate_interest_coverage(self, raw_data: Dict[str, Any]) -> float:
         """Calculate interest coverage ratio."""
         try:
@@ -1330,7 +1326,7 @@ class YahooFinanceClient:
             if ebit and interest and interest > 0:
                 return ebit / interest
             return 0
-        except:
+        except Exception:
             return 0
     
     def extract_anchor_year_data(
@@ -1380,5 +1376,5 @@ class YahooFinanceClient:
                 if hasattr(col, 'year') and col.year == year:
                     return df[col].to_dict()
             return None
-        except:
+        except Exception:
             return None

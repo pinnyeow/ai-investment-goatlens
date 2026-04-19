@@ -22,16 +22,13 @@ The Arize article calls this "layered evaluation" — cheap checks first,
 expensive checks only when needed.
 """
 
-import os
-import re
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from .data_pipeline_evals import EvalResult, LayerResults
 from .golden_dataset import (
     GOLDEN_TICKERS,
     PHILOSOPHY_KEYWORDS,
-    VERDICT_THRESHOLDS,
     REQUIRED_OUTPUT_KEYS,
 )
 
@@ -196,13 +193,13 @@ def eval_insights_not_empty(agent_output: Dict[str, Any]) -> List[EvalResult]:
     results.append(EvalResult(
         name="has_insights",
         passed=len(insights) > 0,
-        details=f"Agent produced 0 insights" if len(insights) == 0 else "",
+        details="Agent produced 0 insights" if len(insights) == 0 else "",
     ))
 
     results.append(EvalResult(
         name="has_concerns",
         passed=len(concerns) > 0,
-        details=f"Agent produced 0 concerns" if len(concerns) == 0 else "",
+        details="Agent produced 0 concerns" if len(concerns) == 0 else "",
         severity="warning",  # Some stocks genuinely have no concerns
     ))
 
@@ -558,8 +555,6 @@ async def run_agent_evals(
     layer = LayerResults(layer="Layer 2: Agent Quality")
 
     for output in agent_outputs:
-        agent = output.get("agent", "Unknown")
-
         # Code-based checks (always run)
         layer.results.extend(eval_output_structure(output))
         layer.results.extend(eval_score_range(output))
