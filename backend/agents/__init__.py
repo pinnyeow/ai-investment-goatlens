@@ -9,6 +9,7 @@ from .lynch import LynchAgent
 from .graham import GrahamAgent
 from .munger import MungerAgent
 from .dalio import DalioAgent
+from .burry import BurryAgent
 
 __all__ = [
     "BuffettAgent",
@@ -16,4 +17,5 @@ __all__ = [
     "GrahamAgent",
     "MungerAgent",
     "DalioAgent",
+    "BurryAgent",
 ]

@@ -1,0 +1,101 @@
+{
+  "agent_preferences": {
+    "buffett": 9,
+    "lynch": 9,
+    "graham": 9,
+    "munger": 9,
+    "dalio": 9
+  },
+  "analyses": [
+    {
+      "ticker": "MU",
+      "timestamp": "2026-05-18T17:24:28.357975",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 32.208885,
+        "roe": 0.39823002,
+        "profit_margin": 0.41486
+      }
+    },
+    {
+      "ticker": "TSLA",
+      "timestamp": "2026-05-18T22:21:12.665013",
+      "consensus_verdict": "hold",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 372.71817,
+        "roe": 0.04901,
+        "profit_margin": 0.03946
+      }
+    },
+    {
+      "ticker": "META",
+      "timestamp": "2026-05-18T22:23:19.389198",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 22.225819,
+        "roe": 0.32930002,
+        "profit_margin": 0.32837
+      }
+    },
+    {
+      "ticker": "META",
+      "timestamp": "2026-05-19T12:01:28.364222",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 21.92982,
+        "roe": 0.32930002,
+        "profit_margin": 0.32837
+      }
+    },
+    {
+      "ticker": "NVDA",
+      "timestamp": "2026-05-19T12:02:15.672902",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 45.17996,
+        "roe": 1.01485,
+        "profit_margin": 0.55603004
+      }
+    }
+  ]
+}

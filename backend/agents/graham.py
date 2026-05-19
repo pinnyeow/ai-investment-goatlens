@@ -100,6 +100,7 @@ class GrahamAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
@@ -127,7 +128,10 @@ class GrahamAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, margin_of_safety, score, verdict, config=config)
+            insights = await self._generate_llm_insights(
+                ticker, metrics, margin_of_safety, score, verdict,
+                recent_news=recent_news, config=config,
+            )
         else:
             insights = self._generate_insights(metrics, margin_of_safety)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -322,6 +326,8 @@ class GrahamAgent:
         margin_of_safety: Dict[str, Any],
         score: float,
         verdict: str,
+        *,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Graham's voice."""
@@ -331,6 +337,14 @@ class GrahamAgent:
             f"Graham Number ${metrics.graham_number:.0f} vs Price ${metrics.current_price:.0f}, "
             f"Margin of Safety {margin_of_safety['percentage']:.1%}"
         )
+        if recent_news:
+            news_lines = ["Recent News (last 10 items):"]
+            for item in recent_news:
+                line = f"- {item['headline']} — {item['source']}, {item['published']}"
+                if item.get("summary"):
+                    line += f"\n  {item['summary']}"
+                news_lines.append(line)
+            prompt += "\n\n" + "\n".join(news_lines)
         try:
             response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, margin_of_safety)

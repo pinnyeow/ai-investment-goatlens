@@ -827,6 +827,30 @@ class YahooFinanceClient:
         """Async wrapper for get_forward_estimates_sync."""
         return await self._run_sync(self.get_forward_estimates_sync, ticker)
 
+    def _get_recent_news_sync(self, ticker: str) -> List[Dict[str, Any]]:
+        try:
+            stock = self._get_ticker(ticker)
+            raw = stock.news or []
+            result = []
+            for item in raw[:10]:
+                ts = item.get("providerPublishTime") or 0
+                published = (
+                    datetime.fromtimestamp(ts).strftime("%Y-%m-%d") if ts else "unknown"
+                )
+                result.append({
+                    "headline": item.get("title", ""),
+                    "summary": item.get("summary", ""),
+                    "source": item.get("publisher", ""),
+                    "published": published,
+                })
+            return result
+        except Exception:
+            return []
+
+    async def get_recent_news(self, ticker: str) -> List[Dict[str, Any]]:
+        """Fetch up to 10 recent news items for ticker. Returns [] on any failure."""
+        return await self._run_sync(self._get_recent_news_sync, ticker)
+
     # ------------------------------------------------------------------
     # Earnings Reaction Insights — analysis engine
     # ------------------------------------------------------------------

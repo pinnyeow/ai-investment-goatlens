@@ -77,6 +77,7 @@ class DalioAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
@@ -105,7 +106,10 @@ class DalioAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, risk_assessment, score, verdict, config=config)
+            insights = await self._generate_llm_insights(
+                ticker, metrics, cycle_analysis, risk_assessment, score, verdict,
+                recent_news=recent_news, config=config,
+            )
         else:
             insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -352,6 +356,8 @@ class DalioAgent:
         risk_assessment: Dict[str, Any],
         score: float,
         verdict: str,
+        *,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Dalio's voice."""
@@ -362,6 +368,14 @@ class DalioAgent:
             f"Interest Coverage {relevant['interest_coverage']:.1f}x, "
             f"Cycle {relevant['cycle_phase']}, Risk {relevant['risk_level']}"
         )
+        if recent_news:
+            news_lines = ["Recent News (last 10 items):"]
+            for item in recent_news:
+                line = f"- {item['headline']} — {item['source']}, {item['published']}"
+                if item.get("summary"):
+                    line += f"\n  {item['summary']}"
+                news_lines.append(line)
+            prompt += "\n\n" + "\n".join(news_lines)
         try:
             response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, cycle_analysis, {})

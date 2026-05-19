@@ -81,6 +81,7 @@ class MungerAgent:
         *,
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
@@ -109,7 +110,10 @@ class MungerAgent:
         
         # Generate LLM-powered insights if client available
         if self.llm_client:
-            insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict, config=config)
+            insights = await self._generate_llm_insights(
+                ticker, metrics, quality_assessment, red_flags, score, verdict,
+                recent_news=recent_news, config=config,
+            )
         else:
             insights = self._generate_insights(metrics, quality_assessment)
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
@@ -331,6 +335,8 @@ class MungerAgent:
         red_flags: List[str],
         score: float,
         verdict: str,
+        *,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Munger's voice."""
@@ -341,6 +347,14 @@ class MungerAgent:
             f"ROIC {relevant['roic']:.1%}, Quality {relevant['quality_level']}, "
             f"Red Flags {relevant['red_flags_count']}"
         )
+        if recent_news:
+            news_lines = ["Recent News (last 10 items):"]
+            for item in recent_news:
+                line = f"- {item['headline']} — {item['source']}, {item['published']}"
+                if item.get("summary"):
+                    line += f"\n  {item['summary']}"
+                news_lines.append(line)
+            prompt += "\n\n" + "\n".join(news_lines)
         try:
             response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, quality_assessment)
