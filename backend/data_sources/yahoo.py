@@ -22,6 +22,7 @@ Performance:
 import math
 import time
 import hashlib
+import threading
 from datetime import datetime, timedelta
 
 import yfinance as yf
@@ -37,6 +38,44 @@ from concurrent.futures import ThreadPoolExecutor
 # Format: { cache_key: (timestamp, data) }
 _cache: Dict[str, Tuple[float, Any]] = {}
 _CACHE_TTL = 300  # 5 minutes
+
+# Concurrent cold requests share one task per event loop and cache key.
+# A threading lock protects the tiny task-map critical section without binding
+# the guard itself to one asyncio event loop.
+_inflight: Dict[Tuple[asyncio.AbstractEventLoop, str], asyncio.Task] = {}
+_inflight_guard = threading.Lock()
+
+
+def _cleanup_inflight(inflight_key, completed_task):
+    """Remove a completed provider task even when every waiter was cancelled."""
+    with _inflight_guard:
+        if _inflight.get(inflight_key) is completed_task:
+            _inflight.pop(inflight_key, None)
+
+    if not completed_task.cancelled():
+        completed_task.exception()
+
+
+async def _coalesce(key: str, factory):
+    """Share one in-progress provider request among concurrent callers."""
+    loop = asyncio.get_running_loop()
+    inflight_key = (loop, key)
+    with _inflight_guard:
+        task = _inflight.get(inflight_key)
+        if task is None:
+            task = loop.create_task(factory())
+            _inflight[inflight_key] = task
+            task.add_done_callback(
+                lambda completed: _cleanup_inflight(inflight_key, completed)
+            )
+
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if task.done():
+            with _inflight_guard:
+                if _inflight.get(inflight_key) is task:
+                    _inflight.pop(inflight_key, None)
 
 
 def _cache_key(namespace: str, *args) -> str:
@@ -240,7 +279,12 @@ class YahooFinanceClient:
         Returns:
             Comprehensive company data dictionary
         """
-        return await self._run_sync(self._fetch_all_data_sync, ticker)
+        ticker = ticker.strip().upper()
+
+        async def fetch():
+            return await self._run_sync(self._fetch_all_data_sync, ticker)
+
+        return await _coalesce(_cache_key("company", ticker), fetch)
     
     def normalize_data(self, raw_data: Dict[str, Any]) -> FinancialData:
         """

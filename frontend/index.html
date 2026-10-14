@@ -3211,6 +3211,9 @@
         let epsChartInstance = null;
         let selectedChartPeriod = '1y';
         let pendingEpsData = [];
+        let earningsInsightsLoadedTicker = '';
+        let earningsInsightsGeneration = 0;
+        const earningsInsightsRequests = new Map();
         
         // Score tooltips for each investor
         const investorTooltips = {
@@ -3340,6 +3343,15 @@
                     renderEpsChart(pendingEpsData);
                 }
 
+                // Fetch rich earnings insights only when the user opens that tab.
+                if (
+                    tab === 'insights' &&
+                    currentTicker &&
+                    earningsInsightsLoadedTicker !== currentTicker
+                ) {
+                    loadEarningsInsights(currentTicker);
+                }
+
                 // Resize price chart when coming back
                 if (tab === 'price' && priceChart) {
                     const container = document.getElementById('priceChartContainer');
@@ -3382,12 +3394,9 @@
             showLoading();
             hideError();
 
-            // ── Fire ALL three API calls in parallel ──
-            // The analyze call is the slowest (~8-15s) because it runs the
-            // LangGraph pipeline (data fetch → agents → LLM consensus).
-            // Price history and earnings insights are independent — starting
-            // them at the same time means charts are often ready by the time
-            // the user sees the GOAT scores.
+            // Start only the core analysis request. Optional chart and earnings
+            // requests are loaded after analysis so a cold ticker cannot stampede
+            // the upstream market-data provider.
             const analyzePromise = fetch(`${API_BASE}/api/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3397,12 +3406,6 @@
                     agents: selectedInvestors
                 })
             });
-            const pricePromise = fetch(`${API_BASE}/api/price-history/${ticker}?period=${selectedChartPeriod}`);
-            const earningsPromise = fetch(`${API_BASE}/api/earnings/${ticker}`);
-
-            // Stash the secondary promises so displayResults can use them
-            _pendingPricePromise = pricePromise;
-            _pendingEarningsPromise = earningsPromise;
 
             // Animate loading steps for user feedback
             _loadingTimer = setTimeout(() => {
@@ -3416,7 +3419,11 @@
 
                 if (!response.ok) {
                     const error = await response.json();
-                    throw new Error(error.detail || 'Analysis failed');
+                    const detail = error.detail;
+                    const message = detail && typeof detail === 'object'
+                        ? detail.message
+                        : detail;
+                    throw new Error(message || 'Analysis failed');
                 }
 
                 const data = await response.json();
@@ -3428,9 +3435,6 @@
             }
         }
 
-        // Promises for secondary data (filled by runAnalysis, consumed by displayResults)
-        let _pendingPricePromise = null;
-        let _pendingEarningsPromise = null;
         let _loadingTimer = null;
 
         function setLoadingStep(activeId) {
@@ -3462,6 +3466,7 @@
         function displayResults(data) {
             hideLoading();
             currentTicker = data.ticker;
+            earningsInsightsGeneration += 1;
             
             // Company Header
             document.getElementById('companyTicker').textContent = data.ticker;
@@ -3516,13 +3521,10 @@
             document.getElementById('chartViewPrice').classList.add('active');
             document.getElementById('chartPeriodSelector').style.display = 'flex';
 
-            // Load price chart — reuse the promise that was already fired in runAnalysis()
-            loadPriceChart(data.ticker, selectedChartPeriod, _pendingPricePromise);
-            _pendingPricePromise = null;  // consumed
-
-            // Load earnings reaction insights — reuse pre-fired promise
-            loadEarningsInsights(data.ticker, _pendingEarningsPromise);
-            _pendingEarningsPromise = null;  // consumed
+            // Load the visible price chart only after core analysis succeeds.
+            // Rich earnings insights remain lazy until the Insights tab opens.
+            earningsInsightsLoadedTicker = '';
+            loadPriceChart(data.ticker, selectedChartPeriod);
 
             // Agent Cards with Tooltips
             const agentsGrid = document.getElementById('agentsGrid');
@@ -4023,35 +4025,57 @@
         // ==========================================
         // Earnings Reaction Insights
         // ==========================================
-        async function loadEarningsInsights(ticker, prefetchedPromise) {
+        async function loadEarningsInsights(ticker) {
             const guidanceCard = document.getElementById('guidanceCard');
             const insightsList = document.getElementById('reactionInsightsList');
+            const generation = earningsInsightsGeneration;
+
+            if (earningsInsightsLoadedTicker === ticker) return;
+            guidanceCard.style.display = 'none';
+            guidanceCard.innerHTML = '';
+            const pending = earningsInsightsRequests.get(ticker);
+            if (pending && pending.generation === generation) {
+                return pending.promise;
+            }
 
             // Show loading state inside the tab
             insightsList.innerHTML = '<div class="insights-loading"><div class="mini-spinner" style="display:inline-block; margin-right:0.5rem;"></div> Loading insights...</div>';
 
-            try {
-                // Reuse the pre-started fetch if available (parallel with analyze)
-                const resp = prefetchedPromise
-                    ? await prefetchedPromise
-                    : await fetch(`${API_BASE}/api/earnings/${ticker}`);
-                if (!resp.ok) throw new Error('Failed to load earnings insights');
-                const data = await resp.json();
+            const entry = { generation, promise: null };
+            const request = (async () => {
+                try {
+                    const resp = await fetch(`${API_BASE}/api/earnings/${ticker}`);
+                    if (!resp.ok) throw new Error('Failed to load earnings insights');
+                    const data = await resp.json();
+                    if (currentTicker !== ticker || earningsInsightsGeneration !== generation) {
+                        return;
+                    }
+                    earningsInsightsLoadedTicker = ticker;
 
-                // Render forward guidance summary
-                if (data.forward_guidance) {
-                    renderForwardGuidance(data.forward_guidance);
-                }
+                    // Render forward guidance summary
+                    if (data.forward_guidance) {
+                        renderForwardGuidance(data.forward_guidance);
+                    }
 
-                // Render per-quarter reaction insights
-                if (data.reaction_insights && data.reaction_insights.length > 0) {
-                    renderReactionInsights(data.reaction_insights);
-                } else {
-                    insightsList.innerHTML = '<div class="insights-loading">No reaction insight data available.</div>';
+                    // Render per-quarter reaction insights
+                    if (data.reaction_insights && data.reaction_insights.length > 0) {
+                        renderReactionInsights(data.reaction_insights);
+                    } else {
+                        insightsList.innerHTML = '<div class="insights-loading">No reaction insight data available.</div>';
+                    }
+                } catch (err) {
+                    if (currentTicker === ticker && earningsInsightsGeneration === generation) {
+                        insightsList.innerHTML = `<div class="insights-loading" style="color: var(--accent-red);">Failed to load insights: ${err.message}</div>`;
+                    }
+                } finally {
+                    if (earningsInsightsRequests.get(ticker) === entry) {
+                        earningsInsightsRequests.delete(ticker);
+                    }
                 }
-            } catch (err) {
-                insightsList.innerHTML = `<div class="insights-loading" style="color: var(--accent-red);">Failed to load insights: ${err.message}</div>`;
-            }
+            })();
+            entry.promise = request;
+            earningsInsightsRequests.set(ticker, entry);
+            return request;
         }
 
         /**
