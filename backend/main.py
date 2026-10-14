@@ -13,6 +13,9 @@ Features:
 
 import os
 import asyncio
+import re
+import threading
+import time
 from typing import Dict, Any, List, Optional
 from contextlib import asynccontextmanager
 
@@ -78,7 +81,7 @@ else:
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
@@ -101,6 +104,25 @@ from rag import RAGRetriever
 # Pydantic Models
 # ============================================================================
 
+_TICKER_PATTERN = re.compile(r"(?=.{1,10}\Z)[A-Z0-9]+(?:[.-][A-Z0-9]+)?\Z")
+
+
+def _normalize_ticker(value: str) -> str:
+    """Normalize and validate a common-stock ticker symbol."""
+    ticker = value.strip().upper()
+    if not _TICKER_PATTERN.fullmatch(ticker):
+        raise ValueError("Ticker must be 1-10 letters/digits with one optional . or -")
+    return ticker
+
+
+def _normalize_path_ticker(value: str) -> str:
+    """Apply ticker validation to path parameters with an HTTP 422 response."""
+    try:
+        return _normalize_ticker(value)
+    except (AttributeError, ValueError):
+        raise HTTPException(status_code=422, detail="Invalid ticker symbol")
+
+
 class AnalysisRequest(BaseModel):
     """Request to analyze a company."""
     ticker: str = Field(..., description="Stock ticker symbol (e.g., AAPL)")
@@ -112,6 +134,11 @@ class AnalysisRequest(BaseModel):
         default=None,
         description="Specific agents to run (default: all)",
     )
+
+    @field_validator("ticker", mode="before")
+    @classmethod
+    def validate_ticker(cls, value: str) -> str:
+        return _normalize_ticker(value)
 
 
 class AgentResult(BaseModel):
@@ -289,6 +316,7 @@ class GOATState(TypedDict):
     # Data
     raw_data: Optional[Dict[str, Any]]
     normalized_data: Optional[Dict[str, Any]]
+    data_source: Optional[str]
     
     # Earnings data (actual vs. consensus)
     earnings_data: Optional[List[Dict[str, Any]]]
@@ -315,6 +343,34 @@ class GOATState(TypedDict):
     
     # Error tracking
     error: Optional[str]
+    error_code: Optional[str]
+    market_data_only: bool
+
+
+_TRANSIENT_YAHOO_ERROR_MARKERS = (
+    "too many requests",
+    "rate limit",
+    "timeout",
+    "timed out",
+    "temporarily unavailable",
+    "connection",
+    "service unavailable",
+)
+
+
+def _classify_yahoo_error(error: YahooFinanceError, ticker: str) -> str:
+    """Classify provider failures without using user-controlled ticker text."""
+    error_text = re.sub(
+        rf"(?<![A-Z0-9]){re.escape(ticker)}(?![A-Z0-9])",
+        "",
+        str(error),
+        flags=re.IGNORECASE,
+    ).lower()
+    if "no data found for ticker" in error_text:
+        return "ticker_not_found"
+    if any(marker in error_text for marker in _TRANSIENT_YAHOO_ERROR_MARKERS):
+        return "market_data_temporarily_unavailable"
+    return "market_data_failure"
 
 
 async def fetch_data_node(state: GOATState) -> GOATState:
@@ -326,15 +382,20 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     synthesize_node doesn't need a redundant Yahoo call.
     """
     ticker = state["ticker"]
+    market_data_only = state.get("market_data_only", False)
     
     try:
         async with YahooFinanceClient() as client:
-            # Fetch company data and next earnings date in parallel
-            raw_task = client.get_company_data(ticker, years=10)
-            next_earnings_task = client.get_next_earnings_date(ticker)
-            raw_data, next_earnings = await asyncio.gather(
-                raw_task, next_earnings_task
-            )
+            if market_data_only:
+                raw_data = await client.get_company_data(ticker, years=10)
+                next_earnings = None
+            else:
+                # Fetch company data and next earnings date in parallel
+                raw_task = client.get_company_data(ticker, years=10)
+                next_earnings_task = client.get_next_earnings_date(ticker)
+                raw_data, next_earnings = await asyncio.gather(
+                    raw_task, next_earnings_task
+                )
 
             normalized = client.normalize_data(raw_data)
             
@@ -344,9 +405,15 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         
         state["raw_data"] = raw_data
         state["normalized_data"] = normalized.__dict__
+        state["data_source"] = "yahoo"
         state["earnings_data"] = earnings
         state["earnings_streak"] = streak
         state["next_earnings_date"] = next_earnings
+
+        if market_data_only:
+            state["news_sentiment"] = None
+            state["rag_context"] = None
+            return state
         
         # Optional: Fetch news sentiment (tool selection - only if conditions met)
         # This demonstrates Step 6: Tool Calling - agents decide when to use this tool
@@ -376,9 +443,42 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             # Graceful degradation: RAG is optional
             state["rag_context"] = None
         
-    except YahooFinanceError as e:
-        state["error"] = f"Data fetch failed: {str(e)}"
-    
+    except YahooFinanceError as yahoo_error:
+        error_code = _classify_yahoo_error(yahoo_error, ticker)
+        if error_code == "ticker_not_found":
+            state["error"] = f"No market data found for ticker {ticker}."
+            state["error_code"] = "ticker_not_found"
+            return state
+
+        if error_code != "market_data_temporarily_unavailable":
+            state["error"] = "Market data request failed."
+            state["error_code"] = "market_data_failure"
+            return state
+
+        fmp_api_key = os.getenv("FMP_API_KEY")
+        if not fmp_api_key:
+            state["error"] = "Market data is temporarily unavailable."
+            state["error_code"] = "market_data_temporarily_unavailable"
+            return state
+
+        try:
+            async with FMPClient(api_key=fmp_api_key) as client:
+                raw_data = await client.get_company_data(ticker, years=10)
+                normalized = client.normalize_data(raw_data)
+        except Exception:
+            state["error"] = "Market data is temporarily unavailable."
+            state["error_code"] = "market_data_temporarily_unavailable"
+            return state
+
+        state["raw_data"] = raw_data
+        state["normalized_data"] = normalized.__dict__
+        state["data_source"] = "fmp"
+        state["earnings_data"] = []
+        state["earnings_streak"] = None
+        state["next_earnings_date"] = None
+        state["news_sentiment"] = None
+        state["rag_context"] = None
+
     return state
 
 
@@ -600,6 +700,13 @@ def build_goat_workflow() -> StateGraph:
 # Global workflow
 goat_workflow = None
 
+# The public canary has a fixed ticker, so share its complete Yahoo→FMP result
+# instead of letting every monitor request spend fallback quota independently.
+_MARKET_DATA_HEALTH_TTL = 60
+_market_data_health_cache = {}
+_market_data_health_inflight = {}
+_market_data_health_guard = threading.Lock()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -646,6 +753,110 @@ async def health():
     HEAD is supported because UptimeRobot defaults to HEAD requests.
     """
     return {"status": "healthy", "service": "goatlens"}
+
+
+async def _fetch_market_data_health():
+    """Fetch the fixed-symbol market-data snapshot without optional services."""
+    ticker = "AAPL"
+    state: GOATState = {
+        "ticker": ticker,
+        "time_period": "1y",
+        "selected_agents": [],
+        "raw_data": None,
+        "normalized_data": None,
+        "data_source": None,
+        "earnings_data": None,
+        "earnings_streak": None,
+        "next_earnings_date": None,
+        "news_sentiment": None,
+        "rag_context": None,
+        "temporal_results": None,
+        "agent_results": [],
+        "consensus": None,
+        "final_report": None,
+        "error": None,
+        "error_code": None,
+        "market_data_only": True,
+    }
+    return await fetch_data_node(state)
+
+
+def _cleanup_market_data_health_task(inflight_key, completed_task):
+    with _market_data_health_guard:
+        if _market_data_health_inflight.get(inflight_key) is completed_task:
+            _market_data_health_inflight.pop(inflight_key, None)
+
+    if not completed_task.cancelled():
+        completed_task.exception()
+
+
+async def _market_data_health_snapshot():
+    """Cache and coalesce the complete fixed-symbol provider fallback path."""
+    loop = asyncio.get_running_loop()
+    provider_key = (YahooFinanceClient, FMPClient)
+    now = time.monotonic()
+
+    with _market_data_health_guard:
+        cached = _market_data_health_cache.get(provider_key)
+        if cached and now - cached[0] < _MARKET_DATA_HEALTH_TTL:
+            return cached[1]
+
+        inflight_key = (loop, provider_key)
+        task = _market_data_health_inflight.get(inflight_key)
+        if task is None:
+            task = loop.create_task(_fetch_market_data_health())
+            _market_data_health_inflight[inflight_key] = task
+            task.add_done_callback(
+                lambda completed: _cleanup_market_data_health_task(
+                    inflight_key, completed
+                )
+            )
+
+    result = await asyncio.shield(task)
+    with _market_data_health_guard:
+        _market_data_health_cache[provider_key] = (time.monotonic(), result)
+    return result
+
+
+@app.get("/api/market-data-health")
+async def market_data_health():
+    """Exercise the fixed-symbol market-data path without optional services."""
+    ticker = "AAPL"
+    result = await _market_data_health_snapshot()
+    if result.get("error"):
+        if result.get("error_code") == "ticker_not_found":
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "ticker_not_found",
+                    "message": f"No market data found for ticker {ticker}.",
+                    "retryable": False,
+                },
+            )
+        if result.get("error_code") == "market_data_temporarily_unavailable":
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "market_data_temporarily_unavailable",
+                    "message": "Market data is temporarily unavailable. Please retry.",
+                    "retryable": True,
+                },
+                headers={"Retry-After": "60"},
+            )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "market_data_failure",
+                "message": "Market data request failed.",
+                "retryable": False,
+            },
+        )
+
+    return {
+        "status": "healthy",
+        "ticker": ticker,
+        "source": result["data_source"],
+    }
 
 
 @app.get("/api/debug/tracing")
@@ -734,6 +945,7 @@ async def analyze_company(request: AnalysisRequest):
         "selected_agents": request.agents or [],
         "raw_data": None,
         "normalized_data": None,
+        "data_source": None,
         "earnings_data": None,
         "earnings_streak": None,
         "next_earnings_date": None,
@@ -744,17 +956,48 @@ async def analyze_company(request: AnalysisRequest):
         "consensus": None,
         "final_report": None,
         "error": None,
+        "error_code": None,
+        "market_data_only": False,
     }
     
     # Run workflow
     try:
         final_state = await goat_workflow.ainvoke(initial_state)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Analysis failed")
     
     # Check for errors
     if final_state.get("error"):
-        raise HTTPException(status_code=400, detail=final_state["error"])
+        if final_state.get("error_code") == "ticker_not_found":
+            ticker = request.ticker.strip().upper()
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "ticker_not_found",
+                    "message": f"No market data found for ticker {ticker}.",
+                    "retryable": False,
+                },
+            )
+        if final_state.get("error_code") == "market_data_temporarily_unavailable":
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "market_data_temporarily_unavailable",
+                    "message": "Market data is temporarily unavailable. Please retry.",
+                    "retryable": True,
+                },
+                headers={"Retry-After": "60"},
+            )
+        if final_state.get("error_code") == "market_data_failure":
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "market_data_failure",
+                    "message": "Market data request failed.",
+                    "retryable": False,
+                },
+            )
+        raise HTTPException(status_code=400, detail="Analysis request failed")
     
     # Build response
     report = final_state["final_report"]
@@ -872,7 +1115,7 @@ async def get_earnings(ticker: str):
     Primary data: Yahoo Finance (free, no API key)
     Supplementary: FMP (revenue actuals + CapEx — graceful degradation)
     """
-    ticker = ticker.upper()
+    ticker = _normalize_path_ticker(ticker)
     
     try:
         async with YahooFinanceClient() as client:
@@ -922,10 +1165,10 @@ async def get_earnings(ticker: str):
             forward_guidance = client.build_forward_guidance_summary(
                 forward_estimates, current_price=normalized.current_price,
             )
-    except YahooFinanceError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Earnings fetch failed: {str(e)}")
+    except YahooFinanceError:
+        raise HTTPException(status_code=400, detail="Earnings data request failed")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Earnings fetch failed")
 
     return {
         "ticker": ticker,
@@ -948,7 +1191,7 @@ async def get_price_history(ticker: str, period: str = "2y"):
     Query params:
         period: 1mo, 3mo, 6mo, 1y, 2y, 5y, ytd (default: 2y)
     """
-    ticker = ticker.upper()
+    ticker = _normalize_path_ticker(ticker)
     valid_periods = {"1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd"}
     if period not in valid_periods:
         period = "2y"
@@ -967,10 +1210,10 @@ async def get_price_history(ticker: str, period: str = "2y"):
             # Normalize earnings and calculate reactions
             earnings = client.normalize_earnings(raw_data)
             earnings_with_reactions = client.calculate_earnings_reactions(prices, earnings)
-    except YahooFinanceError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch price data: {str(e)}")
+    except YahooFinanceError:
+        raise HTTPException(status_code=400, detail="Price data request failed")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to fetch price data")
     
     return PriceHistoryResponse(
         ticker=ticker,

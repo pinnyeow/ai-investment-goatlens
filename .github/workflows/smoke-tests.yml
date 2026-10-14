@@ -3,6 +3,8 @@ name: Smoke Tests
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '17 15 * * *' # daily live dependency canary
   workflow_dispatch: # allow manual trigger
 
 jobs:
@@ -28,6 +30,16 @@ jobs:
           echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: Demo missing ticker" && exit 1)
           echo "$BODY" | grep -q '"consensus_verdict"' || (echo "FAIL: Demo missing consensus_verdict" && exit 1)
           echo "$BODY" | grep -q '"agent_results"' || (echo "FAIL: Demo missing agent_results" && exit 1)
+
+      - name: Core market data path is healthy
+        run: |
+          BODY=$(curl --fail --silent --show-error \
+            --retry 12 --retry-delay 10 --retry-all-errors \
+            --max-time 30 \
+            https://goatlens.onrender.com/api/market-data-health)
+          echo "Market data health: $BODY"
+          echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: Market data unavailable" && exit 1)
+          echo "$BODY" | grep -Eq '"source":"(yahoo|fmp)"' || (echo "FAIL: Missing data source" && exit 1)
 
       - name: Agents endpoint returns all 5 investors
         run: |
