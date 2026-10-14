@@ -26,10 +26,17 @@ import threading
 from datetime import datetime, timedelta
 
 import yfinance as yf
+from yfinance import exceptions as yf_exceptions
+from curl_cffi.requests import exceptions as curl_exceptions
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+
+# Preserve upstream HTTP failures instead of letting yfinance collapse them into
+# empty dictionaries that look like unknown symbols.
+yf.config.debug.hide_exceptions = False
 
 
 # ─── Module-level TTL cache ───────────────────────────────────────────────
@@ -132,8 +139,11 @@ def _safe_float(val, default=0) -> Optional[float]:
 
 
 class YahooFinanceError(Exception):
-    """Exception raised for Yahoo Finance errors."""
-    pass
+    """Exception raised for Yahoo Finance errors with a stable failure code."""
+
+    def __init__(self, message: str, code: Optional[str] = None):
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass
@@ -227,11 +237,20 @@ class YahooFinanceClient:
 
         try:
             stock = self._get_ticker(ticker)
-            
-            # Get basic info
+
+            # Get basic info. Upstream HTTP errors remain visible because the
+            # adapter configures yfinance once at module initialization.
             info = stock.info
-            if not info or info.get('regularMarketPrice') is None:
-                raise YahooFinanceError(f"No data found for ticker: {ticker}")
+            if not info:
+                raise YahooFinanceError(
+                    "Ticker was not found by Yahoo Finance.",
+                    code="ticker_not_found",
+                )
+            if info.get('regularMarketPrice') is None:
+                raise YahooFinanceError(
+                    "Yahoo Finance returned incomplete company data.",
+                    code="market_data_temporarily_unavailable",
+                )
             
             # Get financial statements
             income_stmt = stock.income_stmt
@@ -262,8 +281,37 @@ class YahooFinanceClient:
             return result
         except YahooFinanceError:
             raise
-        except Exception as e:
-            raise YahooFinanceError(f"Failed to fetch data for {ticker}: {str(e)}")
+        except Exception as error:
+            status_code = getattr(
+                getattr(error, "response", None), "status_code", None
+            )
+            retryable_status = status_code in {401, 403, 408, 425, 429} or (
+                isinstance(status_code, int) and status_code >= 500
+            )
+            retryable_exception = isinstance(
+                error,
+                (
+                    yf_exceptions.YFRateLimitError,
+                    curl_exceptions.Timeout,
+                    curl_exceptions.ConnectionError,
+                    TimeoutError,
+                    ConnectionError,
+                ),
+            )
+            if retryable_exception or retryable_status:
+                raise YahooFinanceError(
+                    "Yahoo Finance is temporarily unavailable.",
+                    code="market_data_temporarily_unavailable",
+                ) from error
+            if status_code == 404:
+                raise YahooFinanceError(
+                    "Ticker was not found by Yahoo Finance.",
+                    code="ticker_not_found",
+                ) from error
+            raise YahooFinanceError(
+                "Yahoo Finance request failed.",
+                code="market_data_failure",
+            ) from error
     
     async def get_company_data(self, ticker: str, years: int = 10) -> Dict[str, Any]:
         """

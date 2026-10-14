@@ -360,6 +360,14 @@ _TRANSIENT_YAHOO_ERROR_MARKERS = (
 
 def _classify_yahoo_error(error: YahooFinanceError, ticker: str) -> str:
     """Classify provider failures without using user-controlled ticker text."""
+    structured_code = getattr(error, "code", None)
+    if structured_code in {
+        "ticker_not_found",
+        "market_data_temporarily_unavailable",
+        "market_data_failure",
+    }:
+        return structured_code
+
     error_text = re.sub(
         rf"(?<![A-Z0-9]){re.escape(ticker)}(?![A-Z0-9])",
         "",
@@ -752,7 +760,11 @@ async def health():
     (UptimeRobot, cron-job.org, etc.) to prevent Render from sleeping.
     HEAD is supported because UptimeRobot defaults to HEAD requests.
     """
-    return {"status": "healthy", "service": "goatlens"}
+    return {
+        "status": "healthy",
+        "service": "goatlens",
+        "release": os.getenv("RENDER_GIT_COMMIT", "local"),
+    }
 
 
 async def _fetch_market_data_health():

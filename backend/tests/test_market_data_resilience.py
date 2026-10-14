@@ -9,12 +9,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+from curl_cffi.requests import exceptions as curl_exceptions
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import main
-from data_sources import YahooFinanceError
+from data_sources import YahooFinanceClient, YahooFinanceError
 
 
 FALLBACK_FINANCIALS = {
@@ -73,6 +74,14 @@ class UnknownTickerYahoo(RateLimitedYahoo):
     async def get_company_data(self, ticker, years=10):
         self.company_calls.append(ticker)
         raise YahooFinanceError(f"No data found for ticker: {ticker}")
+
+
+class StructuredAuthFailureYahoo(RateLimitedYahoo):
+    async def get_company_data(self, ticker, years=10):
+        self.company_calls.append(ticker)
+        error = YahooFinanceError("Yahoo authentication failed")
+        setattr(error, "code", "market_data_temporarily_unavailable")
+        raise error
 
 
 class NonRetryableYahoo(RateLimitedYahoo):
@@ -134,6 +143,98 @@ class NoMemory:
         return None
 
 
+class TestYahooProviderClassification:
+    def test_yahoo_401_is_structured_as_transient(self, monkeypatch):
+        """A crumb/auth failure must not become an unknown ticker."""
+
+        class AuthFailureTicker:
+            @property
+            def info(self):
+                error = RuntimeError("Yahoo request rejected")
+                setattr(error, "response", SimpleNamespace(status_code=401))
+                raise error
+
+        client = YahooFinanceClient()
+        monkeypatch.setattr(client, "_get_ticker", lambda ticker: AuthFailureTicker())
+
+        with pytest.raises(YahooFinanceError) as exc_info:
+            client._fetch_all_data_sync("AAPL")
+
+        assert getattr(exc_info.value, "code", None) == (
+            "market_data_temporarily_unavailable"
+        )
+
+    @pytest.mark.parametrize(
+        "failure_kind",
+        ["timeout", "connection", "curl_timeout", "curl_connection", "http_408"],
+    )
+    def test_network_capacity_failures_are_transient(self, monkeypatch, failure_kind):
+        """Common retryable network failures must keep the fallback path open."""
+
+        if failure_kind == "timeout":
+            provider_error = TimeoutError("provider timed out")
+        elif failure_kind == "connection":
+            provider_error = ConnectionError("provider connection reset")
+        elif failure_kind == "curl_timeout":
+            provider_error = curl_exceptions.Timeout("provider timed out")
+        elif failure_kind == "curl_connection":
+            provider_error = curl_exceptions.ConnectionError(
+                "provider connection reset"
+            )
+        else:
+            provider_error = RuntimeError("provider request timeout")
+            setattr(provider_error, "response", SimpleNamespace(status_code=408))
+
+        class FailingTicker:
+            @property
+            def info(self):
+                raise provider_error
+
+        client = YahooFinanceClient()
+        monkeypatch.setattr(client, "_get_ticker", lambda ticker: FailingTicker())
+
+        with pytest.raises(YahooFinanceError) as exc_info:
+            client._fetch_all_data_sync("AAPL")
+
+        assert getattr(exc_info.value, "code", None) == (
+            "market_data_temporarily_unavailable"
+        )
+
+    def test_provider_404_is_structured_as_unknown_ticker(self, monkeypatch):
+        """A definitive provider 404 must not spend fallback quota."""
+        provider_error = RuntimeError("provider returned not found")
+        setattr(provider_error, "response", SimpleNamespace(status_code=404))
+
+        class MissingTicker:
+            @property
+            def info(self):
+                raise provider_error
+
+        client = YahooFinanceClient()
+        monkeypatch.setattr(client, "_get_ticker", lambda ticker: MissingTicker())
+
+        with pytest.raises(YahooFinanceError) as exc_info:
+            client._fetch_all_data_sync("ZZZZZ")
+
+        assert getattr(exc_info.value, "code", None) == "ticker_not_found"
+
+    def test_incomplete_known_ticker_is_transient(self, monkeypatch):
+        """Partial valid provider data is an outage, not proof of an unknown symbol."""
+
+        class IncompleteTicker:
+            info = {"symbol": "AAPL", "longName": "Apple Inc."}
+
+        client = YahooFinanceClient()
+        monkeypatch.setattr(client, "_get_ticker", lambda ticker: IncompleteTicker())
+
+        with pytest.raises(YahooFinanceError) as exc_info:
+            client._fetch_all_data_sync("AAPL")
+
+        assert getattr(exc_info.value, "code", None) == (
+            "market_data_temporarily_unavailable"
+        )
+
+
 class TestAnalyzeFallback:
     def test_analyze_returns_200_from_fmp_when_yahoo_is_rate_limited(self, monkeypatch):
         """A temporary Yahoo outage must not take down core stock analysis."""
@@ -165,6 +266,33 @@ class TestAnalyzeFallback:
         assert len(body["agent_results"]) == 1
         assert RateLimitedYahoo.company_calls == ["ACME"]
         assert WorkingFMP.company_calls == ["ACME"]
+
+    def test_structured_yahoo_auth_failure_uses_fmp(self, monkeypatch):
+        """A production Yahoo crumb/auth failure must activate bounded fallback."""
+        StructuredAuthFailureYahoo.company_calls = []
+        WorkingFMP.company_calls = []
+        monkeypatch.setenv("FMP_API_KEY", "test-key")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.setattr(main, "YahooFinanceClient", StructuredAuthFailureYahoo)
+        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
+        monkeypatch.setattr(main, "NewsClient", NoNews)
+        monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+        monkeypatch.setattr(main, "MemoryStore", NoMemory)
+
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/api/analyze",
+                json={
+                    "ticker": "AAPL",
+                    "time_period": "1y",
+                    "agents": ["buffett"],
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["company_name"] == "Fallback Corp"
+        assert StructuredAuthFailureYahoo.company_calls == ["AAPL"]
+        assert WorkingFMP.company_calls == ["AAPL"]
 
 
 class TestAnalyzeErrorReporting:
@@ -329,6 +457,19 @@ class TestAnalyzeErrorReporting:
         assert response.status_code == 500
         assert response.json() == {"detail": "Analysis failed"}
         assert "credential=private" not in response.text
+
+
+class TestDeploymentReadiness:
+    def test_health_identifies_deployed_commit(self, monkeypatch):
+        """Smoke tests must know they are exercising the intended release."""
+        commit = "c053e1b56d6ac92b83a6bab1ebd879a988913194"
+        monkeypatch.setenv("RENDER_GIT_COMMIT", commit)
+
+        with TestClient(main.app) as client:
+            response = client.get("/health")
+
+        assert response.status_code == 200
+        assert response.json()["release"] == commit
 
 
 class TestMarketDataCanary:
