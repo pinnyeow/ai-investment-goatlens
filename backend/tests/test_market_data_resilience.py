@@ -5,17 +5,19 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from curl_cffi.requests import exceptions as curl_exceptions
+import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import main
-from data_sources import YahooFinanceClient, YahooFinanceError
+from data_sources import FMPClient, FMPError, YahooFinanceClient, YahooFinanceError
 
 
 FALLBACK_FINANCIALS = {
@@ -233,6 +235,146 @@ class TestYahooProviderClassification:
         assert getattr(exc_info.value, "code", None) == (
             "market_data_temporarily_unavailable"
         )
+
+
+class TestFMPDiagnostics:
+    def test_smoke_canary_calls_market_data_health_once(self):
+        workflow = (
+            Path(__file__).parents[2] / ".github" / "workflows" / "smoke-tests.yml"
+        ).read_text()
+        canary_step = workflow.split(
+            "- name: Core market data path is healthy", maxsplit=1
+        )[1].split("- name:", maxsplit=1)[0]
+
+        assert canary_step.count("/api/market-data-health") == 1
+        assert "--retry" not in canary_step
+
+    @pytest.mark.asyncio
+    async def test_http_failure_logs_safe_category_without_secret(self, caplog):
+        secret = "diagnostic-secret-key"
+        request = httpx.Request(
+            "GET",
+            f"https://financialmodelingprep.com/stable/profile?apikey={secret}",
+        )
+        response = httpx.Response(403, request=request)
+
+        class FakeHTTPClient:
+            async def get(self, url, params=None):
+                return response
+
+        client = object.__new__(FMPClient)
+        client.api_key = secret
+        setattr(client, "_client", FakeHTTPClient())
+
+        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
+            await client._request("profile", {"symbol": "AAPL"})
+
+        formatted_traceback = "".join(
+            traceback.format_exception(
+                type(exc_info.value),
+                exc_info.value,
+                exc_info.value.__traceback__,
+            )
+        )
+        assert "fmp_request_failed endpoint=profile category=http_status status=403" in (
+            caplog.text
+        )
+        assert str(exc_info.value) == "FMP request failed."
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
+        assert secret not in caplog.text
+        assert secret not in str(exc_info.value)
+        assert secret not in formatted_traceback
+        assert "financialmodelingprep.com" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_transport_failure_does_not_copy_provider_url(self, caplog):
+        secret = "diagnostic-secret-key"
+        request = httpx.Request(
+            "GET",
+            f"https://financialmodelingprep.com/stable/profile?apikey={secret}",
+        )
+
+        class FakeHTTPClient:
+            async def get(self, url, params=None):
+                raise httpx.RequestError(
+                    f"failed request {request.url}",
+                    request=request,
+                )
+
+        client = object.__new__(FMPClient)
+        client.api_key = secret
+        setattr(client, "_client", FakeHTTPClient())
+
+        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
+            await client._request("profile", {"symbol": "AAPL"})
+
+        formatted_traceback = "".join(
+            traceback.format_exception(
+                type(exc_info.value),
+                exc_info.value,
+                exc_info.value.__traceback__,
+            )
+        )
+        assert "fmp_request_failed endpoint=profile category=transport" in caplog.text
+        assert str(exc_info.value) == "FMP request failed."
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
+        assert secret not in caplog.text
+        assert secret not in str(exc_info.value)
+        assert secret not in formatted_traceback
+        assert "financialmodelingprep.com" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_api_error_logs_category_without_provider_message(self, caplog):
+        secret = "diagnostic-secret-key"
+
+        class FakeResponse:
+            status_code = 200
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"Error Message": f"invalid key {secret}"}
+
+        class FakeHTTPClient:
+            async def get(self, url, params=None):
+                return FakeResponse()
+
+        client = object.__new__(FMPClient)
+        client.api_key = secret
+        setattr(client, "_client", FakeHTTPClient())
+
+        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
+            await client._request("profile", {"symbol": "AAPL"})
+
+        assert "fmp_request_failed endpoint=profile category=api_error" in caplog.text
+        assert str(exc_info.value) == "FMP request failed."
+        assert secret not in caplog.text
+        assert secret not in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_malformed_endpoint_is_rejected_without_logging_it(self, caplog):
+        secret = "diagnostic-secret-key"
+
+        class FakeHTTPClient:
+            async def get(self, url, params=None):
+                raise AssertionError("invalid endpoint must not be requested")
+
+        client = object.__new__(FMPClient)
+        client.api_key = secret
+        setattr(client, "_client", FakeHTTPClient())
+
+        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
+            await client._request(f"profile?apikey={secret}", {"symbol": "AAPL"})
+
+        assert "fmp_request_failed endpoint=invalid category=invalid_endpoint" in (
+            caplog.text
+        )
+        assert str(exc_info.value) == "FMP request failed."
+        assert secret not in caplog.text
+        assert secret not in str(exc_info.value)
 
 
 class TestAnalyzeFallback:

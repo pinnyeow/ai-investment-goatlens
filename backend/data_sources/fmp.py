@@ -16,11 +16,28 @@ API base changed from /api/v3 (deprecated Aug 2025) to /stable.
 
 import math
 import os
+import logging
 import httpx
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 import asyncio
+
+
+logger = logging.getLogger(__name__)
+
+_ALLOWED_ENDPOINTS = frozenset(
+    {
+        "profile",
+        "income-statement",
+        "balance-sheet-statement",
+        "cash-flow-statement",
+        "key-metrics",
+        "ratios",
+        "historical-price-full",
+        "historical/earning_calendar",
+    }
+)
 
 
 class FMPError(Exception):
@@ -140,26 +157,56 @@ class FMPClient:
         Returns:
             JSON response data
         """
+        if endpoint not in _ALLOWED_ENDPOINTS:
+            logger.warning(
+                "fmp_request_failed endpoint=invalid category=invalid_endpoint"
+            )
+            raise FMPError("FMP request failed.")
+
         params = params or {}
         params["apikey"] = self.api_key
-        
+
         url = f"{self.BASE_URL}/{endpoint}"
-        
+        failure_category = None
+        failure_status = None
+
         try:
             response = await self._client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            
-            # Check for API error messages
+
+            # Check for API error messages without retaining provider text.
             if isinstance(data, dict) and "Error Message" in data:
-                raise FMPError(data["Error Message"])
-            
+                logger.warning(
+                    "fmp_request_failed endpoint=%s category=api_error",
+                    endpoint,
+                )
+                raise FMPError("FMP request failed.")
+
             return data
-            
-        except httpx.HTTPStatusError as e:
-            raise FMPError(f"HTTP error: {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            raise FMPError(f"Request failed: {str(e)}") from e
+
+        except FMPError:
+            raise
+        except httpx.HTTPStatusError as error:
+            failure_category = "http_status"
+            failure_status = error.response.status_code
+        except httpx.RequestError:
+            failure_category = "transport"
+
+        # Raise outside the except blocks so sensitive provider exceptions and
+        # authenticated URLs are not retained as __cause__ or __context__.
+        if failure_category == "http_status":
+            logger.warning(
+                "fmp_request_failed endpoint=%s category=http_status status=%s",
+                endpoint,
+                failure_status,
+            )
+        else:
+            logger.warning(
+                "fmp_request_failed endpoint=%s category=transport",
+                endpoint,
+            )
+        raise FMPError("FMP request failed.")
     
     # ------------------------------------------------------------------
     # Core financial data methods (updated for /stable query-param API)

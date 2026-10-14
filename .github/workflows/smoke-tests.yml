@@ -57,8 +57,7 @@ jobs:
       - name: Core market data path is healthy
         run: |
           BODY=$(curl --fail --silent --show-error \
-            --retry 12 --retry-delay 10 --retry-all-errors \
-            --max-time 30 \
+            --max-time 45 \
             https://goatlens.onrender.com/api/market-data-health)
           echo "Market data health: $BODY"
           echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: Market data unavailable" && exit 1)
