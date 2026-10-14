@@ -16,7 +16,8 @@ openai>=1.12.0
 httpx>=0.26.0
 
 # Data Sources
-yfinance>=0.2.0
+yfinance>=1.2.0,<2.0
+curl-cffi>=0.13.0,<1.0
 lxml>=5.0.0          # required by yfinance for earnings data parsing
 
 # Data Processing

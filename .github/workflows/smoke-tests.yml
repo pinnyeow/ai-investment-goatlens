@@ -7,10 +7,33 @@ on:
     - cron: '17 15 * * *' # daily live dependency canary
   workflow_dispatch: # allow manual trigger
 
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
+      - name: Wait for the expected Render release
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          for ATTEMPT in {1..30}; do
+            BODY=$(curl --silent --show-error --max-time 5 \
+              https://goatlens.onrender.com/health || true)
+            echo "Release check $ATTEMPT: $BODY"
+            if [[ "$BODY" == *"\"release\":\"$EXPECTED_SHA\""* ]]; then
+              echo "Expected release is live."
+              exit 0
+            fi
+            if (( ATTEMPT < 30 )); then
+              sleep 15
+            fi
+          done
+          echo "FAIL: Render did not deploy $EXPECTED_SHA within 10 minutes"
+          exit 1
+
       - name: Homepage loads
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://goatlens.onrender.com/)
