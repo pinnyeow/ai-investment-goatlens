@@ -66,7 +66,7 @@ jobs:
           echo "AAPL analysis (truncated): ${BODY:0:500}"
           echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: AAPL analysis missing ticker" && exit 1)
           echo "$BODY" | grep -q '"fundamentals":{"available":true,"source":"sec"' || (echo "FAIL: AAPL analysis is not SEC-backed" && exit 1)
-          BODY="$BODY" python3 -c "import json, os; body=json.loads(os.environ['BODY']); assert body['consensus_status'] == 'complete'; assert body['completed_analyses'] == 5; assert body['requested_analyses'] == 5; assert body['agreement_score'] is not None; assert len(body['agent_results']) == 5; assert all(item['status'] == 'complete' for item in body['agent_results']); assert all(item['score'] is not None and item['verdict'] is not None for item in body['agent_results']); assert len(body['metric_evidence']) >= 28; assert all(item['available'] for item in body['metric_evidence'].values())"
+          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); assert body['consensus_status'] == 'complete'; assert body['completed_analyses'] == 5; assert body['requested_analyses'] == 5; assert body['agreement_score'] is not None; assert len(body['agent_results']) == 5; assert all(item['status'] == 'complete' for item in body['agent_results']); assert all(item['score'] is not None and item['verdict'] is not None for item in body['agent_results']); assert len(body['metric_evidence']) >= 28; assert all(item['available'] for item in body['metric_evidence'].values())"
           echo "$BODY" | grep -q '"revenue":{"value":416161000000' || (echo "FAIL: SEC revenue literal missing" && exit 1)
           echo "$BODY" | grep -q '"accession":"0000320193-25-000079"' || (echo "FAIL: SEC provenance missing" && exit 1)
 
