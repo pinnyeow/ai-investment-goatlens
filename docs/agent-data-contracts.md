@@ -136,13 +136,29 @@ The normalized response includes:
 
 Malformed, stale, incomplete, rate-limited, or unavailable responses remain unavailable and expose only stable sanitized errors.
 
+## Consensus semantics
+
+Completed investor verdicts are equally weighted ordinal votes from `strong_sell`
+through `strong_buy`; raw strategy scores are not averaged because the five strategy
+rubrics are not calibrated as one common scale. With an odd number of completed
+analyses, the consensus is the median verdict. With an even number, middle votes in
+the same direction resolve conservatively toward `hold`; middle votes from different
+directions produce `mixed` with directional support unavailable.
+
+The legacy API field `agreement_score` is retained for compatibility but means
+**directional support**: the share of completed agents on the consensus side.
+`buy` and `strong_buy` share one direction, as do `sell` and `strong_sell`.
+It does not measure identical verdict intensity, confidence calibration, model
+independence, track record, or forecast accuracy. Structural mixed/no-majority
+warnings are deterministic and cannot be replaced by generated consensus prose.
+
 ## Release gate
 
 PR #9 cannot be merge-ready until an exact-SHA Render preview proves:
 
 - all five selected strategies complete for the fixed AAPL canary from real provider inputs;
 - five requested and five completed results are preserved;
-- GOAT Agreement is non-null and independently checked;
+- directional support is independently checked against completed agent verdicts;
 - every required metric is finite and carries source/formula metadata;
 - no missing input was converted to zero or another default;
 - provider outage leaves SEC-backed results available and affected strategies explicitly incomplete;

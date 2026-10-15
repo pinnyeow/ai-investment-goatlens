@@ -4,7 +4,7 @@ GOATlens - Strategy Evaluation Logic
 Contains the core evaluation strategies and scoring mechanisms.
 """
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 from dataclasses import dataclass
 from enum import Enum
 
@@ -16,6 +16,17 @@ class Verdict(Enum):
     HOLD = "hold"
     SELL = "sell"
     STRONG_SELL = "strong_sell"
+
+
+class ConsensusVerdict(Enum):
+    """Aggregate verdict; mixed is valid only for consensus."""
+
+    STRONG_BUY = "strong_buy"
+    BUY = "buy"
+    HOLD = "hold"
+    SELL = "sell"
+    STRONG_SELL = "strong_sell"
+    MIXED = "mixed"
 
 
 @dataclass
@@ -33,8 +44,8 @@ class StrategyResult:
 @dataclass
 class ConsensusResult:
     """Aggregated result from all agents."""
-    consensus_verdict: Verdict
-    agreement_score: float  # 0.0 - 1.0 (how much agents agree)
+    consensus_verdict: ConsensusVerdict
+    agreement_score: Optional[float]  # Share supporting the consensus direction
     consensus_points: List[str]
     divergence_points: List[str]
     individual_results: List[StrategyResult]
@@ -49,25 +60,49 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     if not results:
         raise ValueError("No results to calculate consensus from")
     
-    # Calculate average score
-    avg_score = sum(r.score for r in results) / len(results)
-    
-    # Determine consensus verdict based on average score
-    if avg_score >= 60:
-        consensus_verdict = Verdict.STRONG_BUY
-    elif avg_score >= 20:
-        consensus_verdict = Verdict.BUY
-    elif avg_score >= -20:
-        consensus_verdict = Verdict.HOLD
-    elif avg_score >= -60:
-        consensus_verdict = Verdict.SELL
+    verdict_value = {
+        Verdict.STRONG_SELL: -2,
+        Verdict.SELL: -1,
+        Verdict.HOLD: 0,
+        Verdict.BUY: 1,
+        Verdict.STRONG_BUY: 2,
+    }
+    value_verdict = {
+        -2: ConsensusVerdict.STRONG_SELL,
+        -1: ConsensusVerdict.SELL,
+        0: ConsensusVerdict.HOLD,
+        1: ConsensusVerdict.BUY,
+        2: ConsensusVerdict.STRONG_BUY,
+    }
+
+    def direction(value: int) -> int:
+        return 0 if value == 0 else 1 if value > 0 else -1
+
+    ordered_votes = sorted(verdict_value[result.verdict] for result in results)
+    midpoint = len(ordered_votes) // 2
+    if len(ordered_votes) % 2:
+        consensus_value = ordered_votes[midpoint]
+        consensus_verdict = value_verdict[consensus_value]
     else:
-        consensus_verdict = Verdict.STRONG_SELL
-    
-    # Calculate agreement score (inverse of variance)
-    variance = sum((r.score - avg_score) ** 2 for r in results) / len(results)
-    max_variance = 10000  # (100 - (-100))^2 / 4
-    agreement_score = max(0, 1 - (variance / max_variance))
+        lower = ordered_votes[midpoint - 1]
+        upper = ordered_votes[midpoint]
+        same_direction = direction(lower) == direction(upper)
+        if same_direction:
+            # A same-direction intensity split resolves conservatively toward HOLD.
+            consensus_value = int((lower + upper) / 2)
+            consensus_verdict = value_verdict[consensus_value]
+        else:
+            consensus_value = None
+            consensus_verdict = ConsensusVerdict.MIXED
+
+    if consensus_value is None:
+        agreement_score = None
+    else:
+        consensus_direction = direction(consensus_value)
+        agreeing_votes = sum(
+            direction(value) == consensus_direction for value in ordered_votes
+        )
+        agreement_score = agreeing_votes / len(ordered_votes)
     
     # Find consensus and divergence points
     all_insights = [insight for r in results for insight in r.key_insights]
@@ -82,7 +117,15 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     # Divergence: where verdicts differ significantly
     verdicts = [r.verdict for r in results]
     divergence_points = []
-    if len(set(verdicts)) > 2:
+    direction_counts = {
+        candidate: sum(direction(value) == candidate for value in ordered_votes)
+        for candidate in (-1, 0, 1)
+    }
+    if consensus_verdict is ConsensusVerdict.MIXED:
+        divergence_points.append("Mixed investor verdicts; no consensus direction")
+    elif max(direction_counts.values()) <= len(results) / 2:
+        divergence_points.append("Mixed investor verdicts; no majority direction")
+    elif len(set(verdicts)) > 2:
         divergence_points.append("Significant disagreement on investment thesis")
     
     return ConsensusResult(
@@ -130,7 +173,9 @@ DEBATE2: [one sentence, <30 words, another disagreement]"""
             elif clean.startswith("DEBATE"):
                 divergence_points.append(clean.split(":", 1)[-1].strip())
         consensus_points = consensus_points or base.consensus_points
-        divergence_points = divergence_points or base.divergence_points
+        divergence_points = list(
+            dict.fromkeys(base.divergence_points + divergence_points)
+        )
     except Exception:
         print("[Consensus] LLM consensus generation failed.")
         consensus_points, divergence_points = base.consensus_points, base.divergence_points
