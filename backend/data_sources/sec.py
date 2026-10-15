@@ -72,12 +72,54 @@ class SECFundamentals:
     company_name: str
     latest: Dict[str, FundamentalValue]
     history: Dict[str, List[FundamentalValue]]
+    is_financial_institution: bool = False
 
 
-def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
+@dataclass(frozen=True)
+class MetricFactInput:
+    role: str
+    value: float
+    provenance: FactProvenance
+
+
+@dataclass(frozen=True)
+class NormalizedMetric:
+    value: Optional[float]
+    formula: str
+    formula_version: str = "sec_companyfacts_v1"
+    inputs: tuple[MetricFactInput, ...] = ()
+    availability_reason: Optional[str] = None
+
+    @property
+    def available(self) -> bool:
+        return (
+            self.value is not None
+            and math.isfinite(float(self.value))
+            and bool(self.inputs)
+            and self.availability_reason is None
+        )
+
+
+class SECNormalization(dict):
+    """Analysis values plus the exact SEC facts used to derive them."""
+
+    def __init__(self, values: Dict[str, Any], metrics: Dict[str, NormalizedMetric]):
+        super().__init__(values)
+        self.metrics = metrics
+
+
+def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
     """Build the analysis contract without inventing values for missing facts."""
 
     reference = data.latest["revenue"].provenance
+    metric_inputs: Dict[str, tuple[MetricFactInput, ...]] = {}
+
+    def evidence_input(role: str, fact: Optional[FundamentalValue]):
+        if fact is None or fact.value is None or fact.provenance is None:
+            return None
+        if not math.isfinite(float(fact.value)):
+            return None
+        return MetricFactInput(role, float(fact.value), fact.provenance)
 
     def compatible_with(
         provenance: Optional[FactProvenance],
@@ -97,28 +139,39 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
             )
         )
 
-    def latest(metric: str) -> Optional[float]:
-        if reference is None:
+    def fact_for_reference(
+        metric: str, reference_provenance: Optional[FactProvenance]
+    ) -> Optional[FundamentalValue]:
+        if reference_provenance is None:
             return None
         declared_latest = data.latest[metric]
-        if declared_latest.availability_reason == "conflicting_standard_concepts":
+        if declared_latest.availability_reason is not None:
             return None
+        if (
+            declared_latest.value is not None
+            and compatible_with(declared_latest.provenance, reference_provenance)
+        ):
+            return declared_latest
+        return next(
+            (
+                item
+                for item in data.history[metric]
+                if item.value is not None
+                and compatible_with(item.provenance, reference_provenance)
+            ),
+            None,
+        )
 
-        if declared_latest.provenance is None:
-            return None
-        if compatible_with(declared_latest.provenance, reference):
-            return declared_latest.value
-        for item in data.history[metric]:
-            if item.value is not None and compatible_with(item.provenance, reference):
-                return item.value
-        return None
+    def latest(metric: str) -> Optional[float]:
+        selected = fact_for_reference(metric, reference)
+        return selected.value if selected is not None else None
 
     def ratio(numerator: Optional[float], denominator: Optional[float]):
         if numerator is None or denominator in (None, 0):
             return None
         return numerator / denominator
 
-    def growth(metric: str, years: int = 1):
+    def growth(metric: str, output_metric: str, years: int = 1):
         items = data.history[metric]
         if reference is None:
             return None
@@ -132,16 +185,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
         )
         if current is None or current.provenance is None:
             return None
-        current_year = date.fromisoformat(reference.end).year
-        prior_reference = next(
-            (
-                item.provenance for item in data.history["revenue"]
-                if item.provenance is not None
-                and date.fromisoformat(item.provenance.end).year
-                == current_year - years
-            ),
-            None,
-        )
+        prior_reference = reference_years_ago(years)
         if prior_reference is None:
             return None
         prior = next(
@@ -154,7 +198,250 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
         )
         if prior is None or prior.value is None or current.value <= 0 or prior.value <= 0:
             return None
+        role_prefix = "income" if metric == "net_income" else metric
+        inputs = (
+            evidence_input(f"{role_prefix}.begin", prior),
+            evidence_input(f"{role_prefix}.current", current),
+        )
+        valid_inputs = tuple(item for item in inputs if item is not None)
+        if len(valid_inputs) == 2:
+            metric_inputs[output_metric] = valid_inputs
         return (current.value / prior.value) ** (1 / years) - 1
+
+    def reference_years_ago(years: int) -> Optional[FactProvenance]:
+        if reference is None:
+            return None
+        references = sorted(
+            (
+                item.provenance
+                for item in data.history["revenue"]
+                if item.provenance is not None
+            ),
+            key=lambda item: item.end,
+        )
+        try:
+            current_index = references.index(reference)
+        except ValueError:
+            return None
+        prior_index = current_index - years
+        if prior_index < 0:
+            return None
+        span = references[prior_index : current_index + 1]
+        end_dates = [date.fromisoformat(item.end) for item in span]
+        if any(
+            not 300 <= (later - earlier).days <= 430
+            for earlier, later in zip(end_dates, end_dates[1:])
+        ):
+            return None
+        return references[prior_index]
+
+    def value_for_reference(
+        metric: str, reference_provenance: Optional[FactProvenance]
+    ) -> Optional[float]:
+        selected = fact_for_reference(metric, reference_provenance)
+        return selected.value if selected is not None else None
+
+    def debt_for_reference(
+        reference_provenance: Optional[FactProvenance],
+    ) -> Optional[float]:
+        components = debt_facts_for_reference(reference_provenance)
+        if components is None:
+            return None
+        return sum(item.value for item in components if item.value is not None)
+
+    def debt_facts_for_reference(
+        reference_provenance: Optional[FactProvenance],
+    ) -> Optional[List[FundamentalValue]]:
+        components = [
+            fact_for_reference("long_term_debt_current", reference_provenance),
+            fact_for_reference("long_term_debt_noncurrent", reference_provenance),
+            fact_for_reference("short_term_borrowings", reference_provenance),
+        ]
+        if any(component is None for component in components):
+            return None
+        return [component for component in components if component is not None]
+
+    def debt_facts_for_period_end(
+        period_end: Optional[str],
+    ) -> Optional[List[FundamentalValue]]:
+        if period_end is None:
+            return None
+        components = []
+        for metric in (
+            "long_term_debt_current",
+            "long_term_debt_noncurrent",
+            "short_term_borrowings",
+        ):
+            if data.latest[metric].availability_reason is not None:
+                return None
+            component = next(
+                (
+                    item
+                    for item in data.history[metric]
+                    if item.value is not None
+                    and item.provenance is not None
+                    and item.provenance.end == period_end
+                ),
+                None,
+            )
+            if component is None or component.provenance is None:
+                return None
+            components.append(component)
+        contexts = {
+            (
+                item.provenance.end,
+                item.provenance.accession,
+                item.provenance.form,
+                item.provenance.filed,
+                item.provenance.fiscal_year,
+            )
+            for item in components
+            if item.provenance is not None
+        }
+        if len(contexts) != 1:
+            return None
+        return components
+
+    def debt_facts_periods_ago(
+        years: int,
+    ) -> tuple[Optional[List[FundamentalValue]], Optional[List[FundamentalValue]]]:
+        if reference is None:
+            return None, None
+        period_ends = sorted(
+            {
+                item.provenance.end
+                for item in data.history["long_term_debt_current"]
+                if item.provenance is not None
+            }
+        )
+        try:
+            current_index = period_ends.index(reference.end)
+        except ValueError:
+            return None, None
+        prior_index = current_index - years
+        if prior_index < 0:
+            return None, None
+        span = [date.fromisoformat(item) for item in period_ends[prior_index : current_index + 1]]
+        if any(
+            not 300 <= (later - earlier).days <= 430
+            for earlier, later in zip(span, span[1:])
+        ):
+            return None, None
+        return (
+            debt_facts_for_period_end(reference.end),
+            debt_facts_for_period_end(period_ends[prior_index]),
+        )
+
+    def operating_margin_trend() -> Optional[float]:
+        references = [
+            item.provenance
+            for item in data.history["revenue"]
+            if item.provenance is not None
+        ][:5]
+        if len(references) != 5:
+            return None
+        references = sorted(references, key=lambda item: item.end)
+        end_years = [date.fromisoformat(item.end).year for item in references]
+        if any(
+            later - earlier != 1
+            for earlier, later in zip(end_years, end_years[1:])
+        ):
+            return None
+        margins = []
+        trend_inputs = []
+        for period_reference in references:
+            revenue_fact = fact_for_reference("revenue", period_reference)
+            operating_income_fact = fact_for_reference(
+                "operating_income", period_reference
+            )
+            if (
+                revenue_fact is None
+                or revenue_fact.value is None
+                or revenue_fact.value <= 0
+                or operating_income_fact is None
+                or operating_income_fact.value is None
+            ):
+                return None
+            period_year = date.fromisoformat(period_reference.end).year
+            trend_inputs.extend(
+                [
+                    evidence_input(f"margin.{period_year}.revenue", revenue_fact),
+                    evidence_input(
+                        f"margin.{period_year}.operating_income",
+                        operating_income_fact,
+                    ),
+                ]
+            )
+            margins.append(operating_income_fact.value / revenue_fact.value)
+        x_mean = 2.0
+        margin_mean = sum(margins) / len(margins)
+        result = sum(
+            (index - x_mean) * (margin - margin_mean)
+            for index, margin in enumerate(margins)
+        ) / sum((index - x_mean) ** 2 for index in range(5))
+        valid_inputs = tuple(item for item in trend_inputs if item is not None)
+        if len(valid_inputs) == 10:
+            metric_inputs["margin_trend"] = valid_inputs
+        return result
+
+    def dividend_streak() -> Optional[int]:
+        if reference is None:
+            return None
+        observations = [
+            item
+            for item in data.history["dividend_per_share"]
+            if item.provenance is not None and item.value is not None
+        ]
+        observations.sort(
+            key=lambda item: item.provenance.end if item.provenance else "",
+            reverse=True,
+        )
+        current = [
+            item
+            for item in observations
+            if item.provenance is not None
+            and item.provenance.end == reference.end
+        ]
+        if len(current) != 1 or not compatible_with(
+            current[0].provenance, reference
+        ):
+            return None
+        current_index = observations.index(current[0])
+        observations = observations[current_index:]
+        selected = []
+        previous_end = None
+        streak = 0
+        for item in observations:
+            provenance = item.provenance
+            if provenance is None or provenance.start is None:
+                return None
+            start = date.fromisoformat(provenance.start)
+            end = date.fromisoformat(provenance.end)
+            if not 300 <= (end - start).days <= 400:
+                return None
+            if previous_end is not None and not 300 <= (previous_end - end).days <= 430:
+                return None
+            period_year = end.year
+            value = item.value
+            if value is None:
+                return None
+            if value <= 0:
+                selected.append(
+                    evidence_input(f"streak.{period_year}.terminator", item)
+                )
+                valid_inputs = tuple(
+                    evidence for evidence in selected if evidence is not None
+                )
+                if len(valid_inputs) == streak + 1:
+                    metric_inputs["consecutive_dividend_years"] = valid_inputs
+                    return streak
+                return None
+            selected.append(
+                evidence_input(f"streak.{period_year}.dividend", item)
+            )
+            streak += 1
+            previous_end = end
+        return None
 
     revenue = latest("revenue")
     net_income = latest("net_income")
@@ -176,8 +463,12 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
     current_liabilities = latest("current_liabilities")
     gross_profit = latest("gross_profit")
     operating_income = latest("operating_income")
+    income_tax = latest("income_tax")
+    pretax_income = latest("pretax_income")
+    interest_expense = latest("interest_expense")
+    dividend_per_share = latest("dividend_per_share")
     revenue_source = data.latest["revenue"].provenance
-    is_financial_institution = bool(
+    is_financial_institution = data.is_financial_institution or bool(
         revenue_source
         and revenue_source.concept == "RevenuesNetOfInterestExpense"
     )
@@ -201,7 +492,141 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
     else:
         free_cash_flow_reason = None
         cash_flow_comparability = "industrial"
-    return {
+
+    prior_reference = reference_years_ago(1)
+    current_invested_capital = None
+    prior_invested_capital = None
+    if not is_financial_institution:
+        current_debt = debt_for_reference(reference)
+        prior_debt = debt_for_reference(prior_reference)
+        current_equity = value_for_reference("equity", reference)
+        prior_equity = value_for_reference("equity", prior_reference)
+        current_cash = value_for_reference("cash_and_equivalents", reference)
+        prior_cash = value_for_reference("cash_and_equivalents", prior_reference)
+        if (
+            current_debt is not None
+            and current_equity is not None
+            and current_cash is not None
+        ):
+            current_invested_capital = current_equity + current_debt - current_cash
+        if (
+            prior_debt is not None
+            and prior_equity is not None
+            and prior_cash is not None
+        ):
+            prior_invested_capital = prior_equity + prior_debt - prior_cash
+
+    roic = None
+    if (
+        not is_financial_institution
+        and operating_income is not None
+        and income_tax is not None
+        and pretax_income is not None
+        and pretax_income > 0
+        and current_invested_capital is not None
+        and prior_invested_capital is not None
+    ):
+        tax_rate = income_tax / pretax_income
+        average_invested_capital = (
+            current_invested_capital + prior_invested_capital
+        ) / 2
+        if 0 <= tax_rate <= 1 and average_invested_capital > 0:
+            roic = operating_income * (1 - tax_rate) / average_invested_capital
+            current_debt_facts = debt_facts_for_reference(reference) or []
+            prior_debt_facts = debt_facts_for_reference(prior_reference) or []
+            roic_inputs = [
+                evidence_input(
+                    "income.current.operating_income",
+                    fact_for_reference("operating_income", reference),
+                ),
+                evidence_input(
+                    "income.current.tax",
+                    fact_for_reference("income_tax", reference),
+                ),
+                evidence_input(
+                    "income.current.pretax_income",
+                    fact_for_reference("pretax_income", reference),
+                ),
+                evidence_input(
+                    "capital.begin.equity",
+                    fact_for_reference("equity", prior_reference),
+                ),
+                evidence_input(
+                    "capital.end.equity", fact_for_reference("equity", reference)
+                ),
+                evidence_input(
+                    "capital.begin.cash",
+                    fact_for_reference("cash_and_equivalents", prior_reference),
+                ),
+                evidence_input(
+                    "capital.end.cash",
+                    fact_for_reference("cash_and_equivalents", reference),
+                ),
+            ]
+            component_roles = (
+                "long_term_current",
+                "long_term_noncurrent",
+                "short_term_borrowings",
+            )
+            roic_inputs.extend(
+                evidence_input(f"capital.begin.debt.{role}", fact)
+                for role, fact in zip(component_roles, prior_debt_facts)
+            )
+            roic_inputs.extend(
+                evidence_input(f"capital.end.debt.{role}", fact)
+                for role, fact in zip(component_roles, current_debt_facts)
+            )
+            valid_inputs = tuple(item for item in roic_inputs if item is not None)
+            if len(valid_inputs) == 13:
+                metric_inputs["roic"] = valid_inputs
+
+    interest_coverage = None
+    if (
+        not is_financial_institution
+        and operating_income is not None
+        and interest_expense is not None
+        and interest_expense > 0
+    ):
+        interest_coverage = operating_income / interest_expense
+
+    debt_growth_3y = None
+    current_debt_facts, prior_debt_facts = debt_facts_periods_ago(3)
+    debt_three_years_ago = (
+        sum(item.value for item in prior_debt_facts if item.value is not None)
+        if prior_debt_facts is not None
+        else None
+    )
+    current_debt_for_growth = (
+        sum(item.value for item in current_debt_facts if item.value is not None)
+        if current_debt_facts is not None
+        else None
+    )
+    if (
+        not is_financial_institution
+        and current_debt_for_growth is not None
+        and debt_three_years_ago is not None
+        and current_debt_for_growth >= 0
+        and debt_three_years_ago > 0
+    ):
+        debt_growth_3y = (
+            current_debt_for_growth / debt_three_years_ago
+        ) ** (1 / 3) - 1
+        component_roles = (
+            "long_term_current",
+            "long_term_noncurrent",
+            "short_term_borrowings",
+        )
+        raw_inputs = [
+            evidence_input(f"debt.current.{role}", fact)
+            for role, fact in zip(component_roles, current_debt_facts or [])
+        ] + [
+            evidence_input(f"debt.begin.{role}", fact)
+            for role, fact in zip(component_roles, prior_debt_facts or [])
+        ]
+        valid_inputs = tuple(item for item in raw_inputs if item is not None)
+        if len(valid_inputs) == 6:
+            metric_inputs["debt_growth_3y"] = valid_inputs
+    values = {
         "ticker": data.ticker,
         "company_name": data.company_name,
         "sector": "Unknown",
@@ -222,24 +647,27 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
         "book_value_per_share": ratio(equity, shares),
         "profit_margin": ratio(net_income, revenue),
         "roe": ratio(net_income, equity),
-        "revenue_growth": growth("revenue"),
-        "earnings_growth": growth("net_income"),
-        "revenue_growth_5y": growth("revenue", years=5),
+        "revenue_growth": growth("revenue", "revenue_growth"),
+        "earnings_growth": growth("net_income", "earnings_growth", years=3),
+        "revenue_growth_5y": growth("revenue", "revenue_growth_5y", years=5),
         "free_cash_flow_per_share": ratio(free_cash_flow, shares),
         "debt_to_equity": ratio(total_debt, equity),
         "gross_margin": ratio(gross_profit, revenue),
         "operating_margin": ratio(operating_income, revenue),
         "roa": None,
-        "roic": None,
+        "roic": roic,
         "quick_ratio": None,
-        "interest_coverage": None,
+        "interest_coverage": interest_coverage,
         "cash_and_equivalents": latest("cash_and_equivalents"),
         "current_assets": current_assets,
         "current_liabilities": current_liabilities,
         "current_ratio": ratio(current_assets, current_liabilities),
         "capex_to_revenue": ratio(capex, revenue),
-        "margin_trend": None,
-        "consecutive_dividend_years": None,
+        "margin_trend": (
+            None if is_financial_institution else operating_margin_trend()
+        ),
+        "dividend_per_share": dividend_per_share,
+        "consecutive_dividend_years": dividend_streak(),
         "market_cap": None,
         "current_price": None,
         "pe_ratio": None,
@@ -253,9 +681,129 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> Dict[str, Any]:
         "institutional_ownership": None,
         "revenue_cyclicality": None,
         "correlation_sp500": None,
-        "debt_growth_3y": None,
+        "debt_growth_3y": debt_growth_3y,
         "expected_return": None,
     }
+
+    def set_inputs(
+        output_metric: str,
+        specifications: List[tuple[str, str, Optional[FactProvenance]]],
+    ) -> None:
+        selected = tuple(
+            item
+            for role, source_metric, source_reference in specifications
+            if (item := evidence_input(
+                role, fact_for_reference(source_metric, source_reference)
+            )) is not None
+        )
+        if len(selected) == len(specifications):
+            metric_inputs[output_metric] = selected
+
+    current_specs = {
+        "roe": [
+            ("income.current.net_income", "net_income", reference),
+            ("capital.end.equity", "equity", reference),
+        ],
+        "profit_margin": [
+            ("income.current.net_income", "net_income", reference),
+            ("income.current.revenue", "revenue", reference),
+        ],
+        "debt_to_equity": [
+            ("debt.current.long_term_current", "long_term_debt_current", reference),
+            ("debt.current.long_term_noncurrent", "long_term_debt_noncurrent", reference),
+            ("debt.current.short_term_borrowings", "short_term_borrowings", reference),
+            ("capital.end.equity", "equity", reference),
+        ],
+        "free_cash_flow": [
+            ("cashflow.current.operating", "operating_cash_flow", reference),
+            ("cashflow.current.capex", "capex_payments", reference),
+        ],
+        "cash_and_equivalents": [
+            ("cash.current", "cash_and_equivalents", reference)
+        ],
+        "current_ratio": [
+            ("balance.current.current_assets", "current_assets", reference),
+            ("balance.current.current_liabilities", "current_liabilities", reference),
+        ],
+        "current_assets": [
+            ("balance.current.current_assets", "current_assets", reference)
+        ],
+        "total_liabilities": [
+            ("balance.current.liabilities", "liabilities", reference)
+        ],
+        "shares_outstanding": [
+            ("shares.period_end", "shares_outstanding", reference)
+        ],
+        "eps": [("income.current.diluted_eps", "diluted_eps", reference)],
+        "book_value_per_share": [
+            ("capital.end.equity", "equity", reference),
+            ("shares.period_end", "shares_outstanding", reference),
+        ],
+        "gross_margin": [
+            ("income.current.gross_profit", "gross_profit", reference),
+            ("income.current.revenue", "revenue", reference),
+        ],
+        "operating_margin": [
+            ("income.current.operating_income", "operating_income", reference),
+            ("income.current.revenue", "revenue", reference),
+        ],
+        "capex_to_revenue": [
+            ("cashflow.current.capex", "capex_payments", reference),
+            ("income.current.revenue", "revenue", reference),
+        ],
+        "dividend_per_share": [
+            ("dividend.current", "dividend_per_share", reference)
+        ],
+    }
+    for output_metric, specifications in current_specs.items():
+        set_inputs(output_metric, specifications)
+
+    formulas = {
+        "roe": "net_income_divided_by_equity",
+        "profit_margin": "net_income_divided_by_revenue",
+        "debt_to_equity": "funded_debt_divided_by_equity",
+        "free_cash_flow": "operating_cash_flow_minus_capex",
+        "earnings_growth": "three_year_net_income_cagr",
+        "cash_and_equivalents": "reported",
+        "current_ratio": "current_assets_divided_by_current_liabilities",
+        "current_assets": "reported",
+        "total_liabilities": "reported_or_compatibly_derived",
+        "shares_outstanding": "reported_period_end",
+        "eps": "reported_diluted_eps",
+        "book_value_per_share": "equity_divided_by_period_end_shares",
+        "consecutive_dividend_years": "consecutive_positive_common_dividend_years",
+        "gross_margin": "gross_profit_divided_by_revenue",
+        "operating_margin": "operating_income_divided_by_revenue",
+        "roic": "nopat_divided_by_average_invested_capital",
+        "revenue_growth_5y": "five_year_revenue_cagr",
+        "capex_to_revenue": "capex_divided_by_revenue",
+        "margin_trend": "five_year_operating_margin_ols_slope",
+        "debt_growth_3y": "three_year_funded_debt_cagr",
+        "dividend_per_share": "reported_annual_common_dividend_per_share",
+    }
+    metrics = {}
+    for name, formula in formulas.items():
+        value = values.get(name)
+        inputs = metric_inputs.get(name, ())
+        reason = None
+        if value is None:
+            reason = (
+                free_cash_flow_reason
+                if name == "free_cash_flow" and free_cash_flow_reason
+                else "required_inputs_unavailable"
+            )
+        elif not inputs:
+            value = None
+            values[name] = None
+            reason = "required_provenance_unavailable"
+        metrics[name] = NormalizedMetric(
+            value=float(value) if value is not None else None,
+            formula=formula,
+            inputs=inputs,
+            availability_reason=reason,
+        )
+
+    return SECNormalization(values, metrics)
 
 
 _METRICS = {
@@ -301,6 +849,22 @@ _METRICS = {
     "gross_profit": ("duration", "USD", ["GrossProfit"]),
     "operating_income": ("duration", "USD", ["OperatingIncomeLoss"]),
     "shares_outstanding": ("instant", "shares", ["CommonStockSharesOutstanding"]),
+    "income_tax": ("duration", "USD", ["IncomeTaxExpenseBenefit"]),
+    "pretax_income": ("duration", "USD", [
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    ]),
+    "interest_expense": ("duration", "USD", [
+        "InterestExpenseNonoperating",
+        "InterestExpenseDebt",
+        "InterestExpense",
+        "InterestAndDebtExpense",
+    ]),
+    "dividend_per_share": (
+        "duration",
+        "USD/shares",
+        ["CommonStockDividendsPerShareDeclared"],
+    ),
 }
 
 
@@ -376,6 +940,21 @@ class SECFundamentalsClient:
         payload = self._json_object(facts_response)
         if not isinstance(payload.get("facts"), dict):
             raise SECInvalidResponseError("SEC returned an invalid response.")
+        us_gaap = payload["facts"].get("us-gaap")
+        if not isinstance(us_gaap, dict):
+            raise SECInvalidResponseError("SEC returned an invalid response.")
+        financial_institution_markers = {
+            "Deposits",
+            "LoansAndLeasesReceivableNetReportedAmount",
+            "FederalFundsSoldAndSecuritiesPurchasedUnderAgreementsToResell",
+            "InsurancePremiumsRevenue",
+            "PolicyholderBenefitsAndClaimsIncurredNet",
+            "PolicyholderBenefitsAndClaimsPayableCurrent",
+            "PolicyholderBenefitsAndClaimsPayableNoncurrent",
+        }
+        is_financial_institution = bool(
+            financial_institution_markers.intersection(us_gaap)
+        )
 
         try:
             resolved = {
@@ -400,6 +979,15 @@ class SECFundamentalsClient:
                     kind="instant",
                     unit="USD",
                     aliases=["CommercialPaper"],
+                    as_of=as_of,
+                )
+            dividend_values, dividend_conflict = resolved["dividend_per_share"]
+            if not dividend_values and not dividend_conflict:
+                resolved["dividend_per_share"] = self._resolve_metric(
+                    payload,
+                    kind="duration",
+                    unit="USD/shares",
+                    aliases=["CommonStockDividendsPerShareCashPaid"],
                     as_of=as_of,
                 )
             if not resolved["liabilities"][0]:
@@ -438,6 +1026,7 @@ class SECFundamentalsClient:
             company_name=payload.get("entityName") or company.get("title") or ticker,
             latest=latest,
             history=history,
+            is_financial_institution=is_financial_institution,
         )
 
     @staticmethod

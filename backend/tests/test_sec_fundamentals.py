@@ -2,6 +2,7 @@
 
 import json
 import traceback
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from data_sources.sec import (
     SECInvalidResponseError,
     SECUnavailableError,
     SECConfigurationError,
+    FundamentalValue,
     normalize_sec_fundamentals,
 )
 
@@ -90,6 +92,147 @@ async def test_aapl_fundamentals_match_literal_10k_values_with_provenance():
     assert len(result.history["revenue"]) >= 10
     assert len(result.history["net_income"]) >= 10
     assert len(result.history["assets"]) >= 10
+
+
+@pytest.mark.asyncio
+async def test_sec_derives_multi_year_agent_metrics_without_defaults():
+    def duration(year, value):
+        return {
+            "start": f"{year}-01-01",
+            "end": f"{year}-12-31",
+            "val": value,
+            "accn": f"filing-{year}",
+            "fy": year,
+            "fp": "FY",
+            "form": "10-K",
+            "filed": f"{year + 1}-02-01",
+        }
+
+    def instant(year, value):
+        return {**duration(year, value), "start": None}
+
+    years = [2019, 2020, 2021, 2022, 2023, 2024]
+    revenue = [90, 100, 110, 120, 130, 140]
+    operating_income = [8, 10, 12, 15, 18, 21]
+    net_income = [5, 6, 7, 8, 10, 12]
+    equity = [48, 50, 55, 60, 65, 70]
+    cash = [9, 10, 10, 12, 13, 14]
+    noncurrent_debt = [32, 30, 28, 26, 24, 22]
+    dividends = [0, 1, 1, 1, 1, 1]
+    facts = {
+        "Revenues": {"units": {"USD": [duration(y, v) for y, v in zip(years, revenue)]}},
+        "OperatingIncomeLoss": {"units": {"USD": [duration(y, v) for y, v in zip(years, operating_income)]}},
+        "NetIncomeLoss": {"units": {"USD": [duration(y, v) for y, v in zip(years, net_income)]}},
+        "StockholdersEquity": {"units": {"USD": [instant(y, v) for y, v in zip(years, equity)]}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [instant(y, v) for y, v in zip(years, cash)]}},
+        "LongTermDebtCurrent": {"units": {"USD": [{**instant(y, 5), "accn": f"debt-{y}" if y <= 2021 else f"filing-{y}"} for y in years]}},
+        "LongTermDebtNoncurrent": {"units": {"USD": [{**instant(y, v), "accn": f"debt-{y}" if y <= 2021 else f"filing-{y}"} for y, v in zip(years, noncurrent_debt)]}},
+        "ShortTermBorrowings": {"units": {"USD": [{**instant(y, 2), "accn": f"debt-{y}" if y <= 2021 else f"filing-{y}"} for y in years]}},
+        "IncomeTaxExpenseBenefit": {"units": {"USD": [duration(2024, 5)]}},
+        "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest": {"units": {"USD": [duration(2024, 25)]}},
+        "InterestExpenseNonoperating": {"units": {"USD": [duration(2024, 3)]}},
+        "CommonStockDividendsPerShareDeclared": {"units": {"USD/shares": [duration(y, v) for y, v in zip(years, dividends)]}},
+    }
+    payload = {"entityName": "Metric Corp", "facts": {"us-gaap": facts}}
+    ticker_map = {"0": {"cik_str": 1, "ticker": "METR", "title": "Metric Corp"}}
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(ticker_map, payload),
+    ) as client:
+        result = await client.get_fundamentals("METR", as_of=date(2026, 10, 14))
+
+    normalized = normalize_sec_fundamentals(result)
+    assert normalized["dividend_per_share"] == 1
+    assert normalized["consecutive_dividend_years"] == 5
+    assert normalized["roic"] == pytest.approx(0.2)
+    assert normalized["margin_trend"] == pytest.approx(0.012937062937062937)
+    assert normalized["interest_coverage"] == 7
+    assert normalized["debt_growth_3y"] == pytest.approx(-0.06075984576762794)
+    assert normalized["earnings_growth"] == pytest.approx(0.19681696117715086)
+
+    earnings_inputs = {item.role: item for item in normalized.metrics["earnings_growth"].inputs}
+    assert earnings_inputs["income.begin"].provenance.end == "2021-12-31"
+    assert earnings_inputs["income.begin"].provenance.accession == "filing-2021"
+    assert earnings_inputs["income.current"].provenance.end == "2024-12-31"
+    assert len(normalized.metrics["margin_trend"].inputs) == 10
+    assert len(normalized.metrics["debt_growth_3y"].inputs) == 6
+    assert any(
+        item.role == "streak.2019.terminator" and item.value == 0
+        for item in normalized.metrics["consecutive_dividend_years"].inputs
+    )
+    roic_roles = {item.role for item in normalized.metrics["roic"].inputs}
+    assert {
+        "income.current.operating_income",
+        "income.current.tax",
+        "income.current.pretax_income",
+        "capital.begin.equity",
+        "capital.end.equity",
+        "capital.begin.cash",
+        "capital.end.cash",
+    } <= roic_roles
+
+    incompatible_history = {key: list(items) for key, items in result.history.items()}
+    incompatible_history["short_term_borrowings"] = [
+        replace(
+            item,
+            provenance=replace(item.provenance, accession="incompatible-2021"),
+        )
+        if item.provenance is not None and item.provenance.end == "2021-12-31"
+        else item
+        for item in incompatible_history["short_term_borrowings"]
+    ]
+    incompatible = normalize_sec_fundamentals(
+        replace(result, history=incompatible_history)
+    )
+    assert incompatible["debt_growth_3y"] is None
+    assert not incompatible.metrics["debt_growth_3y"].available
+
+    shifted_history = {key: list(items) for key, items in result.history.items()}
+    for metric in ("revenue", "net_income"):
+        shifted_history[metric] = [
+            replace(item, provenance=replace(item.provenance, end="2022-01-02"))
+            if item.provenance is not None and item.provenance.end == "2021-12-31"
+            else item
+            for item in shifted_history[metric]
+        ]
+    shifted = normalize_sec_fundamentals(replace(result, history=shifted_history))
+    assert shifted["earnings_growth"] == pytest.approx(0.19681696117715086)
+    assert shifted.metrics["earnings_growth"].inputs[0].provenance.end == "2022-01-02"
+
+    mismatched_dividend_history = {
+        key: list(items) for key, items in result.history.items()
+    }
+    mismatched_dividend_history["dividend_per_share"] = [
+        replace(
+            item,
+            provenance=replace(item.provenance, accession="wrong-current-filing"),
+        )
+        if item.provenance is not None and item.provenance.end == "2024-12-31"
+        else item
+        for item in mismatched_dividend_history["dividend_per_share"]
+    ]
+    mismatched_dividend = normalize_sec_fundamentals(
+        replace(result, history=mismatched_dividend_history)
+    )
+    assert mismatched_dividend["consecutive_dividend_years"] is None
+
+    malformed_dividend_history = {
+        key: list(items) for key, items in result.history.items()
+    }
+    malformed_dividend_history["dividend_per_share"] = [
+        replace(
+            item,
+            provenance=replace(item.provenance, start="2022-01-01"),
+        )
+        if item.provenance is not None and item.provenance.end == "2023-12-31"
+        else item
+        for item in malformed_dividend_history["dividend_per_share"]
+    ]
+    malformed_dividend = normalize_sec_fundamentals(
+        replace(result, history=malformed_dividend_history)
+    )
+    assert malformed_dividend["consecutive_dividend_years"] is None
 
 
 @pytest.mark.asyncio
@@ -604,6 +747,68 @@ async def test_jpm_does_not_apply_industrial_free_cash_flow_semantics():
     assert normalized["operating_cash_flow_comparability"] == (
         "not_comparable_to_industrial_companies"
     )
+    assert normalized["roic"] is None
+    assert normalized["margin_trend"] is None
+    assert normalized["interest_coverage"] is None
+    assert normalized["debt_growth_3y"] is None
+
+
+@pytest.mark.asyncio
+async def test_financial_institution_markers_fail_closed_when_revenue_is_generic():
+    payload = load_json("companyfacts_jpm.json")
+    us_gaap = payload["facts"]["us-gaap"]
+    us_gaap["Revenues"] = us_gaap.pop("RevenuesNetOfInterestExpense")
+    us_gaap["Deposits"] = {"units": {}}
+    ticker_map = {"0": {"cik_str": 19617, "ticker": "JPM", "title": "JPM"}}
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(ticker_map, payload),
+    ) as client:
+        result = await client.get_fundamentals(
+            "JPM", as_of=date.fromisoformat("2026-10-14")
+        )
+
+    normalized = normalize_sec_fundamentals(result)
+    assert normalized["free_cash_flow"] is None
+    assert normalized["free_cash_flow_availability_reason"] == (
+        "industrial_free_cash_flow_not_applicable_to_financial_institution"
+    )
+    assert normalized["operating_cash_flow_comparability"] == (
+        "not_comparable_to_industrial_companies"
+    )
+    assert normalized["roic"] is None
+    assert normalized["margin_trend"] is None
+    assert normalized["interest_coverage"] is None
+    assert normalized["debt_growth_3y"] is None
+
+
+@pytest.mark.asyncio
+async def test_dividend_streak_uses_completed_period_year_not_filing_fiscal_year():
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_transport("companyfacts_amzn.json"),
+    ) as client:
+        result = await client.get_fundamentals(
+            "AMZN", as_of=date.fromisoformat("2026-10-14")
+        )
+
+    base = result.latest["revenue"].provenance
+    assert base is not None
+    result.history["dividend_per_share"] = [
+        FundamentalValue(
+            value=0.0 if year == 2011 else 1.0,
+            provenance=replace(
+                base,
+                start=f"{year}-01-01",
+                end=f"{year}-12-31",
+                fiscal_year=2025,
+            ),
+        )
+        for year in range(2011, 2026)
+    ]
+
+    assert normalize_sec_fundamentals(result)["consecutive_dividend_years"] == 14
 
 
 @pytest.mark.parametrize("status_code", [403, 429])

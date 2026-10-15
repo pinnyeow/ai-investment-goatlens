@@ -1,6 +1,5 @@
 """Behavioral regression tests for resilient market-data analysis."""
 
-import asyncio
 import json
 import os
 import subprocess
@@ -10,13 +9,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
-from curl_cffi.requests import exceptions as curl_exceptions
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import main
-from data_sources import YahooFinanceClient, YahooFinanceError
+from data_sources.yahoo_chart import (
+    YahooChartNotFound,
+    YahooChartTemporarilyUnavailable,
+)
 
 
 class RateLimitedYahoo:
@@ -28,39 +29,17 @@ class RateLimitedYahoo:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         return None
 
-    async def get_company_data(self, ticker, years=10):
+    async def get_snapshot(self, ticker):
         self.company_calls.append(ticker)
-        raise YahooFinanceError("Too Many Requests. Rate limited.")
-
-    async def get_next_earnings_date(self, ticker):
-        return None
+        raise YahooChartTemporarilyUnavailable(
+            "Market data is temporarily unavailable."
+        )
 
 
 class UnknownTickerYahoo(RateLimitedYahoo):
-    async def get_company_data(self, ticker, years=10):
+    async def get_snapshot(self, ticker):
         self.company_calls.append(ticker)
-        raise YahooFinanceError(f"No data found for ticker: {ticker}")
-
-
-class StructuredAuthFailureYahoo(RateLimitedYahoo):
-    async def get_company_data(self, ticker, years=10):
-        self.company_calls.append(ticker)
-        error = YahooFinanceError("Yahoo authentication failed")
-        setattr(error, "code", "market_data_temporarily_unavailable")
-        raise error
-
-
-class NonRetryableYahoo(RateLimitedYahoo):
-    async def get_company_data(self, ticker, years=10):
-        self.company_calls.append(ticker)
-        raise YahooFinanceError("malformed provider payload with secret=private")
-
-
-class TickerEchoingFailureYahoo(RateLimitedYahoo):
-    async def get_company_data(self, ticker, years=10):
-        self.company_calls.append(ticker)
-        raise YahooFinanceError(f"malformed provider payload for {ticker}")
-
+        raise YahooChartNotFound("Ticker was not found.")
 
 class NoNews:
     async def should_use_tool(self, ticker, financials):
@@ -75,106 +54,6 @@ class NoRAG:
 class NoMemory:
     def record_analysis(self, **kwargs):
         return None
-
-
-class TestYahooProviderClassification:
-    def test_yahoo_401_is_structured_as_transient(self, monkeypatch):
-        """A crumb/auth failure must not become an unknown ticker."""
-
-        class AuthFailureTicker:
-            @property
-            def info(self):
-                error = RuntimeError("Yahoo request rejected")
-                setattr(error, "response", SimpleNamespace(status_code=401))
-                raise error
-
-        client = YahooFinanceClient()
-        monkeypatch.setattr(client, "_get_ticker", lambda ticker: AuthFailureTicker())
-
-        with pytest.raises(YahooFinanceError) as exc_info:
-            client._fetch_all_data_sync("AAPL")
-
-        assert getattr(exc_info.value, "code", None) == (
-            "market_data_temporarily_unavailable"
-        )
-        formatted = "".join(
-            traceback.format_exception(
-                type(exc_info.value), exc_info.value, exc_info.value.__traceback__
-            )
-        )
-        assert "Yahoo request rejected" not in formatted
-        assert exc_info.value.__cause__ is None
-        assert exc_info.value.__context__ is None
-
-    @pytest.mark.parametrize(
-        "failure_kind",
-        ["timeout", "connection", "curl_timeout", "curl_connection", "http_408"],
-    )
-    def test_network_capacity_failures_are_transient(self, monkeypatch, failure_kind):
-        """Common retryable network failures must keep the fallback path open."""
-
-        if failure_kind == "timeout":
-            provider_error = TimeoutError("provider timed out")
-        elif failure_kind == "connection":
-            provider_error = ConnectionError("provider connection reset")
-        elif failure_kind == "curl_timeout":
-            provider_error = curl_exceptions.Timeout("provider timed out")
-        elif failure_kind == "curl_connection":
-            provider_error = curl_exceptions.ConnectionError(
-                "provider connection reset"
-            )
-        else:
-            provider_error = RuntimeError("provider request timeout")
-            setattr(provider_error, "response", SimpleNamespace(status_code=408))
-
-        class FailingTicker:
-            @property
-            def info(self):
-                raise provider_error
-
-        client = YahooFinanceClient()
-        monkeypatch.setattr(client, "_get_ticker", lambda ticker: FailingTicker())
-
-        with pytest.raises(YahooFinanceError) as exc_info:
-            client._fetch_all_data_sync("AAPL")
-
-        assert getattr(exc_info.value, "code", None) == (
-            "market_data_temporarily_unavailable"
-        )
-
-    def test_provider_404_is_structured_as_unknown_ticker(self, monkeypatch):
-        """A definitive provider 404 must not spend fallback quota."""
-        provider_error = RuntimeError("provider returned not found")
-        setattr(provider_error, "response", SimpleNamespace(status_code=404))
-
-        class MissingTicker:
-            @property
-            def info(self):
-                raise provider_error
-
-        client = YahooFinanceClient()
-        monkeypatch.setattr(client, "_get_ticker", lambda ticker: MissingTicker())
-
-        with pytest.raises(YahooFinanceError) as exc_info:
-            client._fetch_all_data_sync("ZZZZZ")
-
-        assert getattr(exc_info.value, "code", None) == "ticker_not_found"
-
-    def test_incomplete_known_ticker_is_transient(self, monkeypatch):
-        """Partial valid provider data is an outage, not proof of an unknown symbol."""
-
-        class IncompleteTicker:
-            info = {"symbol": "AAPL", "longName": "Apple Inc."}
-
-        client = YahooFinanceClient()
-        monkeypatch.setattr(client, "_get_ticker", lambda ticker: IncompleteTicker())
-
-        with pytest.raises(YahooFinanceError) as exc_info:
-            client._fetch_all_data_sync("AAPL")
-
-        assert getattr(exc_info.value, "code", None) == (
-            "market_data_temporarily_unavailable"
-        )
 
 
 class TestAnalyzeErrorReporting:
@@ -194,7 +73,7 @@ class TestAnalyzeErrorReporting:
                 initializations.append(True)
                 raise AssertionError("invalid ticker reached Yahoo")
 
-        monkeypatch.setattr(main, "YahooFinanceClient", UnexpectedYahoo)
+        monkeypatch.setattr(main, "YahooChartClient", UnexpectedYahoo)
 
         with TestClient(main.app) as client:
             earnings = client.get("/api/earnings/ACME%20CONNECTION")
@@ -221,6 +100,58 @@ class TestAnalyzeErrorReporting:
         assert response.json() == {"detail": "Analysis failed"}
         assert "credential=private" not in response.text
 
+    @pytest.mark.asyncio
+    async def test_analyze_error_does_not_retain_private_exception_chain(
+        self, monkeypatch
+    ):
+        secret = "https://internal.example?token=sentinel-secret"
+
+        class ExplodingWorkflow:
+            async def ainvoke(self, state):
+                raise RuntimeError(secret)
+
+        monkeypatch.setattr(main, "goat_workflow", ExplodingWorkflow())
+        with pytest.raises(main.HTTPException) as exc_info:
+            await main.analyze_company(main.AnalysisRequest(ticker="ACME"))
+
+        formatted = "".join(
+            traceback.format_exception(
+                type(exc_info.value), exc_info.value, exc_info.value.__traceback__
+            )
+        )
+        assert exc_info.value.__context__ is None
+        assert exc_info.value.__cause__ is None
+        assert secret not in formatted
+
+    @pytest.mark.asyncio
+    async def test_price_history_error_does_not_retain_private_exception_chain(
+        self, monkeypatch
+    ):
+        secret = "https://query.example/chart?token=sentinel-secret"
+
+        class ExplodingYahoo:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+            async def get_snapshot(self, ticker):
+                raise YahooChartTemporarilyUnavailable(secret)
+
+        monkeypatch.setattr(main, "YahooChartClient", ExplodingYahoo)
+        with pytest.raises(main.HTTPException) as exc_info:
+            await main.get_price_history("ACME")
+
+        formatted = "".join(
+            traceback.format_exception(
+                type(exc_info.value), exc_info.value, exc_info.value.__traceback__
+            )
+        )
+        assert exc_info.value.__context__ is None
+        assert exc_info.value.__cause__ is None
+        assert secret not in formatted
+
 
 class TestDeploymentReadiness:
     def test_health_identifies_deployed_commit(self, monkeypatch):
@@ -246,11 +177,22 @@ class TestMarketDataCanary:
             async def __aexit__(self, exc_type, exc_val, exc_tb):
                 return None
 
-            async def get_company_data(self, ticker, years=1):
+            async def get_snapshot(self, ticker):
                 self.calls.append(ticker)
-                return {"ticker": ticker, "info": {"regularMarketPrice": 42.0}}
+                return SimpleNamespace(
+                    symbol=ticker,
+                    currency="USD",
+                    current_price=42.0,
+                    current_price_as_of="2026-10-14T12:00:00+00:00",
+                    fetched_at="2026-10-14T12:00:01+00:00",
+                    history=[],
+                    beta_sp500=None,
+                    volatility_252d=None,
+                    correlation_sp500=None,
+                    realized_total_return_252d=None,
+                )
 
-        monkeypatch.setattr(main, "YahooFinanceClient", WorkingYahoo)
+        monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
 
         with TestClient(main.app) as client:
             response = client.get("/api/market-data-health")
@@ -265,7 +207,7 @@ class TestMarketDataCanary:
 
     def test_canary_does_not_accept_arbitrary_tickers(self, monkeypatch):
         RateLimitedYahoo.company_calls = []
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
+        monkeypatch.setattr(main, "YahooChartClient", RateLimitedYahoo)
 
         with TestClient(main.app) as client:
             response = client.get("/api/market-data-health/EXPENSIVE")
@@ -275,7 +217,7 @@ class TestMarketDataCanary:
 
     def test_canary_reports_unknown_fixed_ticker_as_404(self, monkeypatch):
         UnknownTickerYahoo.company_calls = []
-        monkeypatch.setattr(main, "YahooFinanceClient", UnknownTickerYahoo)
+        monkeypatch.setattr(main, "YahooChartClient", UnknownTickerYahoo)
 
         with TestClient(main.app) as client:
             response = client.get("/api/market-data-health")
@@ -291,7 +233,7 @@ class TestMarketDataCanary:
 
     def test_failed_canary_snapshot_is_cached_for_ttl(self, monkeypatch):
         RateLimitedYahoo.company_calls = []
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
+        monkeypatch.setattr(main, "YahooChartClient", RateLimitedYahoo)
 
         with TestClient(main.app) as client:
             first = client.get("/api/market-data-health")
@@ -303,6 +245,59 @@ class TestMarketDataCanary:
 
 
 class TestInitialBrowserRequest:
+    def test_metric_evidence_renders_as_text_without_html_interpolation(self):
+        html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+        assert 'id="metricEvidenceSection"' in html
+        assert 'id="metricEvidenceList"' in html
+        assert 'data-chart-period="5y"' not in html
+        source = "function renderMetricEvidence(metricEvidence)" + html.split(
+            "function renderMetricEvidence(metricEvidence)", 1
+        )[1].split("\n        function displayResults", 1)[0]
+        script = f"""
+const assert = require('assert');
+class Element {{
+  constructor() {{ this.children = []; this.textContent = ''; this.style = {{display: ''}}; this.className = ''; }}
+  append(...children) {{ this.children.push(...children); }}
+  replaceChildren(...children) {{ this.children = children; }}
+}}
+const section = new Element();
+const list = new Element();
+const document = {{
+  getElementById(id) {{ return id === 'metricEvidenceSection' ? section : list; }},
+  createElement() {{ return new Element(); }}
+}};
+{source}
+renderMetricEvidence({{
+  current_price: {{
+    available: true,
+    value: 200,
+    source: 'yahoo',
+    as_of: '2026-10-14T12:00:00+00:00',
+    formula: '<img src=x onerror=globalThis.pwned=true>',
+    formula_version: 'yahoo_chart_v1',
+    inputs: [{{
+      kind: 'sec_fact',
+      role: '<svg onload=globalThis.pwned=true>',
+      value: 2,
+      provenance: {{concept: '<script>globalThis.pwned=true</script>', accession: 'filing-2024', end: '2024-12-31'}}
+    }}]
+  }}
+}});
+assert.strictEqual(section.style.display, 'block');
+assert.strictEqual(list.children.length, 1);
+assert.strictEqual(globalThis.pwned, undefined);
+assert.ok(list.children[0].children.some(child => child.textContent.includes('<img src=x')));
+assert.ok(list.children[0].children.some(child => child.textContent.includes('<svg onload=')));
+assert.ok(list.children[0].children.some(child => child.textContent.includes('<script>globalThis.pwned=true</script>')));
+"""
+        completed = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+
     def test_market_status_and_incomplete_agent_helpers_are_explicit(self):
         """The UI must expose degraded market data and incomplete agent inputs."""
         html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
@@ -516,110 +511,3 @@ global.fetch = (url) => {{
         assert result.returncode == 0, json.dumps(
             {"stdout": result.stdout, "stderr": result.stderr}
         )
-
-
-class TestRequestCoalescing:
-    @pytest.mark.asyncio
-    async def test_concurrent_company_requests_share_one_provider_fetch(self, monkeypatch):
-        """Concurrent cold requests for one ticker must share one upstream call."""
-        from data_sources.yahoo import YahooFinanceClient, clear_cache
-
-        clear_cache()
-        provider_started = asyncio.Event()
-        release_provider = asyncio.Event()
-        calls = []
-        fixture = {"ticker": "AAPL", "info": {"longName": "Apple Fixture"}}
-
-        async def blocking_run_sync(self, func, *args):
-            calls.append(args[0])
-            provider_started.set()
-            await release_provider.wait()
-            return fixture
-
-        monkeypatch.setattr(YahooFinanceClient, "_run_sync", blocking_run_sync)
-
-        async with YahooFinanceClient() as first, YahooFinanceClient() as second:
-            first_request = asyncio.create_task(first.get_company_data("aapl"))
-            await provider_started.wait()
-            second_request = asyncio.create_task(second.get_company_data(" AAPL "))
-            await asyncio.sleep(0)
-            release_provider.set()
-            results = await asyncio.gather(first_request, second_request)
-
-        assert calls == ["AAPL"]
-        assert [result["info"]["longName"] for result in results] == [
-            "Apple Fixture",
-            "Apple Fixture",
-        ]
-
-    @pytest.mark.asyncio
-    async def test_cancelled_only_waiter_is_cleaned_after_provider_completes(
-        self, monkeypatch
-    ):
-        """Cancellation must not pin a completed provider task in the loop map."""
-        from data_sources.yahoo import YahooFinanceClient, clear_cache
-
-        clear_cache()
-        provider_started = asyncio.Event()
-        release_provider = asyncio.Event()
-        calls = []
-
-        async def controlled_run_sync(self, func, *args):
-            calls.append(args[0])
-            if len(calls) == 1:
-                provider_started.set()
-                await release_provider.wait()
-                return {"ticker": "AAPL", "info": {"longName": "stale"}}
-            return {"ticker": "AAPL", "info": {"longName": "fresh"}}
-
-        monkeypatch.setattr(YahooFinanceClient, "_run_sync", controlled_run_sync)
-
-        async with YahooFinanceClient() as client:
-            waiter = asyncio.create_task(client.get_company_data("AAPL"))
-            await provider_started.wait()
-            waiter.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await waiter
-            release_provider.set()
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
-            result = await client.get_company_data("AAPL")
-
-        assert calls == ["AAPL", "AAPL"]
-        assert result["info"]["longName"] == "fresh"
-
-    @pytest.mark.asyncio
-    async def test_failed_provider_task_is_cleaned_after_waiter_cancellation(
-        self, monkeypatch
-    ):
-        """An unobserved provider failure must be consumed and allow a retry."""
-        from data_sources.yahoo import YahooFinanceClient, clear_cache
-
-        clear_cache()
-        provider_started = asyncio.Event()
-        release_provider = asyncio.Event()
-        calls = []
-
-        async def controlled_run_sync(self, func, *args):
-            calls.append(args[0])
-            if len(calls) == 1:
-                provider_started.set()
-                await release_provider.wait()
-                raise YahooFinanceError("provider failed after cancellation")
-            return {"ticker": "AAPL", "info": {"longName": "retry"}}
-
-        monkeypatch.setattr(YahooFinanceClient, "_run_sync", controlled_run_sync)
-
-        async with YahooFinanceClient() as client:
-            waiter = asyncio.create_task(client.get_company_data("AAPL"))
-            await provider_started.wait()
-            waiter.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await waiter
-            release_provider.set()
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
-            result = await client.get_company_data("AAPL")
-
-        assert calls == ["AAPL", "AAPL"]
-        assert result["info"]["longName"] == "retry"

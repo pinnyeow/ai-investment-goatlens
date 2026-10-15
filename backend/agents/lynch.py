@@ -27,9 +27,9 @@ class LynchMetrics:
     peg_ratio: float
     earnings_growth: float
     pe_ratio: float
-    institutional_ownership: float
+    institutional_ownership: Optional[float]
     debt_to_equity: float
-    cash_position: float
+    cash_position: Optional[float]
 
 
 class LynchAgent:
@@ -102,8 +102,7 @@ class LynchAgent:
             ticker=ticker,
             financials=financials,
             required_metrics=(
-                "pe_ratio", "earnings_growth", "institutional_ownership",
-                "debt_to_equity", "cash_and_equivalents",
+                "pe_ratio", "earnings_growth", "debt_to_equity",
             ),
         )
         if incomplete:
@@ -154,9 +153,9 @@ class LynchAgent:
             peg_ratio=peg,
             earnings_growth=growth,
             pe_ratio=pe,
-            institutional_ownership=financials.get("institutional_ownership", 0),
+            institutional_ownership=financials.get("institutional_ownership"),
             debt_to_equity=financials.get("debt_to_equity", 0),
-            cash_position=financials.get("cash_and_equivalents", 0),
+            cash_position=financials.get("cash_and_equivalents"),
         )
     
     def _categorize_stock(self, metrics: LynchMetrics) -> str:
@@ -201,7 +200,10 @@ class LynchAgent:
             score += 25
             factors.append("High growth rate")
         
-        if metrics.institutional_ownership < 0.50:
+        if (
+            metrics.institutional_ownership is not None
+            and metrics.institutional_ownership < 0.50
+        ):
             score += 15
             factors.append("Under-discovered by institutions")
         
@@ -245,11 +247,20 @@ class LynchAgent:
             score -= 15
         
         # Institutional ownership (contrarian - max 15 points)
-        if metrics.institutional_ownership < 0.30:
+        if (
+            metrics.institutional_ownership is not None
+            and metrics.institutional_ownership < 0.30
+        ):
             score += 15
-        elif metrics.institutional_ownership < 0.50:
+        elif (
+            metrics.institutional_ownership is not None
+            and metrics.institutional_ownership < 0.50
+        ):
             score += 10
-        elif metrics.institutional_ownership > 0.80:
+        elif (
+            metrics.institutional_ownership is not None
+            and metrics.institutional_ownership > 0.80
+        ):
             score -= 10
         
         # Ten-bagger potential bonus
@@ -321,9 +332,17 @@ class LynchAgent:
         if category == "fast_grower":
             insights.append(f"Fast grower with {metrics.earnings_growth:.1%} earnings growth")
         
-        if metrics.institutional_ownership < 0.50:
+        if (
+            metrics.institutional_ownership is not None
+            and metrics.institutional_ownership < 0.50
+        ):
             insights.append("Low institutional ownership suggests discovery potential")
-        
+
+        if metrics.cash_position is not None:
+            insights.append(
+                f"Reported cash and equivalents: {metrics.cash_position:,.0f}"
+            )
+
         return insights
     
     def _identify_concerns(self, metrics: LynchMetrics) -> List[str]:
@@ -333,7 +352,10 @@ class LynchAgent:
         if metrics.peg_ratio > 2.0:
             concerns.append(f"High PEG ratio of {metrics.peg_ratio:.2f} - paying too much for growth")
         
-        if metrics.institutional_ownership > 0.80:
+        if (
+            metrics.institutional_ownership is not None
+            and metrics.institutional_ownership > 0.80
+        ):
             concerns.append("Heavy institutional ownership - may be fully discovered")
         
         if metrics.earnings_growth < 0:

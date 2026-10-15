@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iNFs4AfCuJmTG2E8xVg+E6XrT83ESwpOwahrfwOnfys=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pxczKCKUiVMqrdR1Zl7u28jypZs03ri4/AU6VKnKejk=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -572,6 +572,42 @@
             margin-top: 0.75rem;
             color: var(--accent-gold);
             font-size: 0.82rem;
+            font-weight: 600;
+        }
+
+        .metric-evidence-section {
+            display: none;
+            margin: 1.25rem 0;
+            padding: 1rem 1.25rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            background: var(--bg-card);
+        }
+
+        .metric-evidence-section summary {
+            cursor: pointer;
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+
+        .metric-evidence-list {
+            display: grid;
+            gap: 0.65rem;
+            margin-top: 1rem;
+        }
+
+        .metric-evidence-row {
+            display: grid;
+            grid-template-columns: minmax(10rem, 1fr) minmax(14rem, 2fr);
+            gap: 1rem;
+            padding-top: 0.65rem;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 0.82rem;
+        }
+
+        .metric-evidence-name {
+            color: var(--text-primary);
             font-weight: 600;
         }
 
@@ -2776,6 +2812,11 @@
                 </div>
             </div>
 
+            <details class="metric-evidence-section" id="metricEvidenceSection">
+                <summary>Data sources &amp; formulas</summary>
+                <div class="metric-evidence-list" id="metricEvidenceList"></div>
+            </details>
+
             <!-- Moat Analysis -->
             <div class="moat-section">
                 <div class="moat-left">
@@ -2801,22 +2842,13 @@
                             <button class="chart-tab-btn active" data-chart-tab="price">
                                 <span class="tab-icon">📈</span> Stock Price
                             </button>
-                            <button class="chart-tab-btn" data-chart-tab="eps">
-                                <span class="tab-icon">📊</span> EPS
-                            </button>
-                            <button class="chart-tab-btn" data-chart-tab="insights">
-                                <span class="tab-icon">💡</span> Insights
-                            </button>
-                            <button class="chart-tab-btn" data-chart-tab="track-record">
-                                <span class="tab-icon">📋</span> Track Record
-                            </button>
+
                         </div>
                         <div class="chart-period-selector" id="chartPeriodSelector">
                             <button class="chart-period-btn" data-chart-period="3mo">3M</button>
                             <button class="chart-period-btn" data-chart-period="6mo">6M</button>
                             <button class="chart-period-btn active" data-chart-period="1y">1Y</button>
                             <button class="chart-period-btn" data-chart-period="2y">2Y</button>
-                            <button class="chart-period-btn" data-chart-period="5y">5Y</button>
                         </div>
                     </div>
 
@@ -3514,6 +3546,44 @@
             await runAnalysis();
         }
 
+        function renderMetricEvidence(metricEvidence) {
+            const section = document.getElementById('metricEvidenceSection');
+            const list = document.getElementById('metricEvidenceList');
+            list.replaceChildren();
+            const entries = Object.entries(metricEvidence || {})
+                .filter(([, evidence]) => evidence && evidence.available === true)
+                .sort(([left], [right]) => left.localeCompare(right));
+
+            entries.forEach(([metric, evidence]) => {
+                const row = document.createElement('div');
+                row.className = 'metric-evidence-row';
+                const name = document.createElement('div');
+                name.className = 'metric-evidence-name';
+                name.textContent = metric.replaceAll('_', ' ');
+                const detail = document.createElement('div');
+                const asOf = evidence.as_of ? ` · as of ${evidence.as_of}` : '';
+                const observations = evidence.observation_count != null
+                    ? ` · ${evidence.observation_count} observations`
+                    : '';
+                detail.textContent = `${evidence.value} · ${evidence.source} · ${evidence.formula} (${evidence.formula_version})${asOf}${observations}`;
+                row.append(name, detail);
+                (evidence.inputs || []).forEach(input => {
+                    const inputDetail = document.createElement('div');
+                    if (input.kind === 'sec_fact') {
+                        const provenance = input.provenance || {};
+                        inputDetail.textContent = `${input.role}: ${provenance.concept} = ${input.value} · period ${provenance.end || 'unknown'} · filed ${provenance.filed || 'unknown'} · accession ${provenance.accession || 'unknown'}`;
+                    } else if (input.kind === 'market_observation') {
+                        inputDetail.textContent = `${input.role} (${input.symbol}): ${input.value} · observed ${input.observed_at}`;
+                    } else if (input.kind === 'market_series') {
+                        inputDetail.textContent = `${input.role} (${input.symbol}): ${input.observation_count} observations · ${input.start} to ${input.end}`;
+                    }
+                    row.append(inputDetail);
+                });
+                list.append(row);
+            });
+            section.style.display = entries.length ? 'block' : 'none';
+        }
+
         function displayResults(data) {
             hideLoading();
             currentTicker = data.ticker;
@@ -3523,6 +3593,7 @@
             const marketNotice = document.getElementById('marketDataNotice');
             marketNotice.textContent = marketUi.message;
             marketNotice.classList.toggle('active', Boolean(marketUi.message));
+            renderMetricEvidence(data.metric_evidence);
             
             // Company Header
             document.getElementById('companyTicker').textContent = data.ticker;

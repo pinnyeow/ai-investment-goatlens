@@ -17,7 +17,8 @@ import math
 import re
 import threading
 import time
-from typing import Dict, Any, List, Literal, NoReturn, Optional
+from datetime import date, timedelta
+from typing import Annotated, Dict, Any, List, Literal, NoReturn, Optional, Union
 from contextlib import asynccontextmanager
 
 # Load environment variables from .env file
@@ -73,16 +74,28 @@ else:
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 # LangGraph imports
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableLambda, RunnableConfig
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 # Local imports
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
-from data_sources import YahooFinanceClient, YahooFinanceError
+from agents.incomplete import metric_is_available
+from data_sources.yahoo_chart import (
+    YahooChartClient,
+    YahooChartError,
+    YahooChartNotFound,
+)
 from data_sources.sec import (
     SECConfigurationError,
     SECError,
@@ -93,7 +106,7 @@ from data_sources.sec import (
     SECUnavailableError,
     normalize_sec_fundamentals,
 )
-from data_sources import NewsClient
+from data_sources.news import NewsClient
 from temporal import TemporalAnalyzer
 from strategies import calculate_consensus, calculate_consensus_with_llm, StrategyResult, Verdict
 from llm import get_llm_client
@@ -123,7 +136,13 @@ def _normalize_path_ticker(value: str) -> str:
         raise HTTPException(status_code=422, detail="Invalid ticker symbol")
 
 
-class AnalysisRequest(BaseModel):
+class StrictAPIModel(BaseModel):
+    """Fail-closed public boundary: no coercion and no unknown fields."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+
+class AnalysisRequest(StrictAPIModel):
     """Request to analyze a company."""
     ticker: str = Field(..., description="Stock ticker symbol (e.g., AAPL)")
     time_period: Literal["ytd", "3m", "6m", "1y", "5y"] = Field(
@@ -151,7 +170,7 @@ class AnalysisRequest(BaseModel):
         return list(dict.fromkeys(value))
 
 
-class AgentResult(BaseModel):
+class AgentResult(StrictAPIModel):
     """Result from a single GOAT agent."""
     agent: str = Field(min_length=1)
     style: str = Field(min_length=1)
@@ -202,7 +221,7 @@ class AgentResult(BaseModel):
         return self
 
 
-class EarningsQuarter(BaseModel):
+class EarningsQuarter(StrictAPIModel):
     """Earnings data for a single quarter."""
     quarter: str = Field(description="Quarter label, e.g. Q4 2025")
     date: str = Field(description="Earnings report date YYYY-MM-DD")
@@ -213,7 +232,7 @@ class EarningsQuarter(BaseModel):
     beat_miss: str = Field(default="unknown", description="beat, miss, or inline")
 
 
-class EarningsStreak(BaseModel):
+class EarningsStreak(StrictAPIModel):
     """Summary of earnings beat/miss track record."""
     streak_type: str = Field(description="Current streak: beat, miss, inline, or unknown")
     streak_count: int = Field(description="Number of consecutive quarters in current streak")
@@ -224,7 +243,7 @@ class EarningsStreak(BaseModel):
     summary: str = Field(description="Human-readable summary")
 
 
-class PricePoint(BaseModel):
+class PricePoint(StrictAPIModel):
     """Single day of price data."""
     date: str
     open: float
@@ -234,7 +253,7 @@ class PricePoint(BaseModel):
     volume: int
 
 
-class EarningsMarker(BaseModel):
+class EarningsMarker(StrictAPIModel):
     """Earnings event marker for overlaying on a price chart."""
     quarter: str
     date: str
@@ -246,7 +265,7 @@ class EarningsMarker(BaseModel):
     price_reaction_5d: Optional[float] = None
 
 
-class PriceHistoryResponse(BaseModel):
+class PriceHistoryResponse(StrictAPIModel):
     """Price history with earnings overlays for charting."""
     ticker: str
     period: str
@@ -255,7 +274,7 @@ class PriceHistoryResponse(BaseModel):
     next_earnings_date: Optional[str] = None
 
 
-class EarningsReactionInsight(BaseModel):
+class EarningsReactionInsight(StrictAPIModel):
     """Per-quarter reaction insight explaining why the stock moved."""
     quarter: str = ""
     date: str = ""
@@ -282,7 +301,7 @@ class EarningsReactionInsight(BaseModel):
     fcf: Optional[float] = None
 
 
-class EstimateRange(BaseModel):
+class EstimateRange(StrictAPIModel):
     """Analyst estimate range for a single period (current Q or next Q)."""
     period: str = ""
     eps_low: Optional[float] = None
@@ -299,7 +318,7 @@ class EstimateRange(BaseModel):
     rev_num_analysts: int = 0
 
 
-class PriceTargetRange(BaseModel):
+class PriceTargetRange(StrictAPIModel):
     """Analyst price target range."""
     current: Optional[float] = None
     low: Optional[float] = None
@@ -308,7 +327,7 @@ class PriceTargetRange(BaseModel):
     high: Optional[float] = None
 
 
-class ForwardGuidanceSummary(BaseModel):
+class ForwardGuidanceSummary(StrictAPIModel):
     """Forward-looking guidance summary from analyst estimates."""
     current_q_eps_growth: Optional[float] = None
     next_q_eps_growth: Optional[float] = None
@@ -327,7 +346,7 @@ class ForwardGuidanceSummary(BaseModel):
     summary: str = ""
 
 
-class EarningsInsightsResponse(BaseModel):
+class EarningsInsightsResponse(StrictAPIModel):
     ticker: str
     earnings_history: List[EarningsQuarter]
     earnings_streak: Optional[EarningsStreak]
@@ -336,7 +355,7 @@ class EarningsInsightsResponse(BaseModel):
     next_earnings_date: Optional[str]
 
 
-class FactProvenanceResponse(BaseModel):
+class FactProvenanceResponse(StrictAPIModel):
     namespace: str
     concept: str
     unit: str
@@ -350,37 +369,101 @@ class FactProvenanceResponse(BaseModel):
     inputs: List["FactProvenanceResponse"] = Field(default_factory=list)
 
 
-class FundamentalFactResponse(BaseModel):
+class FundamentalFactResponse(StrictAPIModel):
     value: Optional[float]
     availability_reason: Optional[str]
     provenance: Optional[FactProvenanceResponse]
 
 
-class FundamentalsAvailabilityStatus(BaseModel):
+class SECMetricInputResponse(StrictAPIModel):
+    kind: Literal["sec_fact"]
+    role: str = Field(min_length=1)
+    value: float
+    provenance: FactProvenanceResponse
+
+
+class MarketObservationInputResponse(StrictAPIModel):
+    kind: Literal["market_observation"]
+    role: str = Field(min_length=1)
+    source: Literal["yahoo"]
+    symbol: str = Field(min_length=1)
+    value: float
+    observed_at: str = Field(min_length=1)
+
+
+class MarketSeriesInputResponse(StrictAPIModel):
+    kind: Literal["market_series"]
+    role: str = Field(min_length=1)
+    source: Literal["yahoo"]
+    symbol: str = Field(min_length=1)
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    observation_count: int = Field(ge=1)
+
+
+MetricInputResponse = Annotated[
+    Union[
+        SECMetricInputResponse,
+        MarketObservationInputResponse,
+        MarketSeriesInputResponse,
+    ],
+    Field(discriminator="kind"),
+]
+
+
+class MetricEvidenceResponse(StrictAPIModel):
+    value: Optional[float]
+    available: bool
+    source: Literal["sec", "yahoo", "sec+yahoo"]
+    as_of: Optional[str]
+    formula: str
+    formula_version: str
+    inputs: List[MetricInputResponse] = Field(default_factory=list)
+    observation_count: Optional[int] = Field(default=None, ge=0)
+    availability_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_availability_contract(self):
+        if self.available:
+            if self.value is None or not math.isfinite(self.value):
+                raise ValueError("Available evidence requires a finite value")
+            if not self.inputs:
+                raise ValueError("Available evidence requires typed inputs")
+            if self.availability_reason is not None:
+                raise ValueError("Available evidence cannot have an unavailable reason")
+        else:
+            if self.value is not None:
+                raise ValueError("Unavailable evidence cannot expose a value")
+            if not self.availability_reason:
+                raise ValueError("Unavailable evidence requires a reason")
+        return self
+
+
+class FundamentalsAvailabilityStatus(StrictAPIModel):
     available: bool
     source: Literal["sec"]
     as_of: Optional[str]
 
 
-class MarketAvailabilityStatus(BaseModel):
+class MarketAvailabilityStatus(StrictAPIModel):
     available: bool
     source: Literal["yahoo"]
     as_of: Optional[str]
     reason: Optional[str] = None
 
 
-class AnalysisCompletenessStatus(BaseModel):
+class AnalysisCompletenessStatus(StrictAPIModel):
     status: Literal["complete", "incomplete"]
     reason: Optional[str]
 
 
-class AnalysisDataStatus(BaseModel):
+class AnalysisDataStatus(StrictAPIModel):
     fundamentals: FundamentalsAvailabilityStatus
     market_data: MarketAvailabilityStatus
     price_dependent_analysis: AnalysisCompletenessStatus
 
 
-class ComparisonAgentResponse(BaseModel):
+class ComparisonAgentResponse(StrictAPIModel):
     name: str
     style: str
     verdict: Optional[
@@ -390,11 +473,11 @@ class ComparisonAgentResponse(BaseModel):
     key_metric: str
 
 
-class ComparisonTableResponse(BaseModel):
+class ComparisonTableResponse(StrictAPIModel):
     agents: List[ComparisonAgentResponse]
 
 
-class AnalysisResponse(BaseModel):
+class AnalysisResponse(StrictAPIModel):
     """Complete analysis response."""
     ticker: str
     company_name: str
@@ -402,6 +485,7 @@ class AnalysisResponse(BaseModel):
     data_status: AnalysisDataStatus
     fundamentals: Dict[str, FundamentalFactResponse]
     fundamentals_history: Dict[str, List[FundamentalFactResponse]]
+    metric_evidence: Dict[str, MetricEvidenceResponse]
     
     # Consensus
     consensus_status: Literal["complete", "partial", "incomplete"]
@@ -454,6 +538,7 @@ class GOATState(TypedDict):
     data_status: Optional[Dict[str, Any]]
     sec_fundamentals: Optional[Dict[str, Any]]
     sec_fundamentals_history: Optional[Dict[str, List[Dict[str, Any]]]]
+    metric_evidence: NotRequired[Optional[Dict[str, Dict[str, Any]]]]
     
     # Earnings data (actual vs. consensus)
     earnings_data: Optional[List[Dict[str, Any]]]
@@ -484,65 +569,32 @@ class GOATState(TypedDict):
     market_data_only: bool
 
 
-_TRANSIENT_YAHOO_ERROR_MARKERS = (
-    "too many requests",
-    "rate limit",
-    "timeout",
-    "timed out",
-    "temporarily unavailable",
-    "connection",
-    "service unavailable",
-)
-
-
-def _classify_yahoo_error(error: YahooFinanceError, ticker: str) -> str:
-    """Classify provider failures without using user-controlled ticker text."""
-    structured_code = getattr(error, "code", None)
-    if structured_code in {
-        "ticker_not_found",
-        "market_data_temporarily_unavailable",
-        "market_data_failure",
-    }:
-        return structured_code
-
-    error_text = re.sub(
-        rf"(?<![A-Z0-9]){re.escape(ticker)}(?![A-Z0-9])",
-        "",
-        str(error),
-        flags=re.IGNORECASE,
-    ).lower()
-    if "no data found for ticker" in error_text:
-        return "ticker_not_found"
-    if any(marker in error_text for marker in _TRANSIENT_YAHOO_ERROR_MARKERS):
-        return "market_data_temporarily_unavailable"
-    return "market_data_failure"
+def _provenance_payload(provenance):
+    if provenance is None:
+        return None
+    return {
+        "namespace": provenance.namespace,
+        "concept": provenance.concept,
+        "unit": provenance.unit,
+        "start": provenance.start,
+        "end": provenance.end,
+        "accession": provenance.accession,
+        "form": provenance.form,
+        "filed": provenance.filed.isoformat(),
+        "fiscal_year": provenance.fiscal_year,
+        "derived": provenance.derived,
+        "inputs": [_provenance_payload(item) for item in provenance.inputs],
+    }
 
 
 def _serialize_sec_fundamentals(fundamentals):
     """Expose authoritative values and their complete filing provenance."""
 
-    def provenance_payload(provenance):
-        if provenance is None:
-            return None
-        return {
-            "namespace": provenance.namespace,
-            "concept": provenance.concept,
-            "unit": provenance.unit,
-            "start": provenance.start,
-            "end": provenance.end,
-            "accession": provenance.accession,
-            "form": provenance.form,
-            "filed": provenance.filed.isoformat(),
-            "fiscal_year": provenance.fiscal_year,
-            "derived": provenance.derived,
-            "inputs": [provenance_payload(item) for item in provenance.inputs],
-        }
-
     def value_payload(item):
         return {
             "value": item.value,
             "availability_reason": item.availability_reason,
-            "provenance": provenance_payload(item.provenance),
+            "provenance": _provenance_payload(item.provenance),
         }
 
     return (
@@ -554,6 +606,197 @@ def _serialize_sec_fundamentals(fundamentals):
     )
 
 
+_METRIC_EVIDENCE_CONTRACTS = {
+    "roe": ("sec", "net_income_divided_by_equity"),
+    "profit_margin": ("sec", "net_income_divided_by_revenue"),
+    "debt_to_equity": ("sec", "funded_debt_divided_by_equity"),
+    "free_cash_flow": ("sec", "operating_cash_flow_minus_capex"),
+    "earnings_growth": ("sec", "three_year_net_income_cagr"),
+    "cash_and_equivalents": ("sec", "reported"),
+    "current_ratio": ("sec", "current_assets_divided_by_current_liabilities"),
+    "current_assets": ("sec", "reported"),
+    "total_liabilities": ("sec", "reported"),
+    "shares_outstanding": ("sec", "reported_period_end"),
+    "eps": ("sec", "reported_diluted_eps"),
+    "book_value_per_share": ("sec", "equity_divided_by_period_end_shares"),
+    "consecutive_dividend_years": (
+        "sec",
+        "consecutive_positive_common_dividend_years",
+    ),
+    "gross_margin": ("sec", "gross_profit_divided_by_revenue"),
+    "operating_margin": ("sec", "operating_income_divided_by_revenue"),
+    "roic": ("sec", "nopat_divided_by_average_invested_capital"),
+    "revenue_growth_5y": ("sec", "five_year_revenue_cagr"),
+    "capex_to_revenue": ("sec", "capex_divided_by_revenue"),
+    "margin_trend": ("sec", "five_year_operating_margin_ols_slope"),
+    "debt_growth_3y": ("sec", "three_year_funded_debt_cagr"),
+    "current_price": ("yahoo", "provider_regular_market_price"),
+    "beta": (
+        "yahoo",
+        "aligned_daily_return_sample_covariance_divided_by_benchmark_variance",
+    ),
+    "volatility_252d": ("yahoo", "annualized_log_return_volatility_252_sessions"),
+    "correlation_sp500": ("yahoo", "aligned_daily_return_pearson_correlation"),
+    "realized_total_return_252d": (
+        "yahoo",
+        "adjusted_close_total_return_252_sessions",
+    ),
+    "pe_ratio": ("sec+yahoo", "current_price_divided_by_diluted_eps"),
+    "pb_ratio": (
+        "sec+yahoo",
+        "current_price_divided_by_book_value_per_share",
+    ),
+    "dividend_yield": (
+        "sec+yahoo",
+        "annual_common_dividend_per_share_divided_by_current_price",
+    ),
+}
+
+
+def _build_metric_evidence(normalized, snapshot=None):
+    evidence = {}
+    market_as_of = (
+        getattr(snapshot, "current_price_as_of", None) if snapshot is not None else None
+    )
+    market_window_start = (
+        getattr(snapshot, "metric_session_start", None) if snapshot is not None else None
+    )
+    market_window_end = (
+        getattr(snapshot, "metric_session_end", None) if snapshot is not None else None
+    )
+
+    def sec_inputs(metric):
+        return [
+            {
+                "kind": "sec_fact",
+                "role": item.role,
+                "value": float(item.value),
+                "provenance": _provenance_payload(item.provenance),
+            }
+            for item in metric.inputs
+        ]
+
+    def market_observation(value):
+        if market_as_of is None or not metric_is_available(value):
+            return []
+        return [{
+            "kind": "market_observation",
+            "role": "price.current",
+            "source": "yahoo",
+            "symbol": normalized.get("ticker"),
+            "value": float(value),
+            "observed_at": market_as_of,
+        }]
+
+    def market_series(
+        role, symbol, observations, start=market_window_start, end=market_window_end
+    ):
+        if (
+            start is None
+            or end is None
+            or type(observations) is not int
+            or observations < 1
+        ):
+            return []
+        return [{
+            "kind": "market_series",
+            "role": role,
+            "source": "yahoo",
+            "symbol": symbol,
+            "start": start,
+            "end": end,
+            "observation_count": observations,
+        }]
+
+    sec_metrics = getattr(normalized, "metrics", {})
+    combined_sec_metric = {
+        "pe_ratio": "eps",
+        "pb_ratio": "book_value_per_share",
+        "dividend_yield": "dividend_per_share",
+    }
+    for metric, (source, formula) in _METRIC_EVIDENCE_CONTRACTS.items():
+        value = normalized.get(metric)
+        observations = None
+        inputs = []
+        reason = "required_inputs_unavailable"
+        if source == "sec":
+            canonical = sec_metrics.get(metric)
+            if canonical is not None:
+                value = canonical.value
+                formula = canonical.formula
+                inputs = sec_inputs(canonical)
+                reason = canonical.availability_reason or "required_provenance_unavailable"
+                as_of = (
+                    max(item.provenance.filed for item in canonical.inputs).isoformat()
+                    if canonical.inputs
+                    else None
+                )
+                available = canonical.available
+            else:
+                as_of = None
+                available = False
+            version = canonical.formula_version if canonical is not None else "sec_companyfacts_v1"
+        elif source == "yahoo":
+            as_of = market_as_of if metric == "current_price" else market_window_end
+            if metric == "current_price":
+                observations = 1 if metric_is_available(value) else None
+                inputs = market_observation(value)
+            elif metric in {"beta", "correlation_sp500"}:
+                observations = getattr(snapshot, "aligned_return_observations", None)
+                aligned_start = getattr(
+                    snapshot, "aligned_metric_session_start", market_window_start
+                )
+                aligned_end = getattr(
+                    snapshot, "aligned_metric_session_end", market_window_end
+                )
+                as_of = aligned_end
+                inputs = market_series(
+                    "asset.adjusted_close_return_intervals",
+                    normalized.get("ticker"),
+                    observations,
+                    aligned_start,
+                    aligned_end,
+                )
+                inputs += market_series(
+                    "benchmark.sp500.adjusted_close_return_intervals",
+                    "^GSPC",
+                    observations,
+                    aligned_start,
+                    aligned_end,
+                )
+            else:
+                observations = getattr(snapshot, "asset_return_observations", None)
+                inputs = market_series(
+                    "asset.adjusted_close_return_intervals",
+                    normalized.get("ticker"),
+                    observations,
+                )
+            available = metric_is_available(value) and bool(inputs)
+            version = "yahoo_chart_v1"
+        else:
+            as_of = market_as_of
+            observations = 1 if metric_is_available(value) else None
+            canonical = sec_metrics.get(combined_sec_metric[metric])
+            if canonical is not None and canonical.available:
+                inputs = sec_inputs(canonical)
+            inputs += market_observation(normalized.get("current_price"))
+            available = metric_is_available(value) and bool(inputs) and canonical is not None and canonical.available
+            version = "sec_yahoo_formula_v1"
+
+        evidence[metric] = {
+            "value": float(value) if available else None,
+            "available": available,
+            "source": source,
+            "as_of": as_of,
+            "formula": formula,
+            "formula_version": version,
+            "inputs": inputs,
+            "observation_count": observations,
+            "availability_reason": None if available else reason,
+        }
+    return evidence
+
+
 async def fetch_data_node(state: GOATState) -> GOATState:
     """Fetch SEC fundamentals first, then add best-effort Yahoo market data."""
     ticker = state["ticker"]
@@ -561,13 +804,23 @@ async def fetch_data_node(state: GOATState) -> GOATState:
 
     if market_data_only:
         try:
-            async with YahooFinanceClient() as client:
-                raw_data = await client.get_company_data(ticker, years=1)
-            state["raw_data"] = raw_data
+            async with YahooChartClient() as client:
+                snapshot = await client.get_snapshot(ticker)
+            state["raw_data"] = {
+                "current_price": snapshot.current_price,
+                "as_of": snapshot.current_price_as_of,
+                "fetched_at": snapshot.fetched_at,
+            }
             state["data_source"] = "yahoo"
             return state
-        except YahooFinanceError as yahoo_error:
-            error_code = _classify_yahoo_error(yahoo_error, ticker)
+        except YahooChartError as yahoo_error:
+            error_code = (
+                "ticker_not_found"
+                if isinstance(yahoo_error, YahooChartNotFound)
+                else "market_data_temporarily_unavailable"
+                if yahoo_error.retryable
+                else "market_data_failure"
+            )
             state["error_code"] = error_code
             state["error"] = (
                 f"No market data found for ticker {ticker}."
@@ -613,7 +866,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         state["sec_fundamentals_history"],
     ) = _serialize_sec_fundamentals(fundamentals)
     filing_dates = [
-        value.provenance.end
+        value.provenance.filed.isoformat()
         for value in fundamentals.latest.values()
         if value.provenance is not None
     ]
@@ -641,36 +894,21 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     state["next_earnings_date"] = None
     state["data_source"] = "sec"
 
+    snapshot = None
     try:
-        async with YahooFinanceClient() as client:
-            raw_task = client.get_company_data(ticker, years=1)
-            next_earnings_task = client.get_next_earnings_date(ticker)
-            raw_data, next_earnings = await asyncio.gather(
-                raw_task, next_earnings_task
-            )
-            earnings = client.normalize_earnings(raw_data)
-            streak = client.get_earnings_streak(earnings)
+        async with YahooChartClient() as client:
+            snapshot = await client.get_snapshot(ticker)
 
-        info = raw_data.get("info", {})
-
-        def market_number(key):
-            value = info.get(key)
-            if not isinstance(value, (int, float)):
-                return None
-            value = float(value)
-            return value if value == value and value not in {float("inf"), float("-inf")} else None
-
-        current_price = market_number("regularMarketPrice")
-        if current_price is None:
-            current_price = market_number("currentPrice")
+        current_price = snapshot.current_price
         normalized.update(
             {
                 "current_price": current_price,
-                "market_cap": market_number("marketCap"),
-                "beta": market_number("beta"),
-                "dividend_yield": market_number("dividendYield"),
-                "insider_ownership": market_number("heldPercentInsiders"),
-                "institutional_ownership": market_number("heldPercentInstitutions"),
+                "beta": snapshot.beta_sp500,
+                "volatility_252d": snapshot.volatility_252d,
+                "correlation_sp500": snapshot.correlation_sp500,
+                "realized_total_return_252d": (
+                    snapshot.realized_total_return_252d
+                ),
             }
         )
         if current_price is not None:
@@ -678,9 +916,11 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             book_value = normalized.get("book_value_per_share")
             shares = normalized.get("shares_outstanding")
             revenue = normalized.get("revenue")
-            normalized["pe_ratio"] = current_price / eps if eps not in (None, 0) else None
+            normalized["pe_ratio"] = current_price / eps if eps is not None and eps > 0 else None
             normalized["pb_ratio"] = (
-                current_price / book_value if book_value not in (None, 0) else None
+                current_price / book_value
+                if book_value is not None and book_value > 0
+                else None
             )
             normalized["market_cap"] = normalized["market_cap"] or (
                 current_price * shares if shares not in (None, 0) else None
@@ -690,22 +930,32 @@ async def fetch_data_node(state: GOATState) -> GOATState:
                 if normalized["market_cap"] is not None and revenue not in (None, 0)
                 else None
             )
-        company_name = info.get("longName") or info.get("shortName")
-        if company_name:
-            normalized["company_name"] = company_name
-        if info.get("sector"):
-            normalized["sector"] = info["sector"]
-        if info.get("industry"):
-            normalized["industry"] = info["industry"]
-        state["raw_data"] = raw_data
-        state["earnings_data"] = earnings
-        state["earnings_streak"] = streak
-        state["next_earnings_date"] = next_earnings
+            dividend_per_share = normalized.get("dividend_per_share")
+            normalized["dividend_yield"] = (
+                dividend_per_share / current_price
+                if dividend_per_share is not None and dividend_per_share >= 0
+                else None
+            )
+        state["raw_data"] = {
+            "ticker": snapshot.symbol,
+            "currency": snapshot.currency,
+            "fetched_at": snapshot.fetched_at,
+            "current_price_as_of": snapshot.current_price_as_of,
+            "history": [
+                {
+                    "date": point.session_date,
+                    "timestamp": point.timestamp,
+                    "close": point.close,
+                    "adjusted_close": point.adjusted_close,
+                }
+                for point in snapshot.history
+            ],
+        }
         state["data_source"] = "sec+yahoo"
         state["data_status"]["market_data"] = {
             "available": current_price is not None,
             "source": "yahoo",
-            "as_of": raw_data.get("fetched_at"),
+            "as_of": snapshot.current_price_as_of,
             "reason": None if current_price is not None else "current_market_price_unavailable",
         }
         valuation_inputs = {
@@ -740,13 +990,23 @@ async def fetch_data_node(state: GOATState) -> GOATState:
                 else None
             ),
         }
-    except YahooFinanceError as yahoo_error:
-        error_code = _classify_yahoo_error(yahoo_error, ticker)
+    except YahooChartError as yahoo_error:
+        error_code = (
+            "ticker_not_found"
+            if isinstance(yahoo_error, YahooChartNotFound)
+            else "market_data_temporarily_unavailable"
+            if yahoo_error.retryable
+            else "market_data_failure"
+        )
         state["data_status"]["market_data"]["reason"] = error_code
     except Exception:
         state["data_status"]["market_data"]["reason"] = "market_data_failure"
 
     state["normalized_data"] = normalized
+    state["metric_evidence"] = _build_metric_evidence(
+        normalized,
+        snapshot,
+    )
 
     try:
         news_client = NewsClient()
@@ -803,12 +1063,16 @@ AGENT_REGISTRY = [
 ]
 
 _AGENT_REQUIRED_METRICS = {
+    "buffett": (
+        "roe",
+        "profit_margin",
+        "debt_to_equity",
+        "free_cash_flow",
+    ),
     "lynch": (
         "pe_ratio",
         "earnings_growth",
-        "institutional_ownership",
         "debt_to_equity",
-        "cash_and_equivalents",
     ),
     "graham": (
         "pe_ratio",
@@ -827,7 +1091,6 @@ _AGENT_REQUIRED_METRICS = {
         "gross_margin",
         "operating_margin",
         "roic",
-        "insider_ownership",
         "revenue_growth_5y",
         "capex_to_revenue",
         "debt_to_equity",
@@ -837,11 +1100,9 @@ _AGENT_REQUIRED_METRICS = {
         "beta",
         "volatility_252d",
         "debt_to_equity",
-        "interest_coverage",
         "correlation_sp500",
-        "revenue_cyclicality",
         "debt_growth_3y",
-        "expected_return",
+        "realized_total_return_252d",
     ),
 }
 
@@ -889,7 +1150,7 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
         unavailable = [
             metric
             for metric in _AGENT_REQUIRED_METRICS.get(name, ())
-            if financials.get(metric) is None
+            if not metric_is_available(financials.get(metric))
         ]
         if unavailable:
             async def _incomplete(
@@ -950,7 +1211,14 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
             )
         else:
             try:
-                validated_result = AgentResult.model_validate(result)
+                if not isinstance(result, dict):
+                    raise TypeError("Agent output must be an object")
+                public_result = {
+                    field: result.get(field)
+                    for field in AgentResult.model_fields
+                    if field in result
+                }
+                validated_result = AgentResult.model_validate(public_result)
                 if (
                     validated_result.agent != agent.name
                     or validated_result.style != agent.style
@@ -1041,8 +1309,8 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
         }
     elif completed_analyses == requested_analyses == 1:
         state["consensus"] = {
-            "status": "complete",
-            "verdict": complete_results[0]["verdict"],
+            "status": "incomplete",
+            "verdict": "incomplete",
             "agreement_score": None,
             "consensus_points": [],
             "divergence_points": [
@@ -1110,6 +1378,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
         "data_status": state.get("data_status") or {},
         "fundamentals": state.get("sec_fundamentals") or {},
         "fundamentals_history": state.get("sec_fundamentals_history") or {},
+        "metric_evidence": state.get("metric_evidence") or {},
         "consensus": state["consensus"],
         "agent_results": agent_results,
         "temporal_results": state.get("temporal_results", {}),
@@ -1186,7 +1455,7 @@ app = FastAPI(
 
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-iNFs4AfCuJmTG2E8xVg+E6XrT83ESwpOwahrfwOnfys=' "
+    "script-src 'self' 'sha256-pxczKCKUiVMqrdR1Zl7u28jypZs03ri4/AU6VKnKejk=' "
     "https://unpkg.com https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src https://fonts.gstatic.com; img-src 'self' data:; "
@@ -1278,7 +1547,7 @@ def _cleanup_market_data_health_task(inflight_key, completed_task):
 async def _market_data_health_snapshot():
     """Cache and coalesce the fixed-symbol Yahoo market-data request."""
     loop = asyncio.get_running_loop()
-    provider_key = (YahooFinanceClient,)
+    provider_key = (YahooChartClient,)
     now = time.monotonic()
 
     with _market_data_health_guard:
@@ -1384,10 +1653,12 @@ async def _fundamentals_health_snapshot():
 @app.get("/api/fundamentals-health")
 async def fundamentals_health():
     """Exercise the fixed-symbol authoritative SEC fundamentals path once."""
+    boundary_error = None
+    fundamentals = None
     try:
         fundamentals = await _fundamentals_health_snapshot()
     except SECConfigurationError:
-        raise HTTPException(
+        boundary_error = HTTPException(
             status_code=503,
             detail={
                 "code": "fundamentals_configuration_error",
@@ -1396,7 +1667,7 @@ async def fundamentals_health():
             },
         )
     except SECInvalidResponseError:
-        raise HTTPException(
+        boundary_error = HTTPException(
             status_code=502,
             detail={
                 "code": "fundamentals_invalid_response",
@@ -1405,7 +1676,7 @@ async def fundamentals_health():
             },
         )
     except SECUnavailableError:
-        raise HTTPException(
+        boundary_error = HTTPException(
             status_code=503,
             detail={
                 "code": "fundamentals_temporarily_unavailable",
@@ -1414,8 +1685,8 @@ async def fundamentals_health():
             },
             headers={"Retry-After": "60"},
         )
-    except SECError:
-        raise HTTPException(
+    except (SECError, _FundamentalsHealthUnexpectedError):
+        boundary_error = HTTPException(
             status_code=502,
             detail={
                 "code": "fundamentals_failure",
@@ -1423,18 +1694,12 @@ async def fundamentals_health():
                 "retryable": False,
             },
         )
-    except _FundamentalsHealthUnexpectedError:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "code": "fundamentals_failure",
-                "message": "SEC fundamental data request failed.",
-                "retryable": False,
-            },
-        ) from None
+    if boundary_error is not None:
+        raise boundary_error
+    assert fundamentals is not None
 
     filing_dates = [
-        value.provenance.end
+        value.provenance.filed.isoformat()
         for value in fundamentals.latest.values()
         if value.provenance is not None
     ]
@@ -1450,18 +1715,23 @@ async def fundamentals_health():
 async def market_data_health():
     """Exercise the fixed-symbol market-data path without optional services."""
     ticker = "AAPL"
+    boundary_error = None
+    result = None
     try:
         result = await _market_data_health_snapshot()
     except Exception:
         print("[Canary] Market-data health check failed unexpectedly.")
-        raise HTTPException(
+        boundary_error = HTTPException(
             status_code=502,
             detail={
                 "code": "market_data_failure",
                 "message": "Market data request failed.",
                 "retryable": False,
             },
-        ) from None
+        )
+    if boundary_error is not None:
+        raise boundary_error
+    assert result is not None
     if result.get("error"):
         if result.get("error_code") == "ticker_not_found":
             raise HTTPException(
@@ -1544,10 +1814,15 @@ async def analyze_company(request: AnalysisRequest):
     }
     
     # Run workflow
+    boundary_error = None
+    final_state = None
     try:
         final_state = await goat_workflow.ainvoke(initial_state)
     except Exception:
-        raise HTTPException(status_code=500, detail="Analysis failed")
+        boundary_error = HTTPException(status_code=500, detail="Analysis failed")
+    if boundary_error is not None:
+        raise boundary_error
+    assert final_state is not None
     
     # Check for errors
     if final_state.get("error"):
@@ -1642,6 +1917,7 @@ async def analyze_company(request: AnalysisRequest):
         data_status=report["data_status"],
         fundamentals=report["fundamentals"],
         fundamentals_history=report["fundamentals_history"],
+        metric_evidence=report["metric_evidence"],
         consensus_status=consensus.get("status", "complete"),
         consensus_verdict=consensus["verdict"],
         agreement_score=consensus["agreement_score"],
@@ -1679,7 +1955,7 @@ async def list_agents():
                 "id": "buffett",
                 "name": "Warren Buffett",
                 "style": "Value Investing with Quality Focus",
-                "key_metrics": ["ROE", "Profit Margins", "Debt Levels", "Owner Earnings"],
+                "key_metrics": ["ROE", "Profit Margins", "Debt Levels", "Free Cash Flow"],
                 "moat_focus": "Durable competitive advantage",
             },
             {
@@ -1716,117 +1992,80 @@ async def list_agents():
 
 @app.get("/api/earnings/{ticker}", response_model=EarningsInsightsResponse)
 async def get_earnings(ticker: str):
-    """
-    Get earnings history for a ticker (standalone endpoint).
-    
-    Returns last 8 quarters of EPS actual vs. consensus estimate,
-    beat/miss classification, streak summary, price reactions,
-    per-quarter reaction insights, forward guidance summary, and the next
-    upcoming earnings date. This endpoint uses Yahoo market and analyst data.
-    """
+    """Report that optional earnings enrichment is currently unavailable."""
     ticker = _normalize_path_ticker(ticker)
-    
-    try:
-        async with YahooFinanceClient() as client:
-            # Fetch all Yahoo data in parallel
-            raw_task = client.get_company_data(ticker, years=1)
-            price_task = client.get_price_history(ticker, period="2y")
-            analyst_task = client.get_analyst_reactions(ticker)
-            revenue_task = client.get_quarterly_revenue(ticker)
-            estimates_task = client.get_forward_estimates(ticker)
-            next_earnings_task = client.get_next_earnings_date(ticker)
-
-            raw_data, price_history, analyst_reactions, quarterly_revenue, \
-                forward_estimates, next_earnings = await asyncio.gather(
-                    raw_task, price_task, analyst_task, revenue_task,
-                    estimates_task, next_earnings_task,
-                )
-
-            # Normalize earnings & streak
-            earnings = client.normalize_earnings(raw_data)
-            streak = client.get_earnings_streak(earnings)
-
-            # Enrich with price reactions
-            earnings = client.calculate_earnings_reactions(price_history, earnings)
-
-            # Build per-quarter reaction insights from Yahoo data.
-            reaction_insights = client.build_earnings_insights(
-                earnings, price_history, analyst_reactions, quarterly_revenue,
-            )
-
-            # Build forward guidance summary
-            normalized = client.normalize_data(raw_data)
-            forward_guidance = client.build_forward_guidance_summary(
-                forward_estimates, current_price=normalized.current_price,
-            )
-    except YahooFinanceError:
-        raise HTTPException(status_code=400, detail="Earnings data request failed")
-    except Exception:
-        raise HTTPException(status_code=500, detail="Earnings fetch failed")
-
-    return {
-        "ticker": ticker,
-        "earnings_history": earnings,
-        "earnings_streak": streak,
-        "reaction_insights": reaction_insights,
-        "forward_guidance": forward_guidance,
-        "next_earnings_date": next_earnings,
-    }
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "earnings_enrichment_unavailable",
+            "message": "Earnings enrichment is currently unavailable.",
+            "retryable": False,
+        },
+    )
 
 
 @app.get("/api/price-history/{ticker}", response_model=PriceHistoryResponse)
-async def get_price_history(ticker: str, period: str = "2y"):
+async def get_price_history(
+    ticker: str,
+    period: Literal["1mo", "3mo", "6mo", "1y", "2y", "ytd"] = "2y",
+):
     """
     Get historical price data with earnings markers for charting.
     
-    Returns daily OHLCV prices and earnings date markers (with
-    price reaction calculations) for overlay on a chart.
+    Returns daily OHLCV prices from the narrow chart endpoint.
     
     Query params:
-        period: 1mo, 3mo, 6mo, 1y, 2y, 5y, ytd (default: 2y)
+        period: 1mo, 3mo, 6mo, 1y, 2y, ytd (default: 2y)
     """
     ticker = _normalize_path_ticker(ticker)
-    valid_periods = {"1mo", "3mo", "6mo", "1y", "2y", "5y", "ytd"}
-    if period not in valid_periods:
-        period = "2y"
-    
+    boundary_error = None
+    snapshot = None
     try:
-        async with YahooFinanceClient() as client:
-            # Fetch price history and earnings in parallel
-            price_task = client.get_price_history(ticker, period=period)
-            data_task = client.get_company_data(ticker, years=1)
-            next_earnings_task = client.get_next_earnings_date(ticker)
-            
-            prices, raw_data, next_earnings = await asyncio.gather(
-                price_task, data_task, next_earnings_task
-            )
-            
-            # Normalize earnings and calculate reactions
-            earnings = client.normalize_earnings(raw_data)
-            earnings_with_reactions = client.calculate_earnings_reactions(prices, earnings)
-    except YahooFinanceError:
-        raise HTTPException(status_code=400, detail="Price data request failed")
+        async with YahooChartClient() as client:
+            snapshot = await client.get_snapshot(ticker)
+    except YahooChartNotFound:
+        boundary_error = HTTPException(
+            status_code=404, detail="Price data was not found"
+        )
+    except YahooChartError as error:
+        status_code = 503 if error.retryable else 502
+        boundary_error = HTTPException(
+            status_code=status_code, detail="Price data request failed"
+        )
     except Exception:
-        raise HTTPException(status_code=500, detail="Failed to fetch price data")
-    
+        boundary_error = HTTPException(
+            status_code=500, detail="Failed to fetch price data"
+        )
+    if boundary_error is not None:
+        raise boundary_error
+    assert snapshot is not None
+
+    latest_session = date.fromisoformat(snapshot.history[-1].session_date)
+    if period == "ytd":
+        window_start = date(latest_session.year, 1, 1)
+    else:
+        window_days = {"1mo": 31, "3mo": 93, "6mo": 186, "1y": 366, "2y": 732}
+        window_start = latest_session - timedelta(days=window_days[period])
+
+    prices = [
+        {
+            "date": point.session_date,
+            "open": point.open,
+            "high": point.high,
+            "low": point.low,
+            "close": point.close,
+            "volume": point.volume,
+        }
+        for point in snapshot.history
+        if date.fromisoformat(point.session_date) >= window_start
+    ]
+
     return PriceHistoryResponse(
         ticker=ticker,
         period=period,
         prices=[PricePoint(**p) for p in prices],
-        earnings_markers=[
-            EarningsMarker(
-                quarter=e.get("quarter", ""),
-                date=e.get("date", ""),
-                eps_actual=e.get("eps_actual"),
-                eps_estimate=e.get("eps_estimate"),
-                surprise_pct=e.get("surprise_pct"),
-                beat_miss=e.get("beat_miss", "unknown"),
-                price_reaction_1d=e.get("price_reaction_1d"),
-                price_reaction_5d=e.get("price_reaction_5d"),
-            )
-            for e in earnings_with_reactions
-        ],
-        next_earnings_date=next_earnings,
+        earnings_markers=[],
+        next_earnings_date=None,
     )
 
 

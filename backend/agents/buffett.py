@@ -25,7 +25,7 @@ class BuffettMetrics:
     roe: Optional[float]
     profit_margin: Optional[float]
     debt_to_equity: Optional[float]
-    owner_earnings: Optional[float]
+    free_cash_flow: Optional[float]
     earnings_consistency: float  # Variance in earnings over years
     moat_strength: str
 
@@ -108,7 +108,7 @@ class BuffettAgent:
         concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
         unavailable_metrics = [
             name
-            for name in ("roe", "profit_margin", "debt_to_equity", "owner_earnings")
+            for name in ("roe", "profit_margin", "debt_to_equity", "free_cash_flow")
             if getattr(metrics, name) is None
         ]
         
@@ -147,7 +147,7 @@ class BuffettAgent:
             roe=roe,
             profit_margin=profit_margin,
             debt_to_equity=debt_to_equity,
-            owner_earnings=financials.get("free_cash_flow"),
+            free_cash_flow=financials.get("free_cash_flow"),
             earnings_consistency=0.0,
             moat_strength=moat,
         )
@@ -216,6 +216,11 @@ class BuffettAgent:
             score += 10
         else:
             score -= 20
+
+        if metrics.free_cash_flow is not None and metrics.free_cash_flow > 0:
+            score += 15
+        elif metrics.free_cash_flow is not None and metrics.free_cash_flow < 0:
+            score -= 20
         
         # Clamp to valid range
         return max(-100, min(100, score))
@@ -255,7 +260,7 @@ class BuffettAgent:
             "profit_margin": metrics.profit_margin,
             "debt_to_equity": metrics.debt_to_equity,
             "moat_strength": metrics.moat_strength,
-            "owner_earnings": metrics.owner_earnings,
+            "free_cash_flow": metrics.free_cash_flow,
         }
     
     async def _generate_llm_insights(
@@ -276,6 +281,7 @@ class BuffettAgent:
             f"Analyze {ticker}: ROE {fmt(relevant['roe'], '.1%')}, "
             f"Profit Margin {fmt(relevant['profit_margin'], '.1%')}, "
             f"Debt/Equity {fmt(relevant['debt_to_equity'], '.2f')}, "
+            f"Free Cash Flow {fmt(relevant['free_cash_flow'], ',.0f')}, "
             f"Moat {relevant['moat_strength']}"
         )
         try:
@@ -301,6 +307,9 @@ class BuffettAgent:
         
         if metrics.debt_to_equity is not None and metrics.debt_to_equity <= self.MAX_DEBT_TO_EQUITY:
             insights.append("Conservative debt levels provide margin of safety")
+
+        if metrics.free_cash_flow is not None and metrics.free_cash_flow > 0:
+            insights.append("Positive free cash flow supports financial flexibility")
         
         return insights
     
@@ -316,6 +325,9 @@ class BuffettAgent:
         
         if metrics.profit_margin is not None and metrics.profit_margin < self.MIN_PROFIT_MARGIN:
             concerns.append("Thin profit margins may indicate weak competitive position")
+
+        if metrics.free_cash_flow is not None and metrics.free_cash_flow < 0:
+            concerns.append("Negative free cash flow weakens financial flexibility")
         
         return concerns
     

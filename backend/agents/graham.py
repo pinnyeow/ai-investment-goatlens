@@ -262,7 +262,7 @@ class GrahamAgent:
                 metrics.current_ratio >= self.MIN_CURRENT_RATIO,
                 metrics.pe_ratio <= self.MAX_PE and metrics.pe_ratio > 0,
                 metrics.pb_ratio <= self.MAX_PB or pe_x_pb <= self.MAX_PE_X_PB,
-                metrics.dividend_years >= 10,  # Relaxed from 20
+                metrics.dividend_years >= self.MIN_DIVIDEND_YEARS,
             ]),
         }
     

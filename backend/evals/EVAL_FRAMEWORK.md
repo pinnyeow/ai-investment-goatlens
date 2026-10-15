@@ -236,7 +236,7 @@ LLM-as-Judge evals require `OPENAI_API_KEY`. If the key is not set, only code-ba
 | Before pushing to GitHub | `--no-llm --ticker AAPL` | Don't ship broken code to Render |
 | After changing agent prompts or scoring weights | Full run on 1 ticker (no `--no-llm`) | Ensure insight quality didn't degrade |
 | Weekly, or before sharing publicly | `--all-golden --save` | Full regression check across diverse stocks |
-| After upgrading dependencies (yfinance, OpenAI, etc.) | `--all-golden --no-llm` | Catch data format changes from upstream |
+| After upgrading provider or OpenAI dependencies | `--all-golden --no-llm` | Catch data format changes from upstream |
 
 ### Layer Mental Model
 

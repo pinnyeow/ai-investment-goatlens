@@ -28,7 +28,7 @@ class MungerMetrics:
     operating_margin: float
     roic: float  # Return on Invested Capital
     revenue_growth_5y: float
-    management_ownership: float
+    management_ownership: Optional[float]
     capex_to_revenue: float
 
 
@@ -105,8 +105,8 @@ class MungerAgent:
             financials=financials,
             required_metrics=(
                 "gross_margin", "operating_margin", "roic",
-                "insider_ownership", "revenue_growth_5y",
-                "capex_to_revenue", "debt_to_equity", "margin_trend",
+                "revenue_growth_5y", "capex_to_revenue", "debt_to_equity",
+                "margin_trend",
             ),
         )
         if incomplete:
@@ -154,7 +154,7 @@ class MungerAgent:
             operating_margin=financials.get("operating_margin", 0),
             roic=financials.get("roic", 0),
             revenue_growth_5y=financials.get("revenue_growth_5y", 0),
-            management_ownership=financials.get("insider_ownership", 0),
+            management_ownership=financials.get("insider_ownership"),
             capex_to_revenue=financials.get("capex_to_revenue", 0),
         )
     
@@ -250,7 +250,10 @@ class MungerAgent:
             red_flags.append("Poor return on invested capital")
         
         # Low insider ownership
-        if metrics.management_ownership < 0.01:
+        if (
+            metrics.management_ownership is not None
+            and metrics.management_ownership < 0.01
+        ):
             red_flags.append("Low management ownership - misaligned incentives")
         
         return red_flags
@@ -307,9 +310,15 @@ class MungerAgent:
         score -= len(red_flags) * 20
         
         # Management ownership bonus
-        if metrics.management_ownership >= 0.10:
+        if (
+            metrics.management_ownership is not None
+            and metrics.management_ownership >= 0.10
+        ):
             score += 15
-        elif metrics.management_ownership >= 0.05:
+        elif (
+            metrics.management_ownership is not None
+            and metrics.management_ownership >= 0.05
+        ):
             score += 10
         
         return max(-100, min(100, score))
@@ -380,7 +389,10 @@ class MungerAgent:
         if metrics.gross_margin >= 0.50:
             insights.append(f"Strong pricing power evident in {metrics.gross_margin:.1%} gross margin")
         
-        if metrics.management_ownership >= 0.10:
+        if (
+            metrics.management_ownership is not None
+            and metrics.management_ownership >= 0.10
+        ):
             insights.append("Significant management ownership aligns incentives")
         
         return insights
