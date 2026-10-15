@@ -28,6 +28,140 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
 
 
+@pytest.mark.asyncio
+async def test_incomplete_buffett_result_has_no_investment_score_or_verdict():
+    financials = dict(MOCK_FINANCIALS) if "MOCK_FINANCIALS" in globals() else {}
+    financials["debt_to_equity"] = None
+    financials["free_cash_flow"] = None
+    result = await BuffettAgent(llm_client=None).analyze("AAPL", financials)
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+
+
+@pytest.mark.asyncio
+async def test_buffett_free_cash_flow_affects_score_and_analysis():
+    positive = await BuffettAgent(llm_client=None).analyze(
+        "AAPL", dict(MOCK_FINANCIALS, free_cash_flow=10.0)
+    )
+    negative = await BuffettAgent(llm_client=None).analyze(
+        "AAPL", dict(MOCK_FINANCIALS, free_cash_flow=-10.0)
+    )
+
+    assert positive["score"] > negative["score"]
+    assert any("free cash flow" in insight.lower() for insight in positive["insights"])
+    assert any("free cash flow" in concern.lower() for concern in negative["concerns"])
+    assert "free_cash_flow" in positive["metrics"]
+    assert "owner_earnings" not in positive["metrics"]
+
+
+@pytest.mark.asyncio
+async def test_lynch_cash_is_optional_reported_context_not_a_scoring_default():
+    without_cash = dict(MOCK_FINANCIALS)
+    without_cash.pop("cash_and_equivalents")
+    absent = await LynchAgent(llm_client=None).analyze("AAPL", without_cash)
+    present = await LynchAgent(llm_client=None).analyze("AAPL", MOCK_FINANCIALS)
+
+    assert absent["score"] is not None
+    assert absent["verdict"] is not None
+    assert absent["metrics"]["cash_position"] is None
+    assert absent["score"] == present["score"]
+    assert any("cash and equivalents" in item.lower() for item in present["insights"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_class", [LynchAgent, GrahamAgent, MungerAgent, DalioAgent])
+async def test_agents_fail_closed_without_required_financial_inputs(agent_class):
+    result = await agent_class(llm_client=None).analyze("AAPL", {})
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+    assert result["unavailable_metrics"]
+
+
+@pytest.mark.asyncio
+async def test_agent_rejects_non_finite_required_metric():
+    financials = dict(MOCK_FINANCIALS)
+    financials["earnings_growth"] = float("nan")
+
+    result = await LynchAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+    assert result["unavailable_metrics"] == ["earnings_growth"]
+
+
+@pytest.mark.asyncio
+async def test_graham_does_not_relax_twenty_year_defensive_dividend_rule():
+    financials = dict(MOCK_FINANCIALS)
+    financials.update(
+        pe_ratio=30.0,
+        pb_ratio=3.0,
+        current_ratio=0.5,
+        consecutive_dividend_years=12,
+    )
+
+    result = await GrahamAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result["defensive_criteria"]["dividend_pass"] is False
+    assert result["defensive_criteria"]["criteria_met"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dalio_does_not_label_debt_reduction_as_distress_or_penalize_it():
+    financials = dict(MOCK_FINANCIALS)
+    financials["debt_growth_3y"] = -0.20
+
+    result = await DalioAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result["cycle_analysis"]["cycle_phase"] == "aggressive_deleveraging"
+    assert result["cycle_analysis"]["risk_level"] == "context_required"
+
+    moderate = dict(financials, debt_growth_3y=-0.05)
+    moderate_result = await DalioAgent(llm_client=None).analyze("AAPL", moderate)
+    assert result["score"] == moderate_result["score"]
+
+
+@pytest.mark.asyncio
+async def test_lynch_treats_institutional_ownership_as_optional_context():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("institutional_ownership")
+
+    result = await LynchAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result.get("status") != "incomplete"
+    assert isinstance(result["score"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_munger_treats_insider_ownership_as_optional_context():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("insider_ownership")
+
+    result = await MungerAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result.get("status") != "incomplete"
+    assert isinstance(result["score"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_dalio_uses_realized_return_without_fabricated_expected_return():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("expected_return")
+    financials.pop("interest_coverage")
+    financials.pop("revenue_cyclicality")
+    financials["realized_total_return_252d"] = 0.12
+
+    result = await DalioAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result.get("status") != "incomplete"
+    assert result["risk_assessment"]["return_basis"] == "trailing_realized_total_return_252d"
+    assert result["risk_assessment"]["risk_adjusted_ratio"] == pytest.approx(
+        0.5454545454545454
+    )
+
+
 # ============================================================================
 # Fixtures — Shared mock data and helpers
 # ============================================================================
@@ -71,6 +205,7 @@ MOCK_FINANCIALS: Dict[str, Any] = {
     "correlation_sp500": 0.85,
     "debt_growth_3y": 0.05,
     "expected_return": 0.12,
+    "realized_total_return_252d": 0.12,
     "sector": "Technology",
 }
 

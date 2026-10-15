@@ -16,7 +16,9 @@ Key Focus:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-import traceback
+
+
+from .incomplete import incomplete_if_missing
 
 
 @dataclass
@@ -25,8 +27,8 @@ class DalioMetrics:
     beta: float
     volatility: float
     debt_to_equity: float
-    interest_coverage: float
-    revenue_cyclicality: float
+    interest_coverage: Optional[float]
+    revenue_cyclicality: Optional[float]
     correlation_to_market: float
 
 
@@ -92,6 +94,19 @@ class DalioAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        incomplete = incomplete_if_missing(
+            agent=self.name,
+            style=self.style,
+            ticker=ticker,
+            financials=financials,
+            required_metrics=(
+                "beta", "volatility_252d", "debt_to_equity",
+                "correlation_sp500", "debt_growth_3y",
+                "realized_total_return_252d",
+            ),
+        )
+        if incomplete:
+            return incomplete
         metrics = self._calculate_metrics(financials)
         cycle_analysis = self._analyze_debt_cycle(financials)
         risk_assessment = self._assess_risk_adjusted_returns(metrics, financials)
@@ -134,8 +149,8 @@ class DalioAgent:
             beta=financials.get("beta", 1.0),
             volatility=financials.get("volatility_252d", 0),
             debt_to_equity=financials.get("debt_to_equity", 0),
-            interest_coverage=financials.get("interest_coverage", 0),
-            revenue_cyclicality=financials.get("revenue_cyclicality", 0),
+            interest_coverage=financials.get("interest_coverage"),
+            revenue_cyclicality=financials.get("revenue_cyclicality"),
             correlation_to_market=financials.get("correlation_sp500", 0),
         )
     
@@ -162,10 +177,10 @@ class DalioAgent:
             risk_level = "normal"
         elif debt_growth > -0.10:
             cycle_phase = "deleveraging"
-            risk_level = "caution"
+            risk_level = "normal"
         else:
             cycle_phase = "aggressive_deleveraging"
-            risk_level = "distressed"
+            risk_level = "context_required"
         
         return {
             "cycle_phase": cycle_phase,
@@ -186,12 +201,12 @@ class DalioAgent:
         Dalio focuses on return per unit of risk,
         not absolute returns.
         """
-        # Sharpe-like analysis
-        expected_return = financials.get("expected_return", 0.10)
-        risk_free_rate = 0.04  # Assumed
-        
+        # Historical return-to-volatility ratio. This is backward-looking and is
+        # deliberately not labeled as an expected return or Sharpe ratio.
+        realized_return = financials["realized_total_return_252d"]
+
         if metrics.volatility > 0:
-            risk_adjusted_ratio = (expected_return - risk_free_rate) / metrics.volatility
+            risk_adjusted_ratio = realized_return / metrics.volatility
         else:
             risk_adjusted_ratio = 0
         
@@ -200,6 +215,7 @@ class DalioAgent:
         
         return {
             "risk_adjusted_ratio": risk_adjusted_ratio,
+            "return_basis": "trailing_realized_total_return_252d",
             "volatility": metrics.volatility,
             "beta": metrics.beta,
             "diversification_score": diversification_score,
@@ -305,10 +321,7 @@ class DalioAgent:
             score += 10
         elif cycle_analysis["cycle_phase"] == "expansion":
             score += 5
-        elif cycle_analysis["cycle_phase"] == "deleveraging":
-            score -= 5
-        elif cycle_analysis["cycle_phase"] == "aggressive_deleveraging":
-            score -= 15
+
         
         # Beta adjustment (max 15 points)
         if 0.8 <= metrics.beta <= 1.2:
@@ -356,18 +369,22 @@ class DalioAgent:
     ) -> List[str]:
         """Generate LLM-powered insights using Dalio's voice."""
         relevant = self._get_relevant_context(metrics, cycle_analysis, risk_assessment)
+        coverage = (
+            f"{relevant['interest_coverage']:.1f}x"
+            if relevant["interest_coverage"] is not None
+            else "not separately disclosed"
+        )
         prompt = (
             f"Analyze {ticker}: Beta {relevant['beta']:.2f}, "
             f"D/E {relevant['debt_to_equity']:.2f}, "
-            f"Interest Coverage {relevant['interest_coverage']:.1f}x, "
+            f"Interest Coverage {coverage}, "
             f"Cycle {relevant['cycle_phase']}, Risk {relevant['risk_level']}"
         )
         try:
             response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, cycle_analysis, {})
-        except Exception as e:
-            print(f"[{self.name}] LLM insight generation failed: {e}")
-            traceback.print_exc()
+        except Exception:
+            print(f"[{self.name}] LLM insight generation failed.")
             return self._generate_insights(metrics, cycle_analysis, {})
 
     def _generate_insights(
@@ -410,7 +427,10 @@ class DalioAgent:
         if cycle_analysis["risk_level"] in ["elevated", "distressed"]:
             concerns.append(f"Debt cycle risk level: {cycle_analysis['risk_level']}")
         
-        if metrics.interest_coverage < 3:
+        if (
+            metrics.interest_coverage is not None
+            and metrics.interest_coverage < 3
+        ):
             concerns.append(f"Low interest coverage ({metrics.interest_coverage:.1f}x)")
         
         return concerns

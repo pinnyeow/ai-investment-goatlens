@@ -131,8 +131,8 @@ DEBATE2: [one sentence, <30 words, another disagreement]"""
                 divergence_points.append(clean.split(":", 1)[-1].strip())
         consensus_points = consensus_points or base.consensus_points
         divergence_points = divergence_points or base.divergence_points
-    except Exception as e:
-        print(f"[Consensus] LLM consensus generation failed: {e}")
+    except Exception:
+        print("[Consensus] LLM consensus generation failed.")
         consensus_points, divergence_points = base.consensus_points, base.divergence_points
     
     return ConsensusResult(

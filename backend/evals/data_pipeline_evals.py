@@ -59,7 +59,7 @@ def eval_eps_sanity(earnings: List[Dict[str, Any]]) -> List[EvalResult]:
     """
     Check that EPS values are valid floats, not NaN or Infinity.
     
-    WHY: We had a real production bug where NaN EPS values from yfinance
+    WHY: We had a real production bug where NaN EPS values from a provider
     crashed JSON serialization. This eval catches that class of problem.
     """
     results = []

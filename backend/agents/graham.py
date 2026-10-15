@@ -18,7 +18,9 @@ Key Metrics:
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import math
-import traceback
+
+
+from .incomplete import incomplete_if_missing
 
 
 @dataclass
@@ -115,6 +117,20 @@ class GrahamAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        incomplete = incomplete_if_missing(
+            agent=self.name,
+            style=self.style,
+            ticker=ticker,
+            financials=financials,
+            required_metrics=(
+                "pe_ratio", "pb_ratio", "current_ratio", "current_price",
+                "current_assets", "total_liabilities", "shares_outstanding",
+                "eps", "book_value_per_share", "dividend_yield",
+                "consecutive_dividend_years",
+            ),
+        )
+        if incomplete:
+            return incomplete
         metrics = self._calculate_metrics(financials)
         margin_of_safety = self._calculate_margin_of_safety(metrics)
         defensive_criteria = self._check_defensive_criteria(metrics)
@@ -246,7 +262,7 @@ class GrahamAgent:
                 metrics.current_ratio >= self.MIN_CURRENT_RATIO,
                 metrics.pe_ratio <= self.MAX_PE and metrics.pe_ratio > 0,
                 metrics.pb_ratio <= self.MAX_PB or pe_x_pb <= self.MAX_PE_X_PB,
-                metrics.dividend_years >= 10,  # Relaxed from 20
+                metrics.dividend_years >= self.MIN_DIVIDEND_YEARS,
             ]),
         }
     
@@ -334,9 +350,8 @@ class GrahamAgent:
         try:
             response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, margin_of_safety)
-        except Exception as e:
-            print(f"[{self.name}] LLM insight generation failed: {e}")
-            traceback.print_exc()
+        except Exception:
+            print(f"[{self.name}] LLM insight generation failed.")
             return self._generate_insights(metrics, margin_of_safety)
 
     def _generate_insights(

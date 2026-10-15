@@ -52,8 +52,8 @@ class RAGRetriever:
                 else:
                     print("[RAG] OPENAI_API_KEY not set. RAG disabled.")
                     self.enable_rag = False
-            except Exception as e:
-                print(f"[RAG] Failed to initialize embeddings: {e}")
+            except Exception:
+                print("[RAG] Failed to initialize embeddings.")
                 self.enable_rag = False
     
     def _load_vector_store(self, ticker: str) -> Optional[Any]:
@@ -123,8 +123,8 @@ class RAGRetriever:
             
             return results
         
-        except Exception as e:
-            print(f"[RAG] Retrieval failed: {e}")
+        except Exception:
+            print("[RAG] Retrieval failed.")
             return []
     
     async def retrieve_earnings_context(
@@ -209,5 +209,5 @@ class RAGRetriever:
             store_path.parent.mkdir(parents=True, exist_ok=True)
             self.vector_store.save_local(str(store_path))
         
-        except Exception as e:
-            print(f"[RAG] Failed to add documents: {e}")
+        except Exception:
+            print("[RAG] Failed to add documents.")

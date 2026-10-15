@@ -102,57 +102,81 @@ class TemporalAnalyzer:
         score = 0.0
         observations = []
         
-        gm = financials.get("gross_margin", 0)
-        om = financials.get("operating_margin", 0)
-        roe = financials.get("roe", 0)
-        de = financials.get("debt_to_equity", 0)
+        gm = financials.get("gross_margin")
+        om = financials.get("operating_margin")
+        roe = financials.get("roe")
+        de = financials.get("debt_to_equity")
+        unavailable = [
+            name
+            for name, value in {
+                "gross_margin": gm,
+                "operating_margin": om,
+                "roe": roe,
+                "debt_to_equity": de,
+            }.items()
+            if value is None
+        ]
         
-        # Score calculation
-        if gm >= 0.50:
-            score += 30
-        elif gm >= 0.40:
-            score += 25
-        elif gm >= 0.30:
-            score += 20
-        elif gm >= 0.20:
-            score += 10
+        # Score calculation uses only observed values; absent data earns no points.
+        if gm is not None:
+            if gm >= 0.50:
+                score += 30
+            elif gm >= 0.40:
+                score += 25
+            elif gm >= 0.30:
+                score += 20
+            elif gm >= 0.20:
+                score += 10
 
-        if om >= 0.25:
-            score += 30
-        elif om >= 0.15:
-            score += 20
-        elif om >= 0.10:
-            score += 10
+        if om is not None:
+            if om >= 0.25:
+                score += 30
+            elif om >= 0.15:
+                score += 20
+            elif om >= 0.10:
+                score += 10
 
-        if roe >= 0.25:
-            score += 25
-        elif roe >= 0.15:
-            score += 20
-        elif roe >= 0.10:
-            score += 10
+        if roe is not None:
+            if roe >= 0.25:
+                score += 25
+            elif roe >= 0.15:
+                score += 20
+            elif roe >= 0.10:
+                score += 10
 
-        if de < 0.3:
-            score += 15
-        elif de < 0.5:
-            score += 10
-        elif de < 1.0:
-            score += 5
+        if de is not None:
+            if de < 0.3:
+                score += 15
+            elif de < 0.5:
+                score += 10
+            elif de < 1.0:
+                score += 5
 
         # Observations
-        if gm >= 0.40:
+        if gm is not None and gm >= 0.40:
             observations.append(f"Strong pricing power ({gm:.0%} gross margin)")
-        if roe >= 0.20:
+        if roe is not None and roe >= 0.20:
             observations.append(f"Excellent capital efficiency ({roe:.0%} ROE)")
-        if de < 0.5:
+        if de is not None and de < 0.5:
             observations.append("Conservative debt levels")
         
-        # Label based on period
-        if time_period in ["ytd", "3m", "6m"]:
+        # Never label an incomplete metric set as a complete moat conclusion.
+        if unavailable:
+            label = "incomplete"
+            observations.append(
+                "Moat assessment incomplete: " + ", ".join(unavailable) + " unavailable"
+            )
+        elif time_period in ["ytd", "3m", "6m"]:
             label = "strong" if score >= 70 else "moderate" if score >= 40 else "weak"
         else:
             label = "strengthening" if score >= 60 else "stable" if score >= 30 else "weakening"
         
-        return {"score": score, "label": label, "observations": observations}
+        return {
+            "score": score,
+            "label": label,
+            "observations": observations,
+            "unavailable_metrics": unavailable,
+        }
     
     def create_snapshot(
         self,
@@ -164,7 +188,7 @@ class TemporalAnalyzer:
         
         Args:
             year: The anchor year
-            year_data: Financial data for that year (from FMP)
+            year_data: Provider-neutral financial data for that year
             
         Returns:
             AnchorYearSnapshot with key metrics
