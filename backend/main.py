@@ -1231,6 +1231,56 @@ async def health():
     }
 
 
+@app.get("/api/spike/yahoo-chart")
+async def spike_yahoo_chart():
+    """Disposable fixed-symbol probe of Yahoo's crumb-less chart endpoint."""
+    from curl_cffi import requests as curl_requests
+
+    def fetch_chart():
+        response = curl_requests.get(
+            "https://query1.finance.yahoo.com/v8/finance/chart/AAPL",
+            params={
+                "range": "1y",
+                "interval": "1d",
+                "events": "div,splits",
+            },
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        response.raise_for_status()
+        result = response.json()["chart"]["result"][0]
+        timestamps = result.get("timestamp") or []
+        closes = result["indicators"]["quote"][0].get("close") or []
+        finite_closes = [value for value in closes if isinstance(value, (int, float)) and math.isfinite(value)]
+        if not timestamps or not finite_closes:
+            raise ValueError("empty chart response")
+        return {
+            "symbol": result["meta"].get("symbol"),
+            "currency": result["meta"].get("currency"),
+            "points": len(finite_closes),
+            "latest_close": finite_closes[-1],
+        }
+
+    started = time.monotonic()
+    try:
+        chart = await asyncio.to_thread(fetch_chart)
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "yahoo_chart_unavailable",
+                "message": "The fixed-symbol Yahoo chart probe is unavailable.",
+            },
+        ) from None
+    return {
+        "status": "healthy",
+        "provider": "yahoo_chart",
+        "request_count": 1,
+        "elapsed_ms": round((time.monotonic() - started) * 1000),
+        **chart,
+    }
+
+
 @app.head("/health", include_in_schema=False)
 @app.head("/ping", include_in_schema=False)
 async def health_head():
