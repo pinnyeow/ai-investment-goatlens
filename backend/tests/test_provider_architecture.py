@@ -60,6 +60,13 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '[[ "$BODY" == *' not in workflow
 
 
+def test_frontend_defines_agreement_as_directional_support():
+    frontend = (ROOT / "frontend" / "index.html").read_text()
+
+    assert "Directional Support" in frontend
+    assert "GOAT Agreement" not in frontend
+
+
 def test_no_unproven_synthetic_demo_claims_remain():
     backend = (ROOT / "backend" / "main.py").read_text()
     frontend = (ROOT / "frontend" / "index.html").read_text()

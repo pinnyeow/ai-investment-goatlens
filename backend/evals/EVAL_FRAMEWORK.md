@@ -172,7 +172,11 @@ Checks both structure and quality of what agents produce.
 ### Layer 3: Consensus (Code + LLM-as-Judge)
 Checks the synthesis step that combines all 5 agents.
 
-- Agreement score is mathematically valid (0-1 range, reflects variance)
+- Directional support is mathematically valid (0-1 range) and equals the share
+  of completed agents on the consensus side; `buy`/`strong_buy` and
+  `sell`/`strong_sell` are grouped by direction. It is unavailable for a mixed
+  even split and does not claim identical verdict intensity, model confidence,
+  model independence, or historical forecasting skill.
 - If all agents say "sell", consensus is not "strong_buy"
 - Consensus points are coherent given agent results (LLM judge)
 

@@ -17,6 +17,7 @@ Layer 2 checks each agent independently. Layer 3 checks the
 *combination*. You can have 5 perfect agents and a broken consensus.
 """
 
+import math
 from typing import Dict, Any, List
 
 from .data_pipeline_evals import EvalResult, LayerResults
@@ -27,24 +28,92 @@ from .data_pipeline_evals import EvalResult, LayerResults
 
 def eval_agreement_score_valid(consensus: Dict[str, Any]) -> List[EvalResult]:
     """
-    Check that agreement_score is between 0.0 and 1.0.
-    
-    WHY: Agreement score represents how much agents agree.
-    0 = total disagreement, 1 = unanimous. Outside this range = math bug.
+    Check the legacy agreement_score directional-support contract.
+
+    Mixed consensus has no direction and therefore requires a null value.
+    Other verdicts require a finite numeric share between 0.0 and 1.0.
     """
     score = consensus.get("agreement_score")
+    verdict = consensus.get("verdict")
+    if verdict == "mixed":
+        return [EvalResult(
+            name="mixed_directional_support_unavailable",
+            passed=score is None,
+            details="Mixed consensus must not report directional support"
+            if score is not None else "",
+        )]
     if score is None:
         return [EvalResult(
             name="agreement_score_exists",
             passed=False,
-            details="No agreement_score in consensus",
+            details="No directional support for a directional consensus",
         )]
 
-    ok = isinstance(score, (int, float)) and 0 <= score <= 1
+    ok = (
+        not isinstance(score, bool)
+        and isinstance(score, (int, float))
+        and math.isfinite(score)
+        and 0 <= score <= 1
+    )
     return [EvalResult(
         name="agreement_score_valid",
         passed=ok,
         details=f"agreement_score={score}, expected [0, 1]" if not ok else "",
+    )]
+
+
+def eval_directional_support_matches_agents(
+    consensus: Dict[str, Any],
+    agent_outputs: List[Dict[str, Any]],
+) -> List[EvalResult]:
+    """Independently verify directional support against completed verdicts."""
+    verdict = consensus.get("verdict")
+    score = consensus.get("agreement_score")
+    if verdict == "mixed":
+        expected = None
+    else:
+        direction_by_verdict = {
+            "strong_sell": -1,
+            "sell": -1,
+            "hold": 0,
+            "buy": 1,
+            "strong_buy": 1,
+        }
+        if verdict not in direction_by_verdict:
+            return [EvalResult(
+                name="directional_support_consensus_known",
+                passed=False,
+                details=f"Cannot verify support for verdict '{verdict}'",
+            )]
+        valid_agent_verdicts: List[str] = []
+        for output in agent_outputs:
+            candidate = output.get("verdict")
+            if isinstance(candidate, str) and candidate in direction_by_verdict:
+                valid_agent_verdicts.append(candidate)
+        if not valid_agent_verdicts:
+            return [EvalResult(
+                name="directional_support_has_agent_verdicts",
+                passed=False,
+                details="No valid agent verdicts for directional support",
+            )]
+        consensus_direction = direction_by_verdict[verdict]
+        expected = sum(
+            direction_by_verdict[agent_verdict] == consensus_direction
+            for agent_verdict in valid_agent_verdicts
+        ) / len(valid_agent_verdicts)
+
+    matches = (
+        score is None
+        if expected is None
+        else not isinstance(score, bool)
+        and isinstance(score, (int, float))
+        and math.isfinite(score)
+        and math.isclose(score, expected, rel_tol=0.0, abs_tol=1e-9)
+    )
+    return [EvalResult(
+        name="directional_support_matches_agents",
+        passed=matches,
+        details=f"directional support={score}, expected {expected}" if not matches else "",
     )]
 
 
@@ -53,20 +122,12 @@ def eval_consensus_matches_majority(
     agent_outputs: List[Dict[str, Any]],
 ) -> List[EvalResult]:
     """
-    Check that the consensus verdict aligns with the majority of agents.
-    
-    WHY: If 4 out of 5 agents say "sell" but consensus says "strong_buy",
-    something is fundamentally wrong. The consensus should reflect the
-    balance of opinions, not contradict them.
-    
-    We allow some flexibility: the consensus can differ by one tier
-    (e.g., agents mostly say "buy" and consensus says "hold" is OK).
-    But a 3-tier gap is a red flag.
+    Check the consensus against the independent ordinal-median contract.
     """
     verdict_order = ["strong_sell", "sell", "hold", "buy", "strong_buy"]
 
     consensus_verdict = consensus.get("verdict", "")
-    if consensus_verdict not in verdict_order:
+    if consensus_verdict not in {*verdict_order, "mixed"}:
         return [EvalResult(
             name="consensus_verdict_known",
             passed=False,
@@ -84,20 +145,28 @@ def eval_consensus_matches_majority(
             details="No valid agent verdicts to compare",
         )]
 
-    # Calculate average position
-    avg_position = sum(verdict_order.index(v) for v in valid_verdicts) / len(valid_verdicts)
-    consensus_position = verdict_order.index(consensus_verdict)
-
-    # Allow ±1.5 tiers of difference
-    gap = abs(consensus_position - avg_position)
-    ok = gap <= 1.5
+    positions = sorted(verdict_order.index(v) - 2 for v in valid_verdicts)
+    midpoint = len(positions) // 2
+    if len(positions) % 2:
+        expected = verdict_order[positions[midpoint] + 2]
+    else:
+        lower = positions[midpoint - 1]
+        upper = positions[midpoint]
+        lower_direction = 0 if lower == 0 else 1 if lower > 0 else -1
+        upper_direction = 0 if upper == 0 else 1 if upper > 0 else -1
+        expected = (
+            verdict_order[int((lower + upper) / 2) + 2]
+            if lower_direction == upper_direction
+            else "mixed"
+        )
+    ok = consensus_verdict == expected
 
     return [EvalResult(
         name="consensus_matches_majority",
         passed=ok,
         details=(
-            f"Consensus '{consensus_verdict}' (pos {consensus_position}) vs "
-            f"avg agent position {avg_position:.1f}. Gap: {gap:.1f} tiers"
+            f"Consensus '{consensus_verdict}' does not match expected "
+            f"ordinal-median verdict '{expected}'"
         ) if not ok else "",
     )]
 
@@ -267,6 +336,9 @@ async def run_consensus_evals(
 
     # Code-based checks (always run)
     layer.results.extend(eval_agreement_score_valid(consensus))
+    layer.results.extend(
+        eval_directional_support_matches_agents(consensus, agent_outputs)
+    )
     layer.results.extend(eval_consensus_matches_majority(consensus, agent_outputs))
     layer.results.extend(eval_no_extreme_contradiction(consensus, agent_outputs))
     layer.results.extend(eval_consensus_points_exist(consensus))

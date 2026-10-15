@@ -503,9 +503,17 @@ class AnalysisResponse(StrictAPIModel):
     # Consensus
     consensus_status: Literal["complete", "partial", "incomplete"]
     consensus_verdict: Literal[
-        "strong_buy", "buy", "hold", "sell", "strong_sell", "incomplete"
+        "strong_buy", "buy", "hold", "sell", "strong_sell", "mixed", "incomplete"
     ]
-    agreement_score: Optional[float] = Field(default=None, ge=0, le=1)
+    agreement_score: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "Share of completed agents supporting the consensus direction; "
+            "buy and strong_buy share one direction, as do sell and strong_sell."
+        ),
+    )
     completed_analyses: int = Field(ge=0)
     requested_analyses: int = Field(ge=1)
     consensus_points: List[str]

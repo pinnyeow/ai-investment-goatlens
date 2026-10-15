@@ -1279,8 +1279,8 @@ async def test_multi_agent_agreement_uses_all_and_only_complete_results(
 
     consensus = state["consensus"]
     assert consensus["status"] == expected_status
-    assert consensus["verdict"] == "strong_buy"
-    assert consensus["agreement_score"] == pytest.approx(0.96)
+    assert consensus["verdict"] == "buy"
+    assert consensus["agreement_score"] == pytest.approx(1.0)
     assert consensus["consensus_points"] == ["Shared durable advantage"]
     assert consensus["completed_analyses"] == 2
     assert consensus["requested_analyses"] == expected_requested
@@ -1521,6 +1521,8 @@ def test_openapi_constrains_sec_provenance_status_and_consensus_contracts():
         "partial",
         "incomplete",
     }
+    assert "mixed" in response["consensus_verdict"]["enum"]
+    assert "direction" in response["agreement_score"]["description"].lower()
     assert response["completed_analyses"]["type"] == "integer"
     assert response["completed_analyses"]["minimum"] == 0
     assert response["requested_analyses"]["type"] == "integer"

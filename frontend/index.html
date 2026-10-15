@@ -712,6 +712,7 @@
         .verdict-strong_buy { color: var(--accent-green); }
         .verdict-buy { color: #4ade80; }
         .verdict-hold { color: var(--accent-gold); }
+        .verdict-mixed { color: var(--accent-gold); }
         .verdict-sell { color: #f87171; }
         .verdict-strong_sell { color: var(--accent-red); }
 
@@ -2793,7 +2794,7 @@
                         <div class="agent-availability" id="consensusStatusNotice"></div>
                     </div>
                     <div class="agreement-meter">
-                        <div class="agreement-label">GOAT Agreement</div>
+                        <div class="agreement-label" title="Share of completed agents supporting the consensus direction; Buy and Strong Buy count together, as do Sell and Strong Sell.">Directional Support</div>
                         <div class="agreement-value" id="agreementValue">72%</div>
                         <div class="agreement-bar">
                             <div class="agreement-fill" id="agreementFill" style="width: 72%"></div>
