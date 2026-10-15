@@ -16,7 +16,9 @@ Key Metrics:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-import traceback
+
+
+from .incomplete import incomplete_if_missing
 
 
 @dataclass
@@ -94,6 +96,18 @@ class LynchAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        incomplete = incomplete_if_missing(
+            agent=self.name,
+            style=self.style,
+            ticker=ticker,
+            financials=financials,
+            required_metrics=(
+                "pe_ratio", "earnings_growth", "institutional_ownership",
+                "debt_to_equity", "cash_and_equivalents",
+            ),
+        )
+        if incomplete:
+            return incomplete
         metrics = self._calculate_metrics(financials)
         category = self._categorize_stock(metrics)
         ten_bagger_potential = self._assess_ten_bagger_potential(metrics, financials)
@@ -289,9 +303,8 @@ class LynchAgent:
         try:
             response = await self.llm_client.analyze(prompt, persona="Peter Lynch", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, category)
-        except Exception as e:
-            print(f"[{self.name}] LLM insight generation failed: {e}")
-            traceback.print_exc()
+        except Exception:
+            print(f"[{self.name}] LLM insight generation failed.")
             return self._generate_insights(metrics, category)
 
     def _generate_insights(

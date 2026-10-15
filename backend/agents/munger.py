@@ -16,7 +16,9 @@ Key Focus:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-import traceback
+
+
+from .incomplete import incomplete_if_missing
 
 
 @dataclass
@@ -96,6 +98,19 @@ class MungerAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        incomplete = incomplete_if_missing(
+            agent=self.name,
+            style=self.style,
+            ticker=ticker,
+            financials=financials,
+            required_metrics=(
+                "gross_margin", "operating_margin", "roic",
+                "insider_ownership", "revenue_growth_5y",
+                "capex_to_revenue", "debt_to_equity", "margin_trend",
+            ),
+        )
+        if incomplete:
+            return incomplete
         metrics = self._calculate_metrics(financials)
         quality_assessment = self._assess_business_quality(metrics, financials)
         red_flags = self._identify_red_flags(metrics, financials)
@@ -344,9 +359,8 @@ class MungerAgent:
         try:
             response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, quality_assessment)
-        except Exception as e:
-            print(f"[{self.name}] LLM insight generation failed: {e}")
-            traceback.print_exc()
+        except Exception:
+            print(f"[{self.name}] LLM insight generation failed.")
             return self._generate_insights(metrics, quality_assessment)
 
     def _generate_insights(

@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-iNFs4AfCuJmTG2E8xVg+E6XrT83ESwpOwahrfwOnfys=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
+    <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js" integrity="sha384-2Yiz1jBuc53MdRCA3ojcpk7cAoW2uFfKcetY6JKbqUetb537Hq2uPJrqM1Mj2AKx" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
     <style>
         :root {
             --bg-primary: #09090b;
@@ -551,6 +553,26 @@
 
         .error-message.active {
             display: block;
+        }
+
+        .data-notice {
+            display: none;
+            margin-bottom: 1.25rem;
+            padding: 0.9rem 1rem;
+            border: 1px solid var(--accent-gold);
+            border-radius: var(--radius);
+            background: rgba(234, 179, 8, 0.08);
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .data-notice.active { display: block; }
+
+        .agent-availability {
+            margin-top: 0.75rem;
+            color: var(--accent-gold);
+            font-size: 0.82rem;
+            font-weight: 600;
         }
 
         /* Results Section */
@@ -2601,7 +2623,7 @@
         <div class="learn-more-panel" id="learnMorePanel">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
                 <h3 class="learn-more-header" style="margin: 0;">How GOAT Scoring Works</h3>
-                <button class="view-details-btn" id="viewScoringDetailsBtn" onclick="openScoringDetailsModal()">View Scoring Details</button>
+                <button class="view-details-btn" id="viewScoringDetailsBtn" data-action="open-scoring">View Scoring Details</button>
             </div>
             <div class="scoring-grid">
                 <div class="scoring-card">
@@ -2713,6 +2735,7 @@
         </div>
 
         <div class="results" id="results">
+            <div class="data-notice" id="marketDataNotice" role="status"></div>
             <!-- Company Header -->
             <div class="company-header">
                 <span class="company-ticker" id="companyTicker">AAPL</span>
@@ -2731,6 +2754,7 @@
                     <div class="consensus-left">
                         <div class="consensus-label">Consensus Verdict</div>
                         <div class="consensus-verdict" id="consensusVerdict">Buy</div>
+                        <div class="agent-availability" id="consensusStatusNotice"></div>
                     </div>
                     <div class="agreement-meter">
                         <div class="agreement-label">GOAT Agreement</div>
@@ -2912,15 +2936,15 @@
             <div class="whats-next-panel">
                 <div class="whats-next-title">What would you like to do next?</div>
                 <div class="whats-next-actions">
-                    <button class="whats-next-btn" onclick="scrollToSearch()">
+                    <button class="whats-next-btn" data-action="scroll-search">
                         <span class="whats-next-icon">🔍</span>
                         <span>Analyze another stock</span>
                     </button>
-                    <button class="whats-next-btn" onclick="shareResults()">
+                    <button class="whats-next-btn" data-action="share-results">
                         <span class="whats-next-icon">🔗</span>
                         <span id="shareBtn-label">Share these results</span>
                     </button>
-                    <button class="whats-next-btn" onclick="compareStock()">
+                    <button class="whats-next-btn" data-action="compare-stock">
                         <span class="whats-next-icon">⚖️</span>
                         <span>Compare with a competitor</span>
                     </button>
@@ -2934,14 +2958,14 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2>How GOAT Scores Are Calculated</h2>
-                <button class="modal-close" onclick="closeScoringDetailsModal()" aria-label="Close">&times;</button>
+                <button class="modal-close" data-action="close-scoring" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
                 <p class="modal-intro">Each GOAT agent evaluates companies using their unique investment philosophy. Below are the exact formulas and point allocations used to calculate scores from -100 to +100.</p>
                 
                 <!-- Buffett Section -->
                 <div class="agent-formula-section">
-                    <div class="agent-formula-header" onclick="toggleFormula('buffett')">
+                    <div class="agent-formula-header" data-formula="buffett">
                         <div>
                             <h3>Warren Buffett</h3>
                             <div class="agent-style">Value Investing with Quality Focus</div>
@@ -2988,7 +3012,7 @@
 
                 <!-- Lynch Section -->
                 <div class="agent-formula-section">
-                    <div class="agent-formula-header" onclick="toggleFormula('lynch')">
+                    <div class="agent-formula-header" data-formula="lynch">
                         <div>
                             <h3>Peter Lynch</h3>
                             <div class="agent-style">Growth at Reasonable Price (GARP)</div>
@@ -3039,7 +3063,7 @@
 
                 <!-- Graham Section -->
                 <div class="agent-formula-section">
-                    <div class="agent-formula-header" onclick="toggleFormula('graham')">
+                    <div class="agent-formula-header" data-formula="graham">
                         <div>
                             <h3>Benjamin Graham</h3>
                             <div class="agent-style">Deep Value / Margin of Safety</div>
@@ -3093,7 +3117,7 @@
 
                 <!-- Munger Section -->
                 <div class="agent-formula-section">
-                    <div class="agent-formula-header" onclick="toggleFormula('munger')">
+                    <div class="agent-formula-header" data-formula="munger">
                         <div>
                             <h3>Charlie Munger</h3>
                             <div class="agent-style">Quality-Focused Mental Models</div>
@@ -3140,7 +3164,7 @@
 
                 <!-- Dalio Section -->
                 <div class="agent-formula-section">
-                    <div class="agent-formula-header" onclick="toggleFormula('dalio')">
+                    <div class="agent-formula-header" data-formula="dalio">
                         <div>
                             <h3>Ray Dalio</h3>
                             <div class="agent-style">Macro & Risk Parity</div>
@@ -3198,7 +3222,7 @@
 
     <footer>
         <p class="disclaimer">
-            Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Data provided by Yahoo Finance &amp; Financial Modeling Prep.
+            Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Fundamentals come from SEC filings; market enrichment comes from Yahoo Finance when available.
         </p>
     </footer>
 
@@ -3379,6 +3403,42 @@
             if (e.key === 'Enter') runAnalysis();
         });
 
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, character => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            })[character]);
+        }
+
+        function getMarketDataUiState(dataStatus) {
+            const marketData = dataStatus && dataStatus.market_data;
+            if (!marketData || marketData.available !== false) {
+                return { shouldLoadPrice: true, message: '' };
+            }
+            return {
+                shouldLoadPrice: false,
+                message: 'Market data unavailable. SEC-backed fundamentals remain available; price-dependent analysis is incomplete.'
+            };
+        }
+
+        function formatAgentAvailability(agent) {
+            if (!agent || agent.status !== 'incomplete') return '';
+            const labels = {
+                current_price: 'current price',
+                pe_ratio: 'PE ratio',
+                pb_ratio: 'price-to-book ratio',
+                peg_ratio: 'PEG ratio'
+            };
+            const unavailable = (agent.unavailable_metrics || [])
+                .map(metric => labels[metric] || metric.replaceAll('_', ' '));
+            return unavailable.length
+                ? `Incomplete — unavailable: ${unavailable.join(', ')}`
+                : 'Incomplete — required inputs unavailable';
+        }
+
         async function runAnalysis() {
             const ticker = tickerInput.value.trim().toUpperCase();
             if (!ticker) {
@@ -3450,23 +3510,19 @@
         }
 
         async function runDemo() {
-            showLoading();
-            hideError();
-
-            try {
-                const response = await fetch(`${API_BASE}/api/demo`);
-                const data = await response.json();
-                displayResults(data);
-            } catch (err) {
-                showError('Failed to load demo data');
-                hideLoading();
-            }
+            tickerInput.value = 'AAPL';
+            await runAnalysis();
         }
 
         function displayResults(data) {
             hideLoading();
             currentTicker = data.ticker;
             earningsInsightsGeneration += 1;
+
+            const marketUi = getMarketDataUiState(data.data_status);
+            const marketNotice = document.getElementById('marketDataNotice');
+            marketNotice.textContent = marketUi.message;
+            marketNotice.classList.toggle('active', Boolean(marketUi.message));
             
             // Company Header
             document.getElementById('companyTicker').textContent = data.ticker;
@@ -3482,19 +3538,37 @@
             verdictEl.textContent = formatVerdict(data.consensus_verdict);
             verdictEl.className = `consensus-verdict verdict-${data.consensus_verdict}`;
 
-            const agreementPct = Math.round(data.agreement_score * 100);
-            document.getElementById('agreementValue').textContent = agreementPct + '%';
-            document.getElementById('agreementFill').style.width = agreementPct + '%';
+            const completeAgentCount = data.completed_analyses;
+            const requestedAgentCount = data.requested_analyses;
+            const consensusStatusNotice = document.getElementById('consensusStatusNotice');
+            if (data.consensus_status === 'partial') {
+                consensusStatusNotice.textContent = `Partial consensus — ${completeAgentCount} of ${requestedAgentCount} analyses complete; agreement is among complete analyses only.`;
+            } else if (data.consensus_status === 'incomplete') {
+                consensusStatusNotice.textContent = 'Consensus unavailable — no analysis is complete.';
+            } else {
+                consensusStatusNotice.textContent = 'Complete consensus — all requested analyses are complete.';
+            }
+
+            const agreementValue = document.getElementById('agreementValue');
+            const agreementFill = document.getElementById('agreementFill');
+            if (data.agreement_score == null) {
+                agreementValue.textContent = 'Unavailable';
+                agreementFill.style.width = '0%';
+            } else {
+                const agreementPct = Math.round(data.agreement_score * 100);
+                agreementValue.textContent = agreementPct + '%';
+                agreementFill.style.width = agreementPct + '%';
+            }
 
             // Consensus & Divergence Points
             const consensusList = document.getElementById('consensusList');
             consensusList.innerHTML = data.consensus_points.length > 0
-                ? data.consensus_points.map(p => `<li>${p}</li>`).join('')
+                ? data.consensus_points.map(p => `<li>${escapeHtml(p)}</li>`).join('')
                 : '<li>No strong consensus points</li>';
 
             const divergenceList = document.getElementById('divergenceList');
             divergenceList.innerHTML = data.divergence_points.length > 0
-                ? data.divergence_points.map(p => `<li>${p}</li>`).join('')
+                ? data.divergence_points.map(p => `<li>${escapeHtml(p)}</li>`).join('')
                 : '<li>General agreement across agents</li>';
 
             // Moat Trend
@@ -3524,7 +3598,15 @@
             // Load the visible price chart only after core analysis succeeds.
             // Rich earnings insights remain lazy until the Insights tab opens.
             earningsInsightsLoadedTicker = '';
-            loadPriceChart(data.ticker, selectedChartPeriod);
+            if (marketUi.shouldLoadPrice) {
+                loadPriceChart(data.ticker, selectedChartPeriod);
+            } else {
+                if (priceChart) {
+                    priceChart.remove();
+                    priceChart = null;
+                }
+                document.getElementById('chartsSection').style.display = 'none';
+            }
 
             // Agent Cards with Tooltips
             const agentsGrid = document.getElementById('agentsGrid');
@@ -3532,28 +3614,29 @@
                 <div class="agent-card">
                     <div class="agent-header">
                         <div class="agent-info">
-                            <h3>${agent.agent}</h3>
-                            <div class="agent-style">${agent.style}</div>
+                            <h3>${escapeHtml(agent.agent)}</h3>
+                            <div class="agent-style">${escapeHtml(agent.style)}</div>
                         </div>
                         <div class="agent-score-wrapper">
-                            <div class="agent-score ${getScoreClass(agent.score)}">${agent.score > 0 ? '+' : ''}${agent.score}</div>
+                            <div class="agent-score ${getScoreClass(agent.score)}">${formatAgentScore(agent)}</div>
                             <div class="score-tooltip">
-                                <div class="tooltip-title">How ${agent.agent.split(' ')[0]} Scores</div>
+                                <div class="tooltip-title">How ${escapeHtml(agent.agent.split(' ')[0])} Scores</div>
                                 ${investorTooltips[agent.agent] || 'Score based on investor-specific criteria.'}
                             </div>
                         </div>
                     </div>
-                    <span class="agent-verdict-badge badge-${agent.verdict}">${formatVerdict(agent.verdict)}</span>
+                    <span class="agent-verdict-badge badge-${agent.verdict || 'incomplete'}">${formatVerdict(agent.verdict)}</span>
+                    ${formatAgentAvailability(agent) ? `<div class="agent-availability">${escapeHtml(formatAgentAvailability(agent))}</div>` : ''}
                     ${agent.insights.length > 0 ? `
                         <div class="agent-insights">
                             <h5>Key Insights</h5>
-                            <ul>${agent.insights.slice(0, 3).map(i => `<li>${i}</li>`).join('')}</ul>
+                            <ul>${agent.insights.slice(0, 3).map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
                         </div>
                     ` : ''}
                     ${agent.concerns.length > 0 ? `
                         <div class="agent-concerns">
                             <h5>Concerns</h5>
-                            <ul>${agent.concerns.slice(0, 2).map(c => `<li>${c}</li>`).join('')}</ul>
+                            <ul>${agent.concerns.slice(0, 2).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
                         </div>
                     ` : ''}
                 </div>
@@ -3563,10 +3646,10 @@
             const comparisonBody = document.getElementById('comparisonBody');
             comparisonBody.innerHTML = data.agent_results.map(agent => `
                 <tr>
-                    <td><strong>${agent.agent}</strong></td>
-                    <td>${agent.style}</td>
-                    <td><span class="agent-verdict-badge badge-${agent.verdict}">${formatVerdict(agent.verdict)}</span></td>
-                    <td class="${getScoreClass(agent.score)}" style="font-weight: 600; font-size: 1.1rem;">${agent.score > 0 ? '+' : ''}${agent.score}</td>
+                    <td><strong>${escapeHtml(agent.agent)}</strong></td>
+                    <td>${escapeHtml(agent.style)}</td>
+                    <td><span class="agent-verdict-badge badge-${agent.verdict || 'incomplete'}">${formatVerdict(agent.verdict)}</span></td>
+                    <td class="${getScoreClass(agent.score)}" style="font-weight: 600; font-size: 1.1rem;">${formatAgentScore(agent)}</td>
                 </tr>
             `).join('');
 
@@ -3607,8 +3690,8 @@
                     : '—';
 
                 return `<tr>
-                    <td><strong>${e.quarter || '—'}</strong></td>
-                    <td>${e.date || '—'}</td>
+                    <td><strong>${escapeHtml(e.quarter || '—')}</strong></td>
+                    <td>${escapeHtml(e.date || '—')}</td>
                     <td class="eps-value">${e.eps_actual != null ? '$' + e.eps_actual.toFixed(2) : '—'}</td>
                     <td class="eps-value" style="color: var(--text-muted);">${e.eps_estimate != null ? '$' + e.eps_estimate.toFixed(2) : '—'}</td>
                     <td class="${surpriseClass}">${surpriseStr}</td>
@@ -3623,15 +3706,15 @@
                 summary.innerHTML = `
                     <div class="earnings-stat">
                         <span class="earnings-stat-label">Beats</span>
-                        <span class="earnings-stat-value" style="color: var(--accent-green);">${streak.beats}</span>
+                        <span class="earnings-stat-value" style="color: var(--accent-green);">${escapeHtml(streak.beats)}</span>
                     </div>
                     <div class="earnings-stat">
                         <span class="earnings-stat-label">Misses</span>
-                        <span class="earnings-stat-value" style="color: var(--accent-red);">${streak.misses}</span>
+                        <span class="earnings-stat-value" style="color: var(--accent-red);">${escapeHtml(streak.misses)}</span>
                     </div>
                     <div class="earnings-stat">
                         <span class="earnings-stat-label">Inline</span>
-                        <span class="earnings-stat-value" style="color: var(--accent-gold);">${streak.inline}</span>
+                        <span class="earnings-stat-value" style="color: var(--accent-gold);">${escapeHtml(streak.inline)}</span>
                     </div>
                     <div class="earnings-stat">
                         <span class="earnings-stat-label">Beat Rate</span>
@@ -3639,7 +3722,7 @@
                     </div>
                     <div class="earnings-stat">
                         <span class="earnings-stat-label">Current Streak</span>
-                        <span class="earnings-stat-value" style="color: ${streak.streak_type === 'beat' ? 'var(--accent-green)' : streak.streak_type === 'miss' ? 'var(--accent-red)' : 'var(--accent-gold)'};">${streak.streak_count}× ${streak.streak_type.toUpperCase()}</span>
+                        <span class="earnings-stat-value" style="color: ${streak.streak_type === 'beat' ? 'var(--accent-green)' : streak.streak_type === 'miss' ? 'var(--accent-red)' : 'var(--accent-gold)'};">${escapeHtml(streak.streak_count)}× ${escapeHtml(streak.streak_type.toUpperCase())}</span>
                     </div>
                 `;
             } else {
@@ -3824,7 +3907,7 @@
 
                     tooltip.innerHTML = `
                         <div class="tooltip-quarter">
-                            ${e.quarter || e.date}
+                            ${escapeHtml(e.quarter || e.date)}
                             <span style="font-size:0.75rem; padding:0.15rem 0.5rem; border-radius:50px; background:${badgeBg}; color:${badgeColor}; font-weight:600;">${badgeText}</span>
                         </div>
                         <div class="tooltip-row">
@@ -3890,7 +3973,7 @@
 
             } catch (err) {
                 loadingEl.style.display = 'none';
-                container.innerHTML = `<div class="chart-loading" style="color: var(--accent-red);">Failed to load chart: ${err.message}</div>`;
+                container.innerHTML = `<div class="chart-loading" style="color: var(--accent-red);">Failed to load chart: ${escapeHtml(err.message)}</div>`;
             }
         }
 
@@ -4065,7 +4148,7 @@
                     }
                 } catch (err) {
                     if (currentTicker === ticker && earningsInsightsGeneration === generation) {
-                        insightsList.innerHTML = `<div class="insights-loading" style="color: var(--accent-red);">Failed to load insights: ${err.message}</div>`;
+                        insightsList.innerHTML = `<div class="insights-loading" style="color: var(--accent-red);">Failed to load insights: ${escapeHtml(err.message)}</div>`;
                     }
                 } finally {
                     if (earningsInsightsRequests.get(ticker) === entry) {
@@ -4097,11 +4180,14 @@
             card.style.display = 'block';
 
             // Growth trend badge
-            const trendIcon = fg.growth_trend === 'accelerating' ? '↑' :
-                              fg.growth_trend === 'decelerating' ? '↓' :
-                              fg.growth_trend === 'stable' ? '→' : '?';
-            const trendLabel = fg.growth_trend.charAt(0).toUpperCase() + fg.growth_trend.slice(1);
-            const trendClass = `trend-badge-${fg.growth_trend}`;
+            const growthTrend = ['accelerating', 'decelerating', 'stable'].includes(fg.growth_trend)
+                ? fg.growth_trend
+                : 'unknown';
+            const trendIcon = growthTrend === 'accelerating' ? '↑' :
+                              growthTrend === 'decelerating' ? '↓' :
+                              growthTrend === 'stable' ? '→' : '?';
+            const trendLabel = growthTrend.charAt(0).toUpperCase() + growthTrend.slice(1);
+            const trendClass = `trend-badge-${growthTrend}`;
 
             // Helper: format large revenue numbers
             const fmtRev = (v) => {
@@ -4130,7 +4216,7 @@
 
                     return `
                         <div style="margin-bottom: 1rem;">
-                            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 0.5rem;">${r.period}</div>
+                            <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 0.5rem;">${escapeHtml(r.period)}</div>
                             <div class="guidance-comparison-grid">
                                 <div class="guidance-col">
                                     <div class="guidance-col-label street">Street Expects</div>
@@ -4146,7 +4232,7 @@
                                             <span class="guidance-col-value">${fmtRev(r.rev_avg)}</span>
                                         </div>
                                     ` : ''}
-                                    ${r.eps_num_analysts ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">${r.eps_num_analysts} analysts</div>` : ''}
+                                    ${r.eps_num_analysts ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.25rem;">${escapeHtml(r.eps_num_analysts)} analysts</div>` : ''}
                                 </div>
                                 <div class="guidance-col">
                                     <div class="guidance-col-label last-year">Last Year Actual</div>
@@ -4196,7 +4282,7 @@
                 </div>
                 ${comparisonHTML}
                 ${ptHTML}
-                <div class="guidance-summary-text">${fg.summary}</div>
+                <div class="guidance-summary-text">${escapeHtml(fg.summary)}</div>
             `;
         }
 
@@ -4217,7 +4303,9 @@
             container.innerHTML = insights.map((ins, idx) => {
                 const bm = ins.eps_beat_miss;
                 const r1d = ins.price_reaction_1d;
-                const gs = ins.guidance_signal || 'unknown';
+                const gs = ['raised', 'lowered', 'maintained'].includes(ins.guidance_signal)
+                    ? ins.guidance_signal
+                    : 'unknown';
 
                 // Beat/Miss badge
                 const badgeClass = bm === 'beat' ? 'beat' : bm === 'miss' ? 'miss' : 'inline';
@@ -4267,7 +4355,7 @@
                     <td class="metric-value">${epsActual}${epsSurprise}</td>
                 </tr>`;
 
-                // Row 2: Revenue (FMP — only if data exists)
+                // Row 2: Revenue (only if data exists)
                 if (ins.revenue_actual != null) {
                     const revYoY = ins.revenue_yoy_pct != null
                         ? ` <span class="metric-context"><span class="${pctClass(ins.revenue_yoy_pct)}">${fmtPct(ins.revenue_yoy_pct)} YoY</span></span>`
@@ -4278,7 +4366,7 @@
                     </tr>`;
                 }
 
-                // Row 3: CapEx (FMP — only if data exists)
+                // Row 3: CapEx (only if data exists)
                 if (ins.capex != null) {
                     const capexChange = ins.capex_qoq_pct != null
                         ? ` <span class="metric-context"><span class="${pctClass(ins.capex_qoq_pct)}">${fmtPct(ins.capex_qoq_pct)} QoQ</span></span>`
@@ -4292,7 +4380,7 @@
                     </tr>`;
                 }
 
-                // Row 4: FCF (FMP — only if CapEx shown)
+                // Row 4: FCF (only if CapEx shown)
                 if (ins.fcf != null && ins.capex != null) {
                     tableRows += `<tr>
                         <td class="metric-label">Free Cash Flow</td>
@@ -4311,8 +4399,8 @@
 
                 return `
                     <div class="quarter-story-card ${borderClass}">
-                        <div class="story-headline" onclick="toggleStoryBody(${idx})">
-                            <span class="story-quarter">${ins.quarter || ins.date || '—'}</span>
+                        <div class="story-headline" data-story-index="${idx}">
+                            <span class="story-quarter">${escapeHtml(ins.quarter || ins.date || '—')}</span>
                             <span class="story-badge ${badgeClass}">${badgeLabel}${surpriseStr ? ' ' + surpriseStr : ''}</span>
                             <span class="story-guidance-tag ${gs}">${gsLabel}</span>
                             <span class="story-stock-reaction" style="color: ${reactionColor};">${reactionStr}</span>
@@ -4334,12 +4422,12 @@
                             </div>
                             ${ins.insight ? `
                                 <div class="story-explanation">
-                                    <strong>Why it moved:</strong> ${ins.insight}
+                                    <strong>Why it moved:</strong> ${escapeHtml(ins.insight)}
                                 </div>
                             ` : ''}
                             ${stats.length > 0 ? `
                                 <div class="story-stats">
-                                    ${stats.map(s => `<div class="story-stat">${s.label}: <span class="story-stat-value">${s.value}</span></div>`).join('')}
+                                    ${stats.map(s => `<div class="story-stat">${s.label}: <span class="story-stat-value">${escapeHtml(s.value)}</span></div>`).join('')}
                                 </div>
                             ` : ''}
                         </div>
@@ -4364,10 +4452,18 @@
                 'strong_buy': 'Strong Buy',
                 'buy': 'Buy',
                 'hold': 'Hold',
+                'incomplete': 'Incomplete',
                 'sell': 'Sell',
                 'strong_sell': 'Strong Sell'
             };
-            return map[verdict] || verdict;
+            return map[verdict] || 'Incomplete';
+        }
+
+        function formatAgentScore(agent) {
+            if (!agent || agent.status === 'incomplete' || agent.score == null) {
+                return 'Unavailable';
+            }
+            return `${agent.score > 0 ? '+' : ''}${agent.score}`;
         }
 
         function formatMoatTrend(trend) {
@@ -4392,6 +4488,7 @@
         }
 
         function getScoreClass(score) {
+            if (score == null) return 'score-neutral';
             if (score >= 20) return 'score-positive';
             if (score <= -20) return 'score-negative';
             return 'score-neutral';
@@ -4418,10 +4515,10 @@
             const isTickerError = /invalid|not found|analysis failed|ticker|symbol/i.test(message);
             if (isTickerError) {
                 const suggestions = popularTickers.map(t =>
-                    `<button class="error-ticker-btn" onclick="document.getElementById('tickerInput').value='${t}'; hideError();">${t}</button>`
+                    `<button class="error-ticker-btn" data-ticker="${t}">${t}</button>`
                 ).join('');
                 errorMessage.innerHTML = `
-                    <div><strong>Couldn't find that ticker.</strong> ${message}</div>
+                    <div><strong>Couldn't find that ticker.</strong> ${escapeHtml(message)}</div>
                     <div style="margin-top:0.5rem; font-size:0.85rem; color:var(--text-secondary);">GoatLens supports US-listed equities. Enter the ticker symbol, not the company name.</div>
                     <div style="margin-top:0.75rem;">Try one of these: ${suggestions}</div>
                 `;
@@ -4459,6 +4556,43 @@
                 scrollToSearch();
             }
         }
+
+        document.addEventListener('click', (event) => {
+            const actionElement = event.target.closest('[data-action]');
+            if (actionElement) {
+                const actions = {
+                    'open-scoring': openScoringDetailsModal,
+                    'close-scoring': closeScoringDetailsModal,
+                    'scroll-search': scrollToSearch,
+                    'share-results': shareResults,
+                    'compare-stock': compareStock,
+                };
+                actions[actionElement.dataset.action]?.();
+                return;
+            }
+
+            const formulaElement = event.target.closest('[data-formula]');
+            if (formulaElement) {
+                toggleFormula(formulaElement.dataset.formula);
+                return;
+            }
+
+            const storyElement = event.target.closest('[data-story-index]');
+            if (storyElement) {
+                const index = Number.parseInt(storyElement.dataset.storyIndex, 10);
+                if (Number.isInteger(index) && index >= 0) toggleStoryBody(index);
+                return;
+            }
+
+            const tickerElement = event.target.closest('[data-ticker]');
+            if (tickerElement) {
+                const ticker = tickerElement.dataset.ticker;
+                if (/^[A-Z]{1,5}$/.test(ticker)) {
+                    document.getElementById('tickerInput').value = ticker;
+                    hideError();
+                }
+            }
+        });
     </script>
 </body>
 </html>

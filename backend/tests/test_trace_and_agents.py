@@ -28,6 +28,27 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
 
 
+@pytest.mark.asyncio
+async def test_incomplete_buffett_result_has_no_investment_score_or_verdict():
+    financials = dict(MOCK_FINANCIALS) if "MOCK_FINANCIALS" in globals() else {}
+    financials["debt_to_equity"] = None
+    financials["free_cash_flow"] = None
+    result = await BuffettAgent(llm_client=None).analyze("AAPL", financials)
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_class", [LynchAgent, GrahamAgent, MungerAgent, DalioAgent])
+async def test_agents_fail_closed_without_required_financial_inputs(agent_class):
+    result = await agent_class(llm_client=None).analyze("AAPL", {})
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+    assert result["unavailable_metrics"]
+
+
 # ============================================================================
 # Fixtures — Shared mock data and helpers
 # ============================================================================

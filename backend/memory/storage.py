@@ -74,9 +74,9 @@ class MemoryStore:
         try:
             with open(self.storage_path, "w") as f:
                 json.dump(self._data, f, indent=2)
-        except Exception as e:
+        except Exception:
             # Log but don't fail - memory is optional
-            print(f"[Memory] Failed to save: {e}")
+            print("[Memory] Failed to save.")
     
     def record_analysis(
         self,

@@ -16,7 +16,9 @@ Key Focus:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-import traceback
+
+
+from .incomplete import incomplete_if_missing
 
 
 @dataclass
@@ -92,6 +94,19 @@ class DalioAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        incomplete = incomplete_if_missing(
+            agent=self.name,
+            style=self.style,
+            ticker=ticker,
+            financials=financials,
+            required_metrics=(
+                "beta", "volatility_252d", "debt_to_equity",
+                "interest_coverage", "correlation_sp500",
+                "revenue_cyclicality", "debt_growth_3y", "expected_return",
+            ),
+        )
+        if incomplete:
+            return incomplete
         metrics = self._calculate_metrics(financials)
         cycle_analysis = self._analyze_debt_cycle(financials)
         risk_assessment = self._assess_risk_adjusted_returns(metrics, financials)
@@ -365,9 +380,8 @@ class DalioAgent:
         try:
             response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, cycle_analysis, {})
-        except Exception as e:
-            print(f"[{self.name}] LLM insight generation failed: {e}")
-            traceback.print_exc()
+        except Exception:
+            print(f"[{self.name}] LLM insight generation failed.")
             return self._generate_insights(metrics, cycle_analysis, {})
 
     def _generate_insights(

@@ -16,16 +16,16 @@ Key Metrics:
 
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-import traceback
+
 
 
 @dataclass
 class BuffettMetrics:
     """Key metrics for Buffett-style analysis."""
-    roe: float
-    profit_margin: float
-    debt_to_equity: float
-    owner_earnings: float
+    roe: Optional[float]
+    profit_margin: Optional[float]
+    debt_to_equity: Optional[float]
+    owner_earnings: Optional[float]
     earnings_consistency: float  # Variance in earnings over years
     moat_strength: str
 
@@ -106,31 +106,40 @@ class BuffettAgent:
         
         concerns = self._identify_concerns(metrics)
         concerns.extend(self._earnings_concerns(earnings_data or [], earnings_streak or {}))
+        unavailable_metrics = [
+            name
+            for name in ("roe", "profit_margin", "debt_to_equity", "owner_earnings")
+            if getattr(metrics, name) is None
+        ]
         
         return {
             "agent": self.name,
             "style": self.style,
             "ticker": ticker,
-            "score": score,
-            "verdict": self._score_to_verdict(score),
+            "score": None if unavailable_metrics else score,
+            "verdict": None if unavailable_metrics else self._score_to_verdict(score),
             "metrics": metrics.__dict__,
             "moat_analysis": moat_analysis,
             "insights": insights,
             "concerns": concerns,
+            "status": "incomplete" if unavailable_metrics else "complete",
+            "unavailable_metrics": unavailable_metrics,
             "buffett_quote": self._get_relevant_quote(score),
         }
     
     def _calculate_metrics(self, financials: Dict[str, Any]) -> BuffettMetrics:
         """Extract and calculate Buffett-relevant metrics."""
-        roe = financials.get("roe", 0)
-        profit_margin = financials.get("profit_margin", 0)
-        debt_to_equity = financials.get("debt_to_equity", 0)
+        roe = financials.get("roe")
+        profit_margin = financials.get("profit_margin")
+        debt_to_equity = financials.get("debt_to_equity")
         
         # Determine moat strength from margins and ROE
-        if roe >= 0.20 and profit_margin >= 0.15:
+        if roe is not None and profit_margin is not None and roe >= 0.20 and profit_margin >= 0.15:
             moat = "Strong"
-        elif roe >= 0.15 and profit_margin >= 0.10:
+        elif roe is not None and profit_margin is not None and roe >= 0.15 and profit_margin >= 0.10:
             moat = "Moderate"
+        elif roe is None or profit_margin is None:
+            moat = "Unknown"
         else:
             moat = "Weak"
         
@@ -138,7 +147,7 @@ class BuffettAgent:
             roe=roe,
             profit_margin=profit_margin,
             debt_to_equity=debt_to_equity,
-            owner_earnings=financials.get("free_cash_flow", 0),
+            owner_earnings=financials.get("free_cash_flow"),
             earnings_consistency=0.0,
             moat_strength=moat,
         )
@@ -151,9 +160,12 @@ class BuffettAgent:
         elif metrics.moat_strength == "Moderate":
             durability = "Medium"
             analysis = "Decent returns but moat durability needs monitoring"
-        else:
+        elif metrics.moat_strength == "Weak":
             durability = "Low"
             analysis = "Weak margins suggest limited pricing power"
+        else:
+            durability = "Unknown"
+            analysis = "Insufficient filing data to assess moat durability"
         
         return {
             "moat_type": "Financial Moat",
@@ -167,7 +179,7 @@ class BuffettAgent:
         return {
             "capital_allocation": "Unknown",
             "shareholder_focus": "Unknown",
-            "insider_ownership": financials.get("insider_ownership", 0),
+            "insider_ownership": financials.get("insider_ownership"),
         }
     
     def _calculate_score(
@@ -180,19 +192,25 @@ class BuffettAgent:
         score = 0.0
         
         # ROE contribution (max 25 points)
-        if metrics.roe >= self.MIN_ROE:
+        if metrics.roe is None:
+            pass
+        elif metrics.roe >= self.MIN_ROE:
             score += min(25, (metrics.roe / self.MIN_ROE) * 15)
         else:
             score -= 15
         
         # Profit margin contribution (max 20 points)
-        if metrics.profit_margin >= self.MIN_PROFIT_MARGIN:
+        if metrics.profit_margin is None:
+            pass
+        elif metrics.profit_margin >= self.MIN_PROFIT_MARGIN:
             score += min(20, (metrics.profit_margin / self.MIN_PROFIT_MARGIN) * 10)
         else:
             score -= 10
         
         # Debt level contribution (max 20 points)
-        if metrics.debt_to_equity <= self.MAX_DEBT_TO_EQUITY:
+        if metrics.debt_to_equity is None:
+            pass
+        elif metrics.debt_to_equity <= self.MAX_DEBT_TO_EQUITY:
             score += 20
         elif metrics.debt_to_equity <= 1.0:
             score += 10
@@ -251,13 +269,20 @@ class BuffettAgent:
         """Generate LLM-powered insights using Buffett's voice."""
         # Context optimization: only pass relevant metrics to reduce token usage
         relevant = self._get_relevant_context(metrics)
-        prompt = f"""Analyze {ticker}: ROE {relevant['roe']:.1%}, Profit Margin {relevant['profit_margin']:.1%}, Debt/Equity {relevant['debt_to_equity']:.2f}, Moat {relevant['moat_strength']}"""
+        def fmt(value, spec):
+            return format(value, spec) if value is not None else "unavailable"
+
+        prompt = (
+            f"Analyze {ticker}: ROE {fmt(relevant['roe'], '.1%')}, "
+            f"Profit Margin {fmt(relevant['profit_margin'], '.1%')}, "
+            f"Debt/Equity {fmt(relevant['debt_to_equity'], '.2f')}, "
+            f"Moat {relevant['moat_strength']}"
+        )
         try:
             response = await self.llm_client.analyze(prompt, persona="Warren Buffett", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, {"strength": metrics.moat_strength})
-        except Exception as e:
-            print(f"[{self.name}] LLM insight generation failed: {e}")
-            traceback.print_exc()
+        except Exception:
+            print(f"[{self.name}] LLM insight generation failed.")
             return self._generate_insights(metrics, {"strength": metrics.moat_strength})
     
     def _generate_insights(
@@ -268,13 +293,13 @@ class BuffettAgent:
         """Generate key insights from analysis (fallback)."""
         insights = []
         
-        if metrics.roe >= self.MIN_ROE:
+        if metrics.roe is not None and metrics.roe >= self.MIN_ROE:
             insights.append(f"Strong ROE of {metrics.roe:.1%} indicates efficient capital deployment")
         
-        if metrics.profit_margin >= self.MIN_PROFIT_MARGIN:
+        if metrics.profit_margin is not None and metrics.profit_margin >= self.MIN_PROFIT_MARGIN:
             insights.append(f"Healthy profit margin of {metrics.profit_margin:.1%} suggests pricing power")
         
-        if metrics.debt_to_equity <= self.MAX_DEBT_TO_EQUITY:
+        if metrics.debt_to_equity is not None and metrics.debt_to_equity <= self.MAX_DEBT_TO_EQUITY:
             insights.append("Conservative debt levels provide margin of safety")
         
         return insights
@@ -283,13 +308,13 @@ class BuffettAgent:
         """Identify potential concerns from Buffett's perspective."""
         concerns = []
         
-        if metrics.roe < self.MIN_ROE:
+        if metrics.roe is not None and metrics.roe < self.MIN_ROE:
             concerns.append(f"ROE of {metrics.roe:.1%} below Buffett's 15% threshold")
         
-        if metrics.debt_to_equity > 1.0:
+        if metrics.debt_to_equity is not None and metrics.debt_to_equity > 1.0:
             concerns.append(f"High debt-to-equity ratio of {metrics.debt_to_equity:.2f}")
         
-        if metrics.profit_margin < self.MIN_PROFIT_MARGIN:
+        if metrics.profit_margin is not None and metrics.profit_margin < self.MIN_PROFIT_MARGIN:
             concerns.append("Thin profit margins may indicate weak competitive position")
         
         return concerns

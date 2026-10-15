@@ -23,7 +23,8 @@ jobs:
             BODY=$(curl --silent --show-error --max-time 5 \
               https://goatlens.onrender.com/health || true)
             echo "Release check $ATTEMPT: $BODY"
-            if [[ "$BODY" == *"\"release\":\"$EXPECTED_SHA\""* ]]; then
+            RELEASE=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("release", ""))' <<<"$BODY" 2>/dev/null || true)
+            if [[ "$RELEASE" == "$EXPECTED_SHA" ]]; then
               echo "Expected release is live."
               exit 0
             fi
@@ -46,22 +47,38 @@ jobs:
           echo "Health response: $BODY"
           echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: Health check unexpected response" && exit 1)
 
-      - name: Demo API returns valid data
-        run: |
-          BODY=$(curl -s https://goatlens.onrender.com/api/demo)
-          echo "Demo response (truncated): ${BODY:0:200}"
-          echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: Demo missing ticker" && exit 1)
-          echo "$BODY" | grep -q '"consensus_verdict"' || (echo "FAIL: Demo missing consensus_verdict" && exit 1)
-          echo "$BODY" | grep -q '"agent_results"' || (echo "FAIL: Demo missing agent_results" && exit 1)
-
-      - name: Core market data path is healthy
+      - name: Authoritative SEC fundamentals path is healthy
         run: |
           BODY=$(curl --fail --silent --show-error \
             --max-time 45 \
-            https://goatlens.onrender.com/api/market-data-health)
-          echo "Market data health: $BODY"
-          echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: Market data unavailable" && exit 1)
-          echo "$BODY" | grep -Eq '"source":"(yahoo|fmp)"' || (echo "FAIL: Missing data source" && exit 1)
+            https://goatlens.onrender.com/api/fundamentals-health)
+          echo "Fundamentals health: $BODY"
+          echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: SEC fundamentals unavailable" && exit 1)
+          echo "$BODY" | grep -q '"source":"sec"' || (echo "FAIL: SEC source missing" && exit 1)
+
+      - name: AAPL analysis remains SEC-backed
+        run: |
+          BODY=$(curl --fail --silent --show-error \
+            --max-time 90 \
+            -X POST https://goatlens.onrender.com/api/analyze \
+            -H 'Content-Type: application/json' \
+            -d '{"ticker":"AAPL","agents":["buffett"]}')
+          echo "AAPL analysis (truncated): ${BODY:0:500}"
+          echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: AAPL analysis missing ticker" && exit 1)
+          echo "$BODY" | grep -q '"fundamentals":{"available":true,"source":"sec"' || (echo "FAIL: AAPL analysis is not SEC-backed" && exit 1)
+          echo "$BODY" | grep -q '"consensus_status":"complete"' || (echo "FAIL: Buffett consensus is not complete" && exit 1)
+          echo "$BODY" | grep -q '"completed_analyses":1' || (echo "FAIL: Buffett completion count is wrong" && exit 1)
+          echo "$BODY" | grep -q '"requested_analyses":1' || (echo "FAIL: Buffett request count is wrong" && exit 1)
+          echo "$BODY" | grep -q '"agent":"Warren Buffett".*"status":"complete"' || (echo "FAIL: Buffett analysis is not complete" && exit 1)
+          echo "$BODY" | grep -q '"revenue":{"value":416161000000' || (echo "FAIL: SEC revenue literal missing" && exit 1)
+          echo "$BODY" | grep -q '"accession":"0000320193-25-000079"' || (echo "FAIL: SEC provenance missing" && exit 1)
+
+      - name: Report best-effort Yahoo market-data status once
+        run: |
+          BODY=$(curl --silent --show-error \
+            --max-time 45 \
+            https://goatlens.onrender.com/api/market-data-health || true)
+          echo "Market data status (non-gating): $BODY"
 
       - name: Agents endpoint returns all 5 investors
         run: |

@@ -11,48 +11,12 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from curl_cffi.requests import exceptions as curl_exceptions
-import httpx
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import main
-from data_sources import FMPClient, FMPError, YahooFinanceClient, YahooFinanceError
-
-
-FALLBACK_FINANCIALS = {
-    "ticker": "ACME",
-    "company_name": "Fallback Corp",
-    "sector": "Industrials",
-    "industry": "Industrial Products",
-    "market_cap": 1_000_000_000,
-    "current_price": 42.0,
-    "pe_ratio": 12.0,
-    "pb_ratio": 1.5,
-    "ps_ratio": 2.0,
-    "peg_ratio": 1.0,
-    "gross_margin": 0.40,
-    "operating_margin": 0.20,
-    "profit_margin": 0.15,
-    "roe": 0.18,
-    "roa": 0.10,
-    "roic": 0.16,
-    "revenue_growth": 0.08,
-    "earnings_growth": 0.09,
-    "revenue_growth_5y": 0.07,
-    "current_ratio": 1.8,
-    "quick_ratio": 1.4,
-    "debt_to_equity": 0.3,
-    "interest_coverage": 12.0,
-    "eps": 3.5,
-    "book_value_per_share": 28.0,
-    "free_cash_flow_per_share": 4.0,
-    "dividend_yield": 0.02,
-    "beta": 0.9,
-    "volatility_252d": 0.2,
-    "insider_ownership": 0.05,
-    "institutional_ownership": 0.60,
-}
+from data_sources import YahooFinanceClient, YahooFinanceError
 
 
 class RateLimitedYahoo:
@@ -98,38 +62,6 @@ class TickerEchoingFailureYahoo(RateLimitedYahoo):
         raise YahooFinanceError(f"malformed provider payload for {ticker}")
 
 
-class WorkingFMP:
-    company_calls = []
-
-    def __init__(self, api_key=None):
-        self.api_key = api_key
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        return None
-
-    async def get_company_data(self, ticker, years=10):
-        self.company_calls.append(ticker)
-        return {
-            "ticker": ticker,
-            "profile": {
-                "companyName": "Fallback Corp",
-                "sector": "Industrials",
-            },
-        }
-
-    def normalize_data(self, raw_data):
-        return SimpleNamespace(**FALLBACK_FINANCIALS)
-
-
-class UnavailableFMP(WorkingFMP):
-    async def get_company_data(self, ticker, years=10):
-        self.company_calls.append(ticker)
-        raise RuntimeError("provider token and internal URL must stay private")
-
-
 class NoNews:
     async def should_use_tool(self, ticker, financials):
         return False
@@ -165,6 +97,14 @@ class TestYahooProviderClassification:
         assert getattr(exc_info.value, "code", None) == (
             "market_data_temporarily_unavailable"
         )
+        formatted = "".join(
+            traceback.format_exception(
+                type(exc_info.value), exc_info.value, exc_info.value.__traceback__
+            )
+        )
+        assert "Yahoo request rejected" not in formatted
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
 
     @pytest.mark.parametrize(
         "failure_kind",
@@ -237,206 +177,6 @@ class TestYahooProviderClassification:
         )
 
 
-class TestFMPDiagnostics:
-    def test_smoke_canary_calls_market_data_health_once(self):
-        workflow = (
-            Path(__file__).parents[2] / ".github" / "workflows" / "smoke-tests.yml"
-        ).read_text()
-        canary_step = workflow.split(
-            "- name: Core market data path is healthy", maxsplit=1
-        )[1].split("- name:", maxsplit=1)[0]
-
-        assert canary_step.count("/api/market-data-health") == 1
-        assert "--retry" not in canary_step
-
-    @pytest.mark.asyncio
-    async def test_http_failure_logs_safe_category_without_secret(self, caplog):
-        secret = "diagnostic-secret-key"
-        request = httpx.Request(
-            "GET",
-            f"https://financialmodelingprep.com/stable/profile?apikey={secret}",
-        )
-        response = httpx.Response(403, request=request)
-
-        class FakeHTTPClient:
-            async def get(self, url, params=None):
-                return response
-
-        client = object.__new__(FMPClient)
-        client.api_key = secret
-        setattr(client, "_client", FakeHTTPClient())
-
-        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
-            await client._request("profile", {"symbol": "AAPL"})
-
-        formatted_traceback = "".join(
-            traceback.format_exception(
-                type(exc_info.value),
-                exc_info.value,
-                exc_info.value.__traceback__,
-            )
-        )
-        assert "fmp_request_failed endpoint=profile category=http_status status=403" in (
-            caplog.text
-        )
-        assert str(exc_info.value) == "FMP request failed."
-        assert exc_info.value.__cause__ is None
-        assert exc_info.value.__context__ is None
-        assert secret not in caplog.text
-        assert secret not in str(exc_info.value)
-        assert secret not in formatted_traceback
-        assert "financialmodelingprep.com" not in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_transport_failure_does_not_copy_provider_url(self, caplog):
-        secret = "diagnostic-secret-key"
-        request = httpx.Request(
-            "GET",
-            f"https://financialmodelingprep.com/stable/profile?apikey={secret}",
-        )
-
-        class FakeHTTPClient:
-            async def get(self, url, params=None):
-                raise httpx.RequestError(
-                    f"failed request {request.url}",
-                    request=request,
-                )
-
-        client = object.__new__(FMPClient)
-        client.api_key = secret
-        setattr(client, "_client", FakeHTTPClient())
-
-        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
-            await client._request("profile", {"symbol": "AAPL"})
-
-        formatted_traceback = "".join(
-            traceback.format_exception(
-                type(exc_info.value),
-                exc_info.value,
-                exc_info.value.__traceback__,
-            )
-        )
-        assert "fmp_request_failed endpoint=profile category=transport" in caplog.text
-        assert str(exc_info.value) == "FMP request failed."
-        assert exc_info.value.__cause__ is None
-        assert exc_info.value.__context__ is None
-        assert secret not in caplog.text
-        assert secret not in str(exc_info.value)
-        assert secret not in formatted_traceback
-        assert "financialmodelingprep.com" not in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_api_error_logs_category_without_provider_message(self, caplog):
-        secret = "diagnostic-secret-key"
-
-        class FakeResponse:
-            status_code = 200
-
-            def raise_for_status(self):
-                return None
-
-            def json(self):
-                return {"Error Message": f"invalid key {secret}"}
-
-        class FakeHTTPClient:
-            async def get(self, url, params=None):
-                return FakeResponse()
-
-        client = object.__new__(FMPClient)
-        client.api_key = secret
-        setattr(client, "_client", FakeHTTPClient())
-
-        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
-            await client._request("profile", {"symbol": "AAPL"})
-
-        assert "fmp_request_failed endpoint=profile category=api_error" in caplog.text
-        assert str(exc_info.value) == "FMP request failed."
-        assert secret not in caplog.text
-        assert secret not in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_malformed_endpoint_is_rejected_without_logging_it(self, caplog):
-        secret = "diagnostic-secret-key"
-
-        class FakeHTTPClient:
-            async def get(self, url, params=None):
-                raise AssertionError("invalid endpoint must not be requested")
-
-        client = object.__new__(FMPClient)
-        client.api_key = secret
-        setattr(client, "_client", FakeHTTPClient())
-
-        with caplog.at_level("WARNING"), pytest.raises(FMPError) as exc_info:
-            await client._request(f"profile?apikey={secret}", {"symbol": "AAPL"})
-
-        assert "fmp_request_failed endpoint=invalid category=invalid_endpoint" in (
-            caplog.text
-        )
-        assert str(exc_info.value) == "FMP request failed."
-        assert secret not in caplog.text
-        assert secret not in str(exc_info.value)
-
-
-class TestAnalyzeFallback:
-    def test_analyze_returns_200_from_fmp_when_yahoo_is_rate_limited(self, monkeypatch):
-        """A temporary Yahoo outage must not take down core stock analysis."""
-        RateLimitedYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
-        monkeypatch.setattr(main, "NewsClient", NoNews)
-        monkeypatch.setattr(main, "RAGRetriever", NoRAG)
-        monkeypatch.setattr(main, "MemoryStore", NoMemory)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={
-                    "ticker": "acme",
-                    "time_period": "1y",
-                    "agents": ["buffett"],
-                },
-            )
-
-        assert response.status_code == 200
-        body = response.json()
-        assert body["ticker"] == "ACME"
-        assert body["company_name"] == "Fallback Corp"
-        assert body["sector"] == "Industrials"
-        assert len(body["agent_results"]) == 1
-        assert RateLimitedYahoo.company_calls == ["ACME"]
-        assert WorkingFMP.company_calls == ["ACME"]
-
-    def test_structured_yahoo_auth_failure_uses_fmp(self, monkeypatch):
-        """A production Yahoo crumb/auth failure must activate bounded fallback."""
-        StructuredAuthFailureYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.setattr(main, "YahooFinanceClient", StructuredAuthFailureYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
-        monkeypatch.setattr(main, "NewsClient", NoNews)
-        monkeypatch.setattr(main, "RAGRetriever", NoRAG)
-        monkeypatch.setattr(main, "MemoryStore", NoMemory)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={
-                    "ticker": "AAPL",
-                    "time_period": "1y",
-                    "agents": ["buffett"],
-                },
-            )
-
-        assert response.status_code == 200
-        assert response.json()["company_name"] == "Fallback Corp"
-        assert StructuredAuthFailureYahoo.company_calls == ["AAPL"]
-        assert WorkingFMP.company_calls == ["AAPL"]
-
-
 class TestAnalyzeErrorReporting:
     def test_analysis_request_accepts_class_share_ticker(self):
         request = main.AnalysisRequest(ticker=" brk.b ")
@@ -463,125 +203,6 @@ class TestAnalyzeErrorReporting:
         assert earnings.status_code == 422
         assert prices.status_code == 422
         assert initializations == []
-
-    def test_analyze_rejects_marker_ticker_before_calling_providers(self, monkeypatch):
-        """Invalid ticker text cannot influence provider error classification."""
-        RateLimitedYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={"ticker": "ACME TIMEOUT", "agents": ["buffett"]},
-            )
-
-        assert response.status_code == 422
-        assert RateLimitedYahoo.company_calls == []
-        assert WorkingFMP.company_calls == []
-
-    def test_analyze_reports_provider_outage_as_retryable_503(self, monkeypatch):
-        """Provider capacity failures are server outages, not bad user input."""
-        RateLimitedYahoo.company_calls = []
-        UnavailableFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", UnavailableFMP)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={"ticker": "ACME", "agents": ["buffett"]},
-            )
-
-        assert response.status_code == 503
-        assert response.json() == {
-            "detail": {
-                "code": "market_data_temporarily_unavailable",
-                "message": "Market data is temporarily unavailable. Please retry.",
-                "retryable": True,
-            }
-        }
-        assert response.headers["Retry-After"] == "60"
-        assert "provider token" not in response.text
-        assert "Too Many Requests" not in response.text
-
-    def test_analyze_reports_unknown_ticker_without_spending_fallback_quota(
-        self, monkeypatch
-    ):
-        """A definite unknown ticker is a 404 and must not call FMP."""
-        UnknownTickerYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        monkeypatch.setattr(main, "YahooFinanceClient", UnknownTickerYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={"ticker": "NOPE", "agents": ["buffett"]},
-            )
-
-        assert response.status_code == 404
-        assert response.json() == {
-            "detail": {
-                "code": "ticker_not_found",
-                "message": "No market data found for ticker NOPE.",
-                "retryable": False,
-            }
-        }
-        assert UnknownTickerYahoo.company_calls == ["NOPE"]
-        assert WorkingFMP.company_calls == []
-
-    def test_analyze_does_not_fallback_or_expose_non_retryable_yahoo_failure(
-        self, monkeypatch
-    ):
-        """Permanent/provider-shape failures must not spend quota or leak details."""
-        NonRetryableYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.setattr(main, "YahooFinanceClient", NonRetryableYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={"ticker": "ACME", "agents": ["buffett"]},
-            )
-
-        assert response.status_code == 502
-        assert response.json() == {
-            "detail": {
-                "code": "market_data_failure",
-                "message": "Market data request failed.",
-                "retryable": False,
-            }
-        }
-        assert "secret=private" not in response.text
-        assert NonRetryableYahoo.company_calls == ["ACME"]
-        assert WorkingFMP.company_calls == []
-
-    def test_ticker_text_does_not_make_permanent_failure_retryable(self, monkeypatch):
-        """A valid marker-like symbol cannot trigger fallback by appearing in an error."""
-        TickerEchoingFailureYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.setattr(main, "YahooFinanceClient", TickerEchoingFailureYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
-
-        with TestClient(main.app) as client:
-            response = client.post(
-                "/api/analyze",
-                json={"ticker": "TIMEOUT", "agents": ["buffett"]},
-            )
-
-        assert response.status_code == 502
-        assert TickerEchoingFailureYahoo.company_calls == ["TIMEOUT"]
-        assert WorkingFMP.company_calls == []
 
     def test_analyze_sanitizes_unhandled_workflow_exceptions(self, monkeypatch):
         """Unhandled internal/provider details must not cross the HTTP boundary."""
@@ -615,24 +236,21 @@ class TestDeploymentReadiness:
 
 
 class TestMarketDataCanary:
-    def test_canary_reports_healthy_when_fallback_provider_works(self, monkeypatch):
-        """Monitoring must exercise live market data without running the LLMs."""
-        RateLimitedYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
+    def test_canary_reports_healthy_when_yahoo_works(self, monkeypatch):
+        class WorkingYahoo:
+            calls = []
 
-        class UnexpectedNews:
-            def __init__(self):
-                raise AssertionError("canary must not initialize news")
+            async def __aenter__(self):
+                return self
 
-        class UnexpectedRAG:
-            def __init__(self):
-                raise AssertionError("canary must not initialize RAG")
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
 
-        monkeypatch.setattr(main, "NewsClient", UnexpectedNews)
-        monkeypatch.setattr(main, "RAGRetriever", UnexpectedRAG)
+            async def get_company_data(self, ticker, years=1):
+                self.calls.append(ticker)
+                return {"ticker": ticker, "info": {"regularMarketPrice": 42.0}}
+
+        monkeypatch.setattr(main, "YahooFinanceClient", WorkingYahoo)
 
         with TestClient(main.app) as client:
             response = client.get("/api/market-data-health")
@@ -641,33 +259,23 @@ class TestMarketDataCanary:
         assert response.json() == {
             "status": "healthy",
             "ticker": "AAPL",
-            "source": "fmp",
+            "source": "yahoo",
         }
-        assert RateLimitedYahoo.company_calls == ["AAPL"]
-        assert WorkingFMP.company_calls == ["AAPL"]
+        assert WorkingYahoo.calls == ["AAPL"]
 
     def test_canary_does_not_accept_arbitrary_tickers(self, monkeypatch):
-        """The unauthenticated canary cannot spend provider quota for user input."""
         RateLimitedYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
         monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
 
         with TestClient(main.app) as client:
             response = client.get("/api/market-data-health/EXPENSIVE")
 
         assert response.status_code == 404
         assert RateLimitedYahoo.company_calls == []
-        assert WorkingFMP.company_calls == []
 
     def test_canary_reports_unknown_fixed_ticker_as_404(self, monkeypatch):
-        """A definite missing canary ticker is not an upstream gateway failure."""
         UnknownTickerYahoo.company_calls = []
-        WorkingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
         monkeypatch.setattr(main, "YahooFinanceClient", UnknownTickerYahoo)
-        monkeypatch.setattr(main, "FMPClient", WorkingFMP)
 
         with TestClient(main.app) as client:
             response = client.get("/api/market-data-health")
@@ -680,57 +288,10 @@ class TestMarketDataCanary:
                 "retryable": False,
             }
         }
-        assert WorkingFMP.company_calls == []
-
-    @pytest.mark.asyncio
-    async def test_concurrent_canary_fallbacks_share_one_fmp_fetch(self, monkeypatch):
-        """Overlapping canary requests must spend fallback quota only once."""
-        fmp_started = asyncio.Event()
-        release_fmp = asyncio.Event()
-
-        class BlockingFMP(WorkingFMP):
-            company_calls = []
-
-            async def get_company_data(self, ticker, years=10):
-                self.company_calls.append(ticker)
-                fmp_started.set()
-                await release_fmp.wait()
-                return {
-                    "ticker": ticker,
-                    "profile": {
-                        "companyName": "Fallback Corp",
-                        "sector": "Industrials",
-                    },
-                }
-
-        RateLimitedYahoo.company_calls = []
-        BlockingFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
-        monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", BlockingFMP)
-
-        first = asyncio.create_task(main.market_data_health())
-        await fmp_started.wait()
-        second = asyncio.create_task(main.market_data_health())
-        await asyncio.sleep(0)
-        release_fmp.set()
-        first_result, second_result = await asyncio.gather(first, second)
-        results = [first_result, second_result, await main.market_data_health()]
-
-        assert results == [
-            {"status": "healthy", "ticker": "AAPL", "source": "fmp"},
-            {"status": "healthy", "ticker": "AAPL", "source": "fmp"},
-            {"status": "healthy", "ticker": "AAPL", "source": "fmp"},
-        ]
-        assert BlockingFMP.company_calls == ["AAPL"]
 
     def test_failed_canary_snapshot_is_cached_for_ttl(self, monkeypatch):
-        """An outage must not spend fallback quota again on every poll."""
         RateLimitedYahoo.company_calls = []
-        UnavailableFMP.company_calls = []
-        monkeypatch.setenv("FMP_API_KEY", "test-key")
         monkeypatch.setattr(main, "YahooFinanceClient", RateLimitedYahoo)
-        monkeypatch.setattr(main, "FMPClient", UnavailableFMP)
 
         with TestClient(main.app) as client:
             first = client.get("/api/market-data-health")
@@ -739,10 +300,86 @@ class TestMarketDataCanary:
         assert first.status_code == 503
         assert second.status_code == 503
         assert RateLimitedYahoo.company_calls == ["AAPL"]
-        assert UnavailableFMP.company_calls == ["AAPL"]
 
 
 class TestInitialBrowserRequest:
+    def test_market_status_and_incomplete_agent_helpers_are_explicit(self):
+        """The UI must expose degraded market data and incomplete agent inputs."""
+        html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+        market_source = "function getMarketDataUiState(dataStatus)" + html.split(
+            "function getMarketDataUiState(dataStatus)", 1
+        )[1].split("\n        function formatAgentAvailability", 1)[0]
+        agent_source = "function formatAgentAvailability(agent)" + html.split(
+            "function formatAgentAvailability(agent)", 1
+        )[1].split("\n        async function runAnalysis", 1)[0]
+        verdict_source = "function formatVerdict(verdict)" + html.split(
+            "function formatVerdict(verdict)", 1
+        )[1].split("\n        function formatMoatTrend", 1)[0]
+        escape_source = "function escapeHtml(value)" + html.split(
+            "function escapeHtml(value)", 1
+        )[1].split("\n        function getMarketDataUiState", 1)[0]
+        script = f"""
+const assert = require('assert');
+{market_source}
+{agent_source}
+{verdict_source}
+{escape_source}
+const unavailable = getMarketDataUiState({{
+  market_data: {{ available: false, reason: 'transient_provider_failure' }}
+}});
+assert.strictEqual(unavailable.shouldLoadPrice, false);
+assert.match(unavailable.message, /Market data unavailable/);
+assert.strictEqual(getMarketDataUiState({{ market_data: {{ available: true }} }}).shouldLoadPrice, true);
+assert.strictEqual(getMarketDataUiState(undefined).shouldLoadPrice, true);
+assert.strictEqual(
+  formatAgentAvailability({{ status: 'incomplete', unavailable_metrics: ['current_price', 'pe_ratio'] }}),
+  'Incomplete — unavailable: current price, PE ratio'
+);
+assert.strictEqual(formatAgentAvailability({{ status: 'complete' }}), '');
+assert.strictEqual(formatVerdict('incomplete'), 'Incomplete');
+assert.strictEqual(formatVerdict(null), 'Incomplete');
+assert.strictEqual(formatAgentScore({{ status: 'incomplete', score: null }}), 'Unavailable');
+assert.strictEqual(formatAgentScore({{ status: 'complete', score: 45 }}), '+45');
+assert.strictEqual(
+  escapeHtml('<img src=x onerror=alert(1)>'),
+  '&lt;img src=x onerror=alert(1)&gt;'
+);
+"""
+        result = subprocess.run(
+            ["node", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, json.dumps(
+            {"stdout": result.stdout, "stderr": result.stderr}
+        )
+
+    def test_display_results_wires_market_and_agent_availability_into_ui(self):
+        html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+        display_results = html.split("function displayResults(data)", 1)[1].split(
+            "\n        function renderEarnings", 1
+        )[0]
+
+        assert 'getMarketDataUiState(data.data_status)' in display_results
+        assert "marketDataNotice" in display_results
+        assert "if (marketUi.shouldLoadPrice)" in display_results
+        assert "formatAgentAvailability(agent)" in display_results
+        assert 'class="agent-availability"' in display_results
+        assert "consensusStatusNotice" in display_results
+        assert "Partial consensus" in display_results
+        assert "agreement is among complete analyses only" in display_results
+        assert "data.completed_analyses" in display_results
+        assert "data.requested_analyses" in display_results
+        assert "data.agreement_score == null" in display_results
+        assert "agreementValue.textContent = 'Unavailable'" in display_results
+        assert 'id="consensusStatusNotice"' in html
+        assert "map(p => `<li>${escapeHtml(p)}</li>`)" in display_results
+        assert "<h3>${escapeHtml(agent.agent)}</h3>" in display_results
+        assert "<div class=\"agent-style\">${escapeHtml(agent.style)}</div>" in display_results
+        assert "map(i => `<li>${escapeHtml(i)}</li>`)" in display_results
+        assert "map(c => `<li>${escapeHtml(c)}</li>`)" in display_results
+
     def test_analyze_click_starts_only_the_core_analysis_request(self):
         """Optional charts must not stampede Yahoo alongside core analysis."""
         html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
@@ -754,6 +391,25 @@ class TestInitialBrowserRequest:
         assert "/api/analyze" in run_analysis
         assert "/api/price-history" not in run_analysis
         assert "/api/earnings" not in run_analysis
+
+    def test_provider_and_error_strings_are_escaped_before_inner_html(self):
+        html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
+        assert "${escapeHtml(e.quarter || '—')}" in html
+        assert "${escapeHtml(e.date || '—')}" in html
+        assert "${escapeHtml(e.quarter || e.date)}" in html
+        assert "${escapeHtml(r.period)}" in html
+        assert "${escapeHtml(fg.summary)}" in html
+        assert "['accelerating', 'decelerating', 'stable'].includes(fg.growth_trend)" in html
+        assert "${escapeHtml(ins.quarter || ins.date || '—')}" in html
+        assert "${escapeHtml(ins.insight)}" in html
+        assert "${escapeHtml(streak.beats)}" in html
+        assert "${escapeHtml(streak.streak_type.toUpperCase())}" in html
+        assert "${escapeHtml(r.eps_num_analysts)} analysts" in html
+        assert "${escapeHtml(s.value)}" in html
+        assert "const gs = ['raised', 'lowered', 'maintained'].includes(ins.guidance_signal)" in html
+        assert "Failed to load chart: ${escapeHtml(err.message)}" in html
+        assert "Failed to load insights: ${escapeHtml(err.message)}" in html
+        assert "<strong>Couldn't find that ticker.</strong> ${escapeHtml(message)}" in html
 
     def test_structured_analysis_error_shows_human_message(self):
         """Structured API errors must not render as '[object Object]'."""

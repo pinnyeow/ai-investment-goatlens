@@ -7,7 +7,7 @@ Multi-agent investment analysis tool. Users enter a stock ticker and get scoring
 - `frontend/index.html` — single-page UI
 - `backend/main.py` — FastAPI server, all API endpoints
 - `backend/agents/` — one file per investor agent
-- `backend/data_sources/` — Yahoo Finance + FMP API clients
+- `backend/data_sources/` — SEC fundamentals + Yahoo market-data clients
 - `backend/tests/` — pytest test suite
 
 ## Commands
