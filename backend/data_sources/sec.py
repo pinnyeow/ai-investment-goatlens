@@ -208,28 +208,6 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             metric_inputs[output_metric] = valid_inputs
         return (current.value / prior.value) ** (1 / years) - 1
 
-    def earnings_turnaround() -> Optional[float]:
-        if reference is None:
-            return None
-        current = fact_for_reference("net_income", reference)
-        prior_reference = reference_years_ago(3)
-        prior = fact_for_reference("net_income", prior_reference)
-        if (
-            current is None
-            or current.value is None
-            or prior is None
-            or prior.value is None
-        ):
-            return None
-        inputs = (
-            evidence_input("income.begin", prior),
-            evidence_input("income.current", current),
-        )
-        valid_inputs = tuple(item for item in inputs if item is not None)
-        if len(valid_inputs) == 2:
-            metric_inputs["earnings_turnaround"] = valid_inputs
-        return 1.0 if prior.value <= 0 < current.value else 0.0
-
     def reference_years_ago(years: int) -> Optional[FactProvenance]:
         if reference is None:
             return None
@@ -285,16 +263,15 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
 
     def debt_facts_for_period_end(
         period_end: Optional[str],
-        metrics: tuple[str, ...] = (
-            "long_term_debt_current",
-            "long_term_debt_noncurrent",
-            "short_term_borrowings",
-        ),
     ) -> Optional[List[FundamentalValue]]:
         if period_end is None:
             return None
         components = []
-        for metric in metrics:
+        for metric in (
+            "long_term_debt_current",
+            "long_term_debt_noncurrent",
+            "short_term_borrowings",
+        ):
             if data.latest[metric].availability_reason is not None:
                 return None
             component = next(
@@ -350,37 +327,10 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             for earlier, later in zip(span, span[1:])
         ):
             return None, None
-        current_end = reference.end
-        prior_end = period_ends[prior_index]
-        full_metrics = (
-            "long_term_debt_current",
-            "long_term_debt_noncurrent",
-            "short_term_borrowings",
+        return (
+            debt_facts_for_period_end(reference.end),
+            debt_facts_for_period_end(period_ends[prior_index]),
         )
-
-        def has_observation(metric: str, period_end: str) -> bool:
-            return any(
-                item.value is not None
-                and item.provenance is not None
-                and item.provenance.end == period_end
-                for item in data.history[metric]
-            )
-
-        if all(
-            has_observation(metric, period_end)
-            for metric in full_metrics
-            for period_end in (current_end, prior_end)
-        ):
-            current = debt_facts_for_period_end(current_end, full_metrics)
-            prior = debt_facts_for_period_end(prior_end, full_metrics)
-            return (current, prior) if current is not None and prior is not None else (None, None)
-
-        component_metrics = ("long_term_debt_current", "long_term_debt_noncurrent")
-        current = debt_facts_for_period_end(current_end, component_metrics)
-        prior = debt_facts_for_period_end(prior_end, component_metrics)
-        if current is not None and prior is not None:
-            return current, prior
-        return None, None
 
     def operating_margin_trend() -> Optional[float]:
         references = [
@@ -665,7 +615,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             "long_term_current",
             "long_term_noncurrent",
             "short_term_borrowings",
-        )[: len(current_debt_facts or [])]
+        )
         raw_inputs = [
             evidence_input(f"debt.current.{role}", fact)
             for role, fact in zip(component_roles, current_debt_facts or [])
@@ -674,7 +624,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             for role, fact in zip(component_roles, prior_debt_facts or [])
         ]
         valid_inputs = tuple(item for item in raw_inputs if item is not None)
-        if len(valid_inputs) == 2 * len(component_roles):
+        if len(valid_inputs) == 6:
             metric_inputs["debt_growth_3y"] = valid_inputs
     values = {
         "ticker": data.ticker,
@@ -699,7 +649,6 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         "roe": ratio(net_income, equity),
         "revenue_growth": growth("revenue", "revenue_growth"),
         "earnings_growth": growth("net_income", "earnings_growth", years=3),
-        "earnings_turnaround": earnings_turnaround(),
         "revenue_growth_5y": growth("revenue", "revenue_growth_5y", years=5),
         "free_cash_flow_per_share": ratio(free_cash_flow, shares),
         "debt_to_equity": ratio(total_debt, equity),
@@ -815,7 +764,6 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         "debt_to_equity": "funded_debt_divided_by_equity",
         "free_cash_flow": "operating_cash_flow_minus_capex",
         "earnings_growth": "three_year_net_income_cagr",
-        "earnings_turnaround": "negative_or_zero_to_positive_three_year_net_income_transition",
         "cash_and_equivalents": "reported",
         "current_ratio": "current_assets_divided_by_current_liabilities",
         "current_assets": "reported",

@@ -4,8 +4,8 @@ This document defines the evidence required for a strategy to return a score and
 
 ## Shared rules
 
-- SEC EDGAR Company Facts is authoritative for U.S. filing facts and historical series. Allowlisted Yahoo ratios are provider-normalized analytical values rather than replacements for the underlying filing facts.
-- Yahoo is best-effort enrichment through two isolated adapters: the direct chart endpoint supplies timestamped prices and adjusted price history, while a narrow `yfinance` adapter supplies only allowlisted provider-normalized current ratios. GOATlens does not ingest Yahoo financial statements.
+- SEC EDGAR Company Facts is authoritative for U.S. filing fundamentals.
+- Yahoo's direct chart endpoint is best-effort market enrichment for timestamped prices and adjusted price history. GOATlens does not use Yahoo `quoteSummary`, `Ticker.info`, or financial statements in the core analysis path.
 - Derived metrics carry their formula version, source timestamps, filing periods, and input provenance.
 - A reported zero is valid only when the source explicitly reports zero. Absence is unavailable.
 - Inputs combined within one derivation period must share the applicable full filing context: duration facts share start, end, accession, form, filing date, and fiscal year; instant facts share end, accession, form, filing date, and fiscal year. Multi-period formulas may compare internally compatible period groups from different annual filings; an unrelated revenue fact may locate fiscal chronology but is not forced into a debt derivation's filing context.
@@ -15,7 +15,7 @@ This document defines the evidence required for a strategy to return a score and
 
 ## Contract inventory
 
-The current strategy contract contains **28 required strategy slots across five agents, representing 24 unique metrics** after shared metrics are deduplicated. This replaces the 36-field legacy inventory: institutional ownership, management beneficial ownership, unscaled cash balance, industrial interest coverage, dividend-history length, approximate ROIC, historical debt growth, and revenue variability are optional context rather than completeness requirements. Fabricated expected return was removed and replaced by required trailing realized return. The executable inventory is `_AGENT_REQUIRED_METRICS`, and every required or optional scored metric must have exactly one typed public metric-evidence contract.
+The current strategy contract contains **31 required strategy slots across five agents, representing 27 unique metrics** after shared metrics are deduplicated. This replaces the 36-field legacy inventory: institutional ownership, management beneficial ownership, unscaled cash balance, industrial interest coverage, and revenue variability are optional context rather than completeness requirements; fabricated expected return was removed and replaced by required trailing realized return. The executable inventory is `_AGENT_REQUIRED_METRICS`, and every unique required metric must have exactly one typed public metric-evidence contract.
 
 ## Buffett
 
@@ -32,11 +32,11 @@ The current cash-flow metric is `operating cash flow - capital expenditures` and
 
 Required evidence:
 
-- provider-normalized trailing price-to-earnings ratio when available, otherwise timestamped market price divided by compatible SEC diluted EPS;
-- positive multi-year earnings growth, or an SEC-backed negative-to-positive earnings-turnaround flag when CAGR is mathematically undefined;
+- price-to-earnings ratio, derived from timestamped market price and compatible SEC diluted EPS;
+- positive multi-year earnings growth;
 - debt to equity.
 
-Cash and cash equivalents is optional reported context, not a score input: an unscaled cash balance is not comparable across issuers and must not create a favorable default. A negative-to-positive three-year earnings transition is classified and scored as a distinct recovery signal; conventional CAGR and PEG are explicitly not applicable, and the public result warns that two endpoints do not establish recovery durability. `reported_13f_long_ownership_pct` is an optional discovery modifier, not a completeness requirement. If present, it must be labeled as lagged 13F-reported long ownership with period and coverage limitations. Missing ownership cannot receive the historical low-ownership bonus.
+Cash and cash equivalents is optional reported context, not a score input: an unscaled cash balance is not comparable across issuers and must not create a favorable default. `reported_13f_long_ownership_pct` is an optional discovery modifier, not a completeness requirement. If present, it must be labeled as lagged 13F-reported long ownership with period and coverage limitations. Missing ownership cannot receive the historical low-ownership bonus.
 
 ## Graham
 
@@ -45,12 +45,11 @@ Required evidence:
 - timestamped market price;
 - SEC diluted EPS and period-end common shares;
 - SEC common equity, current assets, current liabilities, and total liabilities;
-- current dividend yield.
+- SEC common-dividend history.
 
-Ratio and derived-value precedence:
+Derived values:
 
-- Yahoo provider-normalized P/E, P/B, current ratio, and current dividend yield take precedence when present because their accounting basis is provider-normalized. Their evidence is labeled Yahoo and is not presented as SEC annual-period data.
-- `P/E = price / diluted EPS`, only for positive EPS, is the SEC-plus-price fallback;
+- `P/E = price / diluted EPS`, only for positive EPS;
 - `book value per share = common equity / period-end common shares`;
 - `P/B = price / book value per share`, only for positive book value;
 - `current ratio = current assets / current liabilities`;
@@ -58,7 +57,7 @@ Ratio and derived-value precedence:
 - trailing-FY dividend yield = latest completed-FY common DPS / timestamped price;
 - consecutive dividend years = uninterrupted completed fiscal years with positive common DPS.
 
-The dividend record uses the declared common-dividend-per-share concept first. A provider-reported current yield of zero is a known non-dividend payer and fails the dividend criterion without invalidating the analysis. Dividend-history length is optional; when available, the defensive-investor threshold is twenty years and must not silently relax to ten. Missing dividend facts remain unavailable, not zero.
+The dividend record uses the declared common-dividend-per-share concept first. Missing dividend facts are unavailable, not zero. The defensive-investor threshold is twenty years; the implementation must not silently relax it to ten.
 
 ## Munger
 
@@ -66,6 +65,7 @@ Required evidence:
 
 - gross margin;
 - operating margin;
+- approximate accounting ROIC;
 - five-year revenue growth;
 - capital expenditures to revenue;
 - debt to equity;
@@ -73,7 +73,7 @@ Required evidence:
 
 `management_beneficial_ownership_pct` is an optional incentives modifier sourced from an issuer proxy Item 403 table. Missing ownership cannot become a low-ownership red flag.
 
-Approximate accounting ROIC is an optional quality signal, not a completeness blocker. When absent, the public result states that capital-efficiency points were excluded. When present it uses:
+Approximate accounting ROIC:
 
 - `tax rate = tax expense / pretax income`, accepted only when pretax income is positive and the rate is within `[0, 1]`;
 - `NOPAT = operating income * (1 - tax rate)`;
@@ -93,6 +93,7 @@ Required evidence:
 - S&P 500 return correlation;
 - realized total return over the same 252-session window;
 - debt to equity;
+- three-year funded-debt CAGR.
 
 Market calculations use total-return-adjusted closes. Asset and benchmark returns are inner-joined on the full prior-session/current-session pair without forward filling. Volatility requires 252 valid asset return intervals derived from 253 adjusted-close observations. Beta and correlation require at least 126 aligned return intervals. Public series evidence labels these as return intervals and discloses their exact count and window rather than mislabeling the count as raw close observations.
 
@@ -103,16 +104,6 @@ Revenue growth variability may be shown descriptively but is not labeled macroec
 Industrial interest coverage is optional context because some issuers, including AAPL in recent filings, do not separately disclose current-period interest expense. Missing coverage cannot become zero, a low-coverage concern, or a completeness blocker when debt to equity and funded-debt trend are available.
 
 Debt reduction is not automatically distress. Debt trend is reported with leverage and coverage rather than mapped to a distressed state solely because debt fell rapidly.
-
-Three-year funded-debt CAGR is optional historical context. When absent, Dalio may assess current leverage and market risk, but the public insight must label debt trajectory unavailable and must not infer a trend.
-
-## Yahoo normalized-ratio contract
-
-The ratio adapter consumes only `trailingPE`, `priceToBook`, `currentRatio`, `trailingAnnualDividendYield`, `returnOnEquity`, `profitMargins`, `grossMargins`, `operatingMargins`, and `debtToEquity`. Yahoo `debtToEquity` is converted from percentage units to a decimal. Missing, boolean, or non-finite values remain unavailable; zero remains a valid reported value. No forward-P/E substitution, beta default, ROCE-to-ROIC mapping, Yahoo statement ingestion, or arbitrary-period growth label is allowed.
-
-Each ratio exposes the provider field, retrieved timestamp, value, availability, and `yahoo_quote_summary_v1` normalization version. Yahoo does not provide a reliable accounting-period end for these fields, so no filing-period `as_of` is invented; the retrieval timestamp and provider basis remain explicit. Ratio retrieval has an eight-second deadline and is cached, bounded, coalesced, and isolated: failure cannot erase SEC facts or Yahoo chart evidence. `data_status.normalized_ratios` distinguishes provider failure from field-level omission.
-
-Yahoo Finance is an undocumented, best-effort source without an application SLA. Cookie/crumb behavior, throttling, schema drift, and field omissions may break retrieval. `yfinance` states that Yahoo data is intended for personal use; public or commercial deployment requires product-owner/legal acceptance or migration to a provider whose license grants the intended use.
 
 ## Yahoo chart contract
 

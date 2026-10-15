@@ -30,7 +30,7 @@ class GrahamMetrics:
     pb_ratio: float
     current_ratio: float
     dividend_yield: float
-    dividend_years: Optional[int]
+    dividend_years: int
     graham_number: float
     current_price: float
     net_net_value: float  # NCAV per share
@@ -89,7 +89,7 @@ class GrahamAgent:
             "pb_ratio": financials.get("pb_ratio"),
             "current_ratio": financials.get("current_ratio"),
             "dividend_yield": financials.get("dividend_yield"),
-            "dividend_years": financials.get("consecutive_dividend_years"),
+            "dividend_years": financials.get("dividend_years", 0),
             "book_value_per_share": financials.get("book_value_per_share"),
             "current_price": financials.get("current_price"),
             "eps": financials.get("eps"),
@@ -126,6 +126,7 @@ class GrahamAgent:
                 "pe_ratio", "pb_ratio", "current_ratio", "current_price",
                 "current_assets", "total_liabilities", "shares_outstanding",
                 "eps", "book_value_per_share", "dividend_yield",
+                "consecutive_dividend_years",
             ),
         )
         if incomplete:
@@ -186,7 +187,7 @@ class GrahamAgent:
             pb_ratio=financials.get("pb_ratio", 0),
             current_ratio=financials.get("current_ratio", 0),
             dividend_yield=financials.get("dividend_yield", 0),
-            dividend_years=financials.get("consecutive_dividend_years"),
+            dividend_years=financials.get("consecutive_dividend_years", 0),
             graham_number=graham_number,
             current_price=financials.get("current_price", 0),
             net_net_value=net_net,
@@ -236,7 +237,7 @@ class GrahamAgent:
             "net_net_margin": net_net_margin,
         }
     
-    def _check_defensive_criteria(self, metrics: GrahamMetrics) -> Dict[str, Any]:
+    def _check_defensive_criteria(self, metrics: GrahamMetrics) -> Dict[str, bool]:
         """
         Check Graham's defensive investor criteria.
         
@@ -250,37 +251,26 @@ class GrahamAgent:
         7. Moderate P/B (< 1.5) or P/E × P/B < 22.5
         """
         pe_x_pb = metrics.pe_ratio * metrics.pb_ratio
-        dividend_pass = (
-            False
-            if metrics.dividend_yield == 0
-            else None
-            if metrics.dividend_years is None
-            else metrics.dividend_years >= self.MIN_DIVIDEND_YEARS
-        )
-        required_results = [
-            metrics.current_ratio >= self.MIN_CURRENT_RATIO,
-            metrics.pe_ratio <= self.MAX_PE and metrics.pe_ratio > 0,
-            metrics.pb_ratio <= self.MAX_PB or pe_x_pb <= self.MAX_PE_X_PB,
-        ]
-        evaluated_results = required_results + (
-            [dividend_pass] if dividend_pass is not None else []
-        )
-
+        
         return {
             "current_ratio_pass": metrics.current_ratio >= self.MIN_CURRENT_RATIO,
             "pe_ratio_pass": metrics.pe_ratio <= self.MAX_PE and metrics.pe_ratio > 0,
             "pb_ratio_pass": metrics.pb_ratio <= self.MAX_PB and metrics.pb_ratio > 0,
             "pe_x_pb_pass": pe_x_pb <= self.MAX_PE_X_PB and pe_x_pb > 0,
-            "dividend_pass": dividend_pass,
-            "criteria_met": sum(evaluated_results),
-            "criteria_evaluated": len(evaluated_results),
+            "dividend_pass": metrics.dividend_years >= self.MIN_DIVIDEND_YEARS,
+            "criteria_met": sum([
+                metrics.current_ratio >= self.MIN_CURRENT_RATIO,
+                metrics.pe_ratio <= self.MAX_PE and metrics.pe_ratio > 0,
+                metrics.pb_ratio <= self.MAX_PB or pe_x_pb <= self.MAX_PE_X_PB,
+                metrics.dividend_years >= self.MIN_DIVIDEND_YEARS,
+            ]),
         }
     
     def _calculate_score(
         self,
         metrics: GrahamMetrics,
         margin_of_safety: Dict[str, Any],
-        defensive_criteria: Dict[str, Any],
+        defensive_criteria: Dict[str, bool],
     ) -> float:
         """Calculate overall Graham score (-100 to +100)."""
         score = 0.0
@@ -315,11 +305,11 @@ class GrahamAgent:
             score -= 15
         
         # Dividend history contribution (max 15 points)
-        if metrics.dividend_years is not None and metrics.dividend_years >= 20:
+        if metrics.dividend_years >= 20:
             score += 15
-        elif metrics.dividend_years is not None and metrics.dividend_years >= 10:
+        elif metrics.dividend_years >= 10:
             score += 10
-        elif metrics.dividend_years is not None and metrics.dividend_years >= 5:
+        elif metrics.dividend_years >= 5:
             score += 5
         
         # Net-Net bonus (rare but valuable)
@@ -382,7 +372,7 @@ class GrahamAgent:
         if metrics.current_ratio >= 2.0:
             insights.append(f"Strong balance sheet with current ratio of {metrics.current_ratio:.1f}")
         
-        if metrics.dividend_years is not None and metrics.dividend_years >= 10:
+        if metrics.dividend_years >= 10:
             insights.append(f"Consistent dividend payer for {metrics.dividend_years} years")
         
         if metrics.net_net_value > metrics.current_price:
@@ -403,11 +393,7 @@ class GrahamAgent:
         if metrics.pb_ratio > 2.0:
             concerns.append(f"High P/B ratio of {metrics.pb_ratio:.1f}")
         
-        if metrics.dividend_yield == 0:
-            concerns.append("No current dividend")
-        elif metrics.dividend_years is None:
-            concerns.append("Dividend history is unavailable")
-        elif metrics.dividend_years < 5:
+        if metrics.dividend_years < 5:
             concerns.append("Limited dividend history")
         
         return concerns
