@@ -93,6 +93,28 @@ async def test_agent_rejects_non_finite_required_metric():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_class", "overrides", "unavailable"),
+    [
+        (LynchAgent, {"pe_ratio": -5.0}, ["pe_ratio"]),
+        (GrahamAgent, {"pe_ratio": -5.0}, ["pe_ratio"]),
+        (GrahamAgent, {"pb_ratio": -2.0}, ["pb_ratio"]),
+    ],
+)
+async def test_agents_reject_nonpositive_valuation_ratios(
+    agent_class, overrides, unavailable
+):
+    result = await agent_class(llm_client=None).analyze(
+        "LOSS", dict(MOCK_FINANCIALS, **overrides)
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+    assert result["unavailable_metrics"] == unavailable
+
+
+@pytest.mark.asyncio
 async def test_graham_does_not_relax_twenty_year_defensive_dividend_rule():
     financials = dict(MOCK_FINANCIALS)
     financials.update(
@@ -106,6 +128,77 @@ async def test_graham_does_not_relax_twenty_year_defensive_dividend_rule():
 
     assert result["defensive_criteria"]["dividend_pass"] is False
     assert result["defensive_criteria"]["criteria_met"] == 0
+
+
+@pytest.mark.asyncio
+async def test_lynch_turnaround_is_a_scored_recovery_branch_with_explicit_limits():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("earnings_growth")
+    financials["earnings_turnaround"] = 1.0
+
+    result = await LynchAgent(llm_client=None).analyze("AMZN", financials)
+
+    assert result["stock_category"] == "turnaround"
+    assert result["score"] == 18.75
+    assert any("negative-to-positive" in item.lower() for item in result["insights"])
+    assert any("durability" in item.lower() for item in result["concerns"])
+
+
+@pytest.mark.asyncio
+async def test_graham_does_not_fail_an_unknown_dividend_history_criterion():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("consecutive_dividend_years")
+
+    result = await GrahamAgent(llm_client=None).analyze("AAPL", financials)
+
+    assert result["defensive_criteria"]["dividend_pass"] is None
+    assert result["defensive_criteria"]["criteria_evaluated"] == 3
+
+
+@pytest.mark.asyncio
+async def test_graham_current_nonpayer_fails_dividend_criterion_despite_old_history():
+    financials = dict(MOCK_FINANCIALS)
+    financials["dividend_yield"] = 0.0
+    financials["consecutive_dividend_years"] = 25
+
+    result = await GrahamAgent(llm_client=None).analyze("AMZN", financials)
+
+    assert result["defensive_criteria"]["dividend_pass"] is False
+    assert result["defensive_criteria"]["criteria_met"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dividend_yield", [0.0, None])
+async def test_graham_does_not_award_history_points_without_current_dividend(
+    dividend_yield,
+):
+    base = dict(
+        MOCK_FINANCIALS,
+        dividend_yield=dividend_yield,
+        consecutive_dividend_years=None,
+    )
+    with_history = dict(base, consecutive_dividend_years=25)
+
+    baseline = await GrahamAgent(llm_client=None).analyze("AMZN", base)
+    result = await GrahamAgent(llm_client=None).analyze("AMZN", with_history)
+
+    assert result["score"] == baseline["score"]
+    assert result["defensive_criteria"]["dividend_pass"] is (
+        False if dividend_yield == 0 else None
+    )
+    if dividend_yield is None:
+        assert any("yield is unavailable" in item.lower() for item in result["concerns"])
+
+
+@pytest.mark.asyncio
+async def test_dalio_surfaces_unavailable_debt_trajectory_in_public_insights():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("debt_growth_3y")
+
+    result = await DalioAgent(llm_client=None).analyze("AMZN", financials)
+
+    assert result["cycle_analysis"]["debt_trajectory"] == "unavailable"
+    assert any("debt trajectory is unavailable" in item.lower() for item in result["insights"])
 
 
 @pytest.mark.asyncio
@@ -132,6 +225,17 @@ async def test_lynch_treats_institutional_ownership_as_optional_context():
 
     assert result.get("status") != "incomplete"
     assert isinstance(result["score"], (int, float))
+
+
+@pytest.mark.asyncio
+async def test_munger_surfaces_optional_roic_gap_in_public_insights():
+    financials = dict(MOCK_FINANCIALS)
+    financials.pop("roic")
+
+    result = await MungerAgent(llm_client=None).analyze("AMZN", financials)
+
+    assert result["metrics"]["roic"] is None
+    assert any("roic is unavailable" in item.lower() for item in result["insights"])
 
 
 @pytest.mark.asyncio

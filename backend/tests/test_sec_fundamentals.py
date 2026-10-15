@@ -480,6 +480,47 @@ async def test_newer_alias_filing_supersedes_older_same_period_value():
 
 
 @pytest.mark.asyncio
+async def test_amzn_gross_margin_falls_back_to_compatible_cost_of_sales():
+    payload = load_json("companyfacts_amzn.json")
+    payload["facts"]["us-gaap"]["CostOfGoodsAndServicesSold"] = {
+        "label": "Cost of Goods and Services Sold",
+        "description": "Cost of goods and services sold.",
+        "units": {
+            "USD": [
+                {
+                    "start": "2025-01-01",
+                    "end": "2025-12-31",
+                    "val": 356_414_000_000,
+                    "accn": "0001018724-26-000004",
+                    "fy": 2025,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2026-02-06",
+                    "frame": "CY2025",
+                }
+            ]
+        },
+    }
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(load_json("company_tickers.json"), payload),
+    ) as client:
+        normalized = normalize_sec_fundamentals(
+            await client.get_fundamentals("AMZN")
+        )
+
+    expected = (716_924_000_000 - 356_414_000_000) / 716_924_000_000
+    assert normalized["gross_margin"] == pytest.approx(expected)
+    metric = normalized.metrics["gross_margin"]
+    assert metric.formula == "revenue_minus_cost_of_revenue_divided_by_revenue"
+    assert [item.role for item in metric.inputs] == [
+        "income.current.revenue",
+        "income.current.cost_of_revenue",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_latest_ratios_do_not_mix_fiscal_periods_or_filings():
     payload = load_json("companyfacts_aapl.json")
     net_income = payload["facts"]["us-gaap"]["NetIncomeLoss"]["units"]["USD"]

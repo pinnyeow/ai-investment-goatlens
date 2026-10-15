@@ -96,6 +96,7 @@ from data_sources.yahoo_chart import (
     YahooChartError,
     YahooChartNotFound,
 )
+from data_sources.yahoo_ratios import YahooRatioError, YahooRatiosClient
 from data_sources.sec import (
     SECConfigurationError,
     SECError,
@@ -401,11 +402,22 @@ class MarketSeriesInputResponse(StrictAPIModel):
     observation_count: int = Field(ge=1)
 
 
+class ProviderMetricInputResponse(StrictAPIModel):
+    kind: Literal["provider_metric"]
+    role: str = Field(min_length=1)
+    source: Literal["yahoo"]
+    symbol: str = Field(min_length=1)
+    provider_field: str = Field(min_length=1)
+    value: float
+    retrieved_at: str = Field(min_length=1)
+
+
 MetricInputResponse = Annotated[
     Union[
         SECMetricInputResponse,
         MarketObservationInputResponse,
         MarketSeriesInputResponse,
+        ProviderMetricInputResponse,
     ],
     Field(discriminator="kind"),
 ]
@@ -460,6 +472,7 @@ class AnalysisCompletenessStatus(StrictAPIModel):
 class AnalysisDataStatus(StrictAPIModel):
     fundamentals: FundamentalsAvailabilityStatus
     market_data: MarketAvailabilityStatus
+    normalized_ratios: MarketAvailabilityStatus
     price_dependent_analysis: AnalysisCompletenessStatus
 
 
@@ -612,6 +625,10 @@ _METRIC_EVIDENCE_CONTRACTS = {
     "debt_to_equity": ("sec", "funded_debt_divided_by_equity"),
     "free_cash_flow": ("sec", "operating_cash_flow_minus_capex"),
     "earnings_growth": ("sec", "three_year_net_income_cagr"),
+    "earnings_turnaround": (
+        "sec",
+        "negative_or_zero_to_positive_three_year_net_income_transition",
+    ),
     "cash_and_equivalents": ("sec", "reported"),
     "current_ratio": ("sec", "current_assets_divided_by_current_liabilities"),
     "current_assets": ("sec", "reported"),
@@ -653,7 +670,7 @@ _METRIC_EVIDENCE_CONTRACTS = {
 }
 
 
-def _build_metric_evidence(normalized, snapshot=None):
+def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
     evidence = {}
     market_as_of = (
         getattr(snapshot, "current_price_as_of", None) if snapshot is not None else None
@@ -719,7 +736,29 @@ def _build_metric_evidence(normalized, snapshot=None):
         observations = None
         inputs = []
         reason = "required_inputs_unavailable"
-        if source == "sec":
+        ratio_value = (
+            ratio_snapshot.values.get(metric)
+            if ratio_snapshot is not None
+            else None
+        )
+        if metric_is_available(ratio_value):
+            value = ratio_value
+            source = "yahoo"
+            formula = "provider_normalized_ratio"
+            as_of = None
+            observations = 1
+            inputs = [{
+                "kind": "provider_metric",
+                "role": f"ratio.{metric}",
+                "source": "yahoo",
+                "symbol": ratio_snapshot.symbol,
+                "provider_field": ratio_snapshot.provider_fields[metric],
+                "value": float(ratio_value),
+                "retrieved_at": ratio_snapshot.fetched_at,
+            }]
+            available = True
+            version = "yahoo_quote_summary_v1"
+        elif source == "sec":
             canonical = sec_metrics.get(metric)
             if canonical is not None:
                 value = canonical.value
@@ -795,6 +834,37 @@ def _build_metric_evidence(normalized, snapshot=None):
             "availability_reason": None if available else reason,
         }
     return evidence
+
+
+def _price_dependent_analysis_status(normalized):
+    valuation_inputs = {
+        "current_price": normalized.get("current_price"),
+        "eps": normalized.get("eps"),
+        "book_value_per_share": normalized.get("book_value_per_share"),
+        "shares_outstanding": normalized.get("shares_outstanding"),
+        "revenue": normalized.get("revenue"),
+    }
+    missing_inputs = [
+        name for name, value in valuation_inputs.items() if value is None
+    ]
+    valuation_outputs = {
+        "pe_ratio": normalized.get("pe_ratio"),
+        "pb_ratio": normalized.get("pb_ratio"),
+        "ps_ratio": normalized.get("ps_ratio"),
+    }
+    missing_outputs = [
+        name for name, value in valuation_outputs.items() if value is None
+    ]
+    return {
+        "status": "incomplete" if missing_inputs or missing_outputs else "complete",
+        "reason": (
+            "missing_inputs:" + ",".join(missing_inputs)
+            if missing_inputs
+            else "missing_outputs:" + ",".join(missing_outputs)
+            if missing_outputs
+            else None
+        ),
+    }
 
 
 async def fetch_data_node(state: GOATState) -> GOATState:
@@ -883,6 +953,12 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "as_of": None,
             "reason": "market_data_unavailable",
         },
+        "normalized_ratios": {
+            "available": False,
+            "source": "yahoo",
+            "as_of": None,
+            "reason": "provider_temporarily_unavailable",
+        },
         "price_dependent_analysis": {
             "status": "incomplete",
             "reason": "current_market_price_unavailable",
@@ -895,6 +971,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     state["data_source"] = "sec"
 
     snapshot = None
+    ratio_snapshot = None
     try:
         async with YahooChartClient() as client:
             snapshot = await client.get_snapshot(ticker)
@@ -958,38 +1035,9 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "as_of": snapshot.current_price_as_of,
             "reason": None if current_price is not None else "current_market_price_unavailable",
         }
-        valuation_inputs = {
-            "current_price": current_price,
-            "eps": normalized.get("eps"),
-            "book_value_per_share": normalized.get("book_value_per_share"),
-            "shares_outstanding": normalized.get("shares_outstanding"),
-            "revenue": normalized.get("revenue"),
-        }
-        missing_valuation_inputs = [
-            name for name, value in valuation_inputs.items() if value is None
-        ]
-        valuation_outputs = {
-            "pe_ratio": normalized.get("pe_ratio"),
-            "pb_ratio": normalized.get("pb_ratio"),
-            "ps_ratio": normalized.get("ps_ratio"),
-        }
-        missing_valuation_outputs = [
-            name for name, value in valuation_outputs.items() if value is None
-        ]
-        state["data_status"]["price_dependent_analysis"] = {
-            "status": (
-                "incomplete"
-                if missing_valuation_inputs or missing_valuation_outputs
-                else "complete"
-            ),
-            "reason": (
-                "missing_inputs:" + ",".join(missing_valuation_inputs)
-                if missing_valuation_inputs
-                else "missing_outputs:" + ",".join(missing_valuation_outputs)
-                if missing_valuation_outputs
-                else None
-            ),
-        }
+        state["data_status"]["price_dependent_analysis"] = (
+            _price_dependent_analysis_status(normalized)
+        )
     except YahooChartError as yahoo_error:
         error_code = (
             "ticker_not_found"
@@ -1002,10 +1050,36 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     except Exception:
         state["data_status"]["market_data"]["reason"] = "market_data_failure"
 
+    try:
+        async with YahooRatiosClient() as client:
+            ratio_snapshot = await client.get_snapshot(ticker)
+        normalized.update(ratio_snapshot.values)
+        state["data_source"] = "sec+yahoo"
+        state["data_status"]["normalized_ratios"] = {
+            "available": True,
+            "source": "yahoo",
+            "as_of": ratio_snapshot.fetched_at,
+            "reason": None,
+        }
+    except YahooRatioError as ratio_error:
+        ratio_snapshot = None
+        state["data_status"]["normalized_ratios"]["reason"] = ratio_error.code
+    except Exception:
+        ratio_snapshot = None
+        state["data_status"]["normalized_ratios"]["reason"] = (
+            "ratio_data_failure"
+        )
+
+    if snapshot is not None:
+        state["data_status"]["price_dependent_analysis"] = (
+            _price_dependent_analysis_status(normalized)
+        )
+
     state["normalized_data"] = normalized
     state["metric_evidence"] = _build_metric_evidence(
         normalized,
         snapshot,
+        ratio_snapshot,
     )
 
     try:
@@ -1084,13 +1158,10 @@ _AGENT_REQUIRED_METRICS = {
         "shares_outstanding",
         "eps",
         "book_value_per_share",
-        "dividend_yield",
-        "consecutive_dividend_years",
     ),
     "munger": (
         "gross_margin",
         "operating_margin",
-        "roic",
         "revenue_growth_5y",
         "capex_to_revenue",
         "debt_to_equity",
@@ -1101,7 +1172,6 @@ _AGENT_REQUIRED_METRICS = {
         "volatility_252d",
         "debt_to_equity",
         "correlation_sp500",
-        "debt_growth_3y",
         "realized_total_return_252d",
     ),
 }
@@ -1147,9 +1217,14 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     # the ChatOpenAI child span via parent_run_id.
     tasks = []
     for name, agent in agents.items():
+        required_metrics = _AGENT_REQUIRED_METRICS.get(name, ())
+        if name == "lynch" and financials.get("earnings_turnaround") == 1.0:
+            required_metrics = tuple(
+                metric for metric in required_metrics if metric != "earnings_growth"
+            ) + ("earnings_turnaround",)
         unavailable = [
             metric
-            for metric in _AGENT_REQUIRED_METRICS.get(name, ())
+            for metric in required_metrics
             if not metric_is_available(financials.get(metric))
         ]
         if unavailable:
@@ -1455,7 +1530,7 @@ app = FastAPI(
 
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-pxczKCKUiVMqrdR1Zl7u28jypZs03ri4/AU6VKnKejk=' "
+    "script-src 'self' 'sha256-NVbdyzSzSfcMqQh2NLZTqiqAV/36ktGEm11PDyYJfpg=' "
     "https://unpkg.com https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src https://fonts.gstatic.com; img-src 'self' data:; "

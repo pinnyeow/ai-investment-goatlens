@@ -31,6 +31,10 @@ from data_sources.yahoo_chart import (
     YahooChartTemporarilyUnavailable,
     YahooPricePoint,
 )
+from data_sources.yahoo_ratios import (
+    YahooRatioSnapshot,
+    YahooRatioTemporarilyUnavailable,
+)
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "sec"
@@ -58,6 +62,39 @@ class FixtureAAPLSEC(SECFundamentalsClient):
     async def get_fundamentals(self, ticker, as_of=None):
         self.calls.append(ticker)
         return await super().get_fundamentals(ticker, as_of=as_of)
+
+
+class FixtureAMZNSEC(SECFundamentalsClient):
+    def __init__(self, user_agent):
+        ticker_map = json.loads((FIXTURES / "company_tickers.json").read_text())
+        companyfacts = json.loads((FIXTURES / "companyfacts_amzn.json").read_text())
+        companyfacts["facts"]["us-gaap"]["CostOfGoodsAndServicesSold"] = {
+            "units": {
+                "USD": [{
+                    "start": "2025-01-01",
+                    "end": "2025-12-31",
+                    "val": 356_414_000_000,
+                    "accn": "0001018724-26-000004",
+                    "fy": 2025,
+                    "fp": "FY",
+                    "form": "10-K",
+                    "filed": "2026-02-06",
+                    "frame": "CY2025",
+                }]
+            }
+        }
+
+        async def handler(request):
+            if request.url.path.endswith("/files/company_tickers.json"):
+                return httpx.Response(200, json=ticker_map)
+            if "/api/xbrl/companyfacts/" in request.url.path:
+                return httpx.Response(200, json=companyfacts)
+            return httpx.Response(404, json={})
+
+        super().__init__(
+            user_agent=user_agent,
+            transport=httpx.MockTransport(handler),
+        )
 
 
 class FixtureCompleteMetricsSEC(SECFundamentalsClient):
@@ -205,6 +242,56 @@ class WorkingYahoo(UnavailableYahoo):
         )
 
 
+class WorkingYahooRatios:
+    calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+    async def get_snapshot(self, ticker):
+        self.calls.append(ticker)
+        return YahooRatioSnapshot(
+            symbol=ticker,
+            fetched_at="2026-10-15T18:00:00+00:00",
+            values={
+                "roe": 0.31,
+                "profit_margin": 0.17,
+                "debt_to_equity": 0.46,
+                "pe_ratio": 20.75,
+                "pb_ratio": 4.95,
+                "current_ratio": 1.03,
+                "dividend_yield": 0.0,
+                "gross_margin": 0.51,
+                "operating_margin": 0.14,
+            },
+            provider_fields={
+                "roe": "returnOnEquity",
+                "profit_margin": "profitMargins",
+                "debt_to_equity": "debtToEquity",
+                "pe_ratio": "trailingPE",
+                "pb_ratio": "priceToBook",
+                "current_ratio": "currentRatio",
+                "dividend_yield": "trailingAnnualDividendYield",
+                "gross_margin": "grossMargins",
+                "operating_margin": "operatingMargins",
+            },
+        )
+
+
+class UnavailableYahooRatios:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return None
+
+    async def get_snapshot(self, ticker):
+        raise YahooRatioTemporarilyUnavailable("Ratio data is unavailable.")
+
+
 class NoNews:
     async def should_use_tool(self, ticker, financials):
         return False
@@ -319,6 +406,12 @@ def test_analysis_continues_from_sec_when_yahoo_is_unavailable(monkeypatch):
             "as_of": None,
             "reason": "market_data_temporarily_unavailable",
         },
+        "normalized_ratios": {
+            "available": False,
+            "source": "yahoo",
+            "as_of": None,
+            "reason": "provider_temporarily_unavailable",
+        },
         "price_dependent_analysis": {
             "status": "incomplete",
             "reason": "current_market_price_unavailable",
@@ -388,6 +481,138 @@ def test_analysis_reports_timestamped_yahoo_market_data_when_available(monkeypat
     }
     assert FixtureAAPLSEC.calls == ["AAPL"]
     assert WorkingYahoo.calls == ["AAPL"]
+
+
+def test_available_yahoo_ratios_are_used_with_provider_provenance(monkeypatch):
+    WorkingYahooRatios.calls = []
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureCompleteMetricsSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "YahooRatiosClient", WorkingYahooRatios)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze",
+            json={"ticker": "METR", "agents": ["buffett", "munger"]},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert WorkingYahooRatios.calls == ["METR"]
+    assert body["metric_evidence"]["gross_margin"] == {
+        "value": 0.51,
+        "available": True,
+        "source": "yahoo",
+        "as_of": None,
+        "formula": "provider_normalized_ratio",
+        "formula_version": "yahoo_quote_summary_v1",
+        "inputs": [
+            {
+                "kind": "provider_metric",
+                "role": "ratio.gross_margin",
+                "source": "yahoo",
+                "symbol": "METR",
+                "provider_field": "grossMargins",
+                "value": 0.51,
+                "retrieved_at": "2026-10-15T18:00:00+00:00",
+            }
+        ],
+        "observation_count": 1,
+        "availability_reason": None,
+    }
+    assert body["metric_evidence"]["roe"]["value"] == 0.31
+    assert body["metric_evidence"]["roe"]["source"] == "yahoo"
+    assert body["fundamentals"]["revenue"]["value"] == 140.0
+    assert body["fundamentals"]["revenue"]["provenance"]["accession"] == "filing-2024"
+    assert body["data_status"]["fundamentals"]["source"] == "sec"
+    assert body["data_status"]["normalized_ratios"] == {
+        "available": True,
+        "source": "yahoo",
+        "as_of": "2026-10-15T18:00:00+00:00",
+        "reason": None,
+    }
+
+
+def test_amzn_public_analysis_completes_all_strategy_branches_without_fake_zeroes(
+    monkeypatch,
+):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureAMZNSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "YahooRatiosClient", WorkingYahooRatios)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze",
+            json={
+                "ticker": "AMZN",
+                "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["requested_analyses"] == 5
+    assert len(body["agent_results"]) == 5
+    assert body["completed_analyses"] == 5
+    assert all(result["status"] == "complete" for result in body["agent_results"])
+    assert body["metric_evidence"]["gross_margin"]["source"] == "yahoo"
+    assert body["metric_evidence"]["dividend_yield"]["value"] == 0.0
+    assert body["metric_evidence"]["earnings_growth"]["value"] is None
+    assert body["metric_evidence"]["earnings_growth"]["available"] is False
+    lynch = next(result for result in body["agent_results"] if result["agent"] == "Peter Lynch")
+    assert any("CAGR and PEG are not applicable" in item for item in lynch["insights"])
+
+
+def test_amzn_remains_complete_when_quote_summary_is_blocked(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureAMZNSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "YahooRatiosClient", UnavailableYahooRatios)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze",
+            json={
+                "ticker": "AMZN",
+                "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["completed_analyses"] == 5
+    assert all(result["status"] == "complete" for result in body["agent_results"])
+    assert body["data_status"]["normalized_ratios"] == {
+        "available": False,
+        "source": "yahoo",
+        "as_of": None,
+        "reason": "provider_temporarily_unavailable",
+    }
+    assert body["metric_evidence"]["gross_margin"]["source"] == "sec"
+    assert body["metric_evidence"]["gross_margin"]["formula"] == (
+        "revenue_minus_cost_of_revenue_divided_by_revenue"
+    )
+    assert body["metric_evidence"]["debt_growth_3y"]["available"] is False
+    assert body["metric_evidence"]["debt_growth_3y"]["value"] is None
+    dividend = body["metric_evidence"]["dividend_yield"]
+    assert dividend["available"] is False
+    assert dividend["value"] is None
+    assert dividend["availability_reason"] == "required_inputs_unavailable"
+    graham = next(
+        result for result in body["agent_results"] if result["agent"] == "Benjamin Graham"
+    )
+    assert graham["unavailable_metrics"] == []
+    assert "Current dividend yield is unavailable" in graham["concerns"]
 
 
 def test_all_five_agents_complete_from_sec_and_narrow_market_data(monkeypatch):
@@ -610,6 +835,30 @@ def test_negative_eps_and_book_value_do_not_create_scoreable_valuation_ratios(
     )
 
 
+def test_provider_valuation_ratios_recompute_price_analysis_status(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", NegativeValuationSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "YahooRatiosClient", WorkingYahooRatios)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze", json={"ticker": "AAPL", "agents": ["lynch", "graham"]}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["metric_evidence"]["pe_ratio"]["available"] is True
+    assert body["metric_evidence"]["pb_ratio"]["available"] is True
+    assert body["data_status"]["price_dependent_analysis"] == {
+        "status": "complete",
+        "reason": None,
+    }
+
+
 def test_all_agent_market_path_never_drops_or_crashes_an_agent(monkeypatch):
     monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -651,11 +900,15 @@ def test_all_agents_return_explicit_partial_results_without_market_data(monkeypa
         "Charlie Munger",
         "Ray Dalio",
     }
-    buffett = next(item for item in results if item["agent"] == "Warren Buffett")
-    unavailable = [item for item in results if item["agent"] != "Warren Buffett"]
-    assert buffett["status"] == "complete"
-    assert buffett["score"] is not None
-    assert buffett["verdict"] is not None
+    completed = [
+        item
+        for item in results
+        if item["agent"] in {"Warren Buffett", "Charlie Munger"}
+    ]
+    unavailable = [item for item in results if item not in completed]
+    assert all(item["status"] == "complete" for item in completed)
+    assert all(item["score"] is not None for item in completed)
+    assert all(item["verdict"] is not None for item in completed)
     assert all(item["status"] == "incomplete" for item in unavailable)
     assert all(item["score"] is None for item in unavailable)
     assert all(item["verdict"] is None for item in unavailable)

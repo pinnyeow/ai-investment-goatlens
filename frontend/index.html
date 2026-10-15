@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-pxczKCKUiVMqrdR1Zl7u28jypZs03ri4/AU6VKnKejk=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-NVbdyzSzSfcMqQh2NLZTqiqAV/36ktGEm11PDyYJfpg=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -3576,6 +3576,8 @@
                         inputDetail.textContent = `${input.role} (${input.symbol}): ${input.value} · observed ${input.observed_at}`;
                     } else if (input.kind === 'market_series') {
                         inputDetail.textContent = `${input.role} (${input.symbol}): ${input.observation_count} observations · ${input.start} to ${input.end}`;
+                    } else if (input.kind === 'provider_metric') {
+                        inputDetail.textContent = `${input.role} (${input.symbol}): ${input.provider_field} = ${input.value} · retrieved ${input.retrieved_at}`;
                     }
                     row.append(inputDetail);
                 });
