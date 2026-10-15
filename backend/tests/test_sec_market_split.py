@@ -624,6 +624,72 @@ def test_invalid_sec_payload_has_distinct_sanitized_public_contract(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("include_incomplete", "expected_status", "expected_requested"),
+    [
+        (False, "complete", 2),
+        (True, "partial", 3),
+    ],
+)
+async def test_multi_agent_agreement_uses_all_and_only_complete_results(
+    monkeypatch, include_incomplete, expected_status, expected_requested
+):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    complete_results = [
+        {
+            "agent": "High Conviction Agent",
+            "style": "Quality",
+            "ticker": "AAPL",
+            "score": 80.0,
+            "verdict": "strong_buy",
+            "insights": ["Shared durable advantage", "High returns"],
+            "concerns": [],
+            "status": "complete",
+            "unavailable_metrics": [],
+        },
+        {
+            "agent": "Value Agent",
+            "style": "Value",
+            "ticker": "AAPL",
+            "score": 40.0,
+            "verdict": "buy",
+            "insights": ["Shared durable advantage", "Valuation risk"],
+            "concerns": [],
+            "status": "complete",
+            "unavailable_metrics": [],
+        },
+    ]
+    if include_incomplete:
+        complete_results.append({
+            "agent": "Unavailable Agent",
+            "style": "Market dependent",
+            "ticker": "AAPL",
+            "score": None,
+            "verdict": None,
+            "insights": [],
+            "concerns": [],
+            "status": "incomplete",
+            "unavailable_metrics": ["current_price"],
+        })
+    state = {
+        "ticker": "AAPL",
+        "agent_results": complete_results,
+        "normalized_data": {},
+        "error": None,
+    }
+
+    await main.synthesize_node(state)  # type: ignore[arg-type]
+
+    consensus = state["consensus"]
+    assert consensus["status"] == expected_status
+    assert consensus["verdict"] == "strong_buy"
+    assert consensus["agreement_score"] == pytest.approx(0.96)
+    assert consensus["consensus_points"] == ["Shared durable advantage"]
+    assert consensus["completed_analyses"] == 2
+    assert consensus["requested_analyses"] == expected_requested
+
+
+@pytest.mark.asyncio
 async def test_agent_exception_is_preserved_and_consensus_is_partial(monkeypatch):
     class CompleteAgent:
         name = "Complete Agent"
