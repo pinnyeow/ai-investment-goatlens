@@ -93,6 +93,28 @@ async def test_agent_rejects_non_finite_required_metric():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_class", "overrides", "unavailable"),
+    [
+        (LynchAgent, {"pe_ratio": -5.0}, ["pe_ratio"]),
+        (GrahamAgent, {"pe_ratio": -5.0}, ["pe_ratio"]),
+        (GrahamAgent, {"pb_ratio": -2.0}, ["pb_ratio"]),
+    ],
+)
+async def test_agents_reject_nonpositive_valuation_ratios(
+    agent_class, overrides, unavailable
+):
+    result = await agent_class(llm_client=None).analyze(
+        "LOSS", dict(MOCK_FINANCIALS, **overrides)
+    )
+
+    assert result["status"] == "incomplete"
+    assert result["score"] is None
+    assert result["verdict"] is None
+    assert result["unavailable_metrics"] == unavailable
+
+
+@pytest.mark.asyncio
 async def test_graham_does_not_relax_twenty_year_defensive_dividend_rule():
     financials = dict(MOCK_FINANCIALS)
     financials.update(
@@ -143,6 +165,29 @@ async def test_graham_current_nonpayer_fails_dividend_criterion_despite_old_hist
 
     assert result["defensive_criteria"]["dividend_pass"] is False
     assert result["defensive_criteria"]["criteria_met"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dividend_yield", [0.0, None])
+async def test_graham_does_not_award_history_points_without_current_dividend(
+    dividend_yield,
+):
+    base = dict(
+        MOCK_FINANCIALS,
+        dividend_yield=dividend_yield,
+        consecutive_dividend_years=None,
+    )
+    with_history = dict(base, consecutive_dividend_years=25)
+
+    baseline = await GrahamAgent(llm_client=None).analyze("AMZN", base)
+    result = await GrahamAgent(llm_client=None).analyze("AMZN", with_history)
+
+    assert result["score"] == baseline["score"]
+    assert result["defensive_criteria"]["dividend_pass"] is (
+        False if dividend_yield == 0 else None
+    )
+    if dividend_yield is None:
+        assert any("yield is unavailable" in item.lower() for item in result["concerns"])
 
 
 @pytest.mark.asyncio

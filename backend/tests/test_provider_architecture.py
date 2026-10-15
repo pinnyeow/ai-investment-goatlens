@@ -45,7 +45,9 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '"fundamentals":{"available":true,"source":"sec"' in workflow
     assert '"ticker":"AAPL"' in workflow
     assert '"ticker":"AMZN"' in workflow
-    assert "body['data_status']['normalized_ratios']['available']" in workflow
+    assert "revenue_minus_cost_of_revenue_divided_by_revenue" in workflow
+    assert "not evidence['dividend_yield']['available']" in workflow
+    assert "assert ratios['available'] or" in workflow
     assert "evidence['earnings_turnaround']['value'] == 1.0" in workflow
     assert "evidence['earnings_growth']['value'] is None" in workflow
     assert '"agents":["buffett","lynch","graham","munger","dalio"]' in workflow
@@ -233,7 +235,6 @@ def test_every_strategy_required_metric_has_one_public_evidence_contract():
             "shares_outstanding",
             "eps",
             "book_value_per_share",
-            "dividend_yield",
         ),
         "munger": (
             "gross_margin",
@@ -256,6 +257,7 @@ def test_every_strategy_required_metric_has_one_public_evidence_contract():
     required = {metric for metrics in expected.values() for metric in metrics}
     optional = {
         "cash_and_equivalents",
+        "dividend_yield",
         "consecutive_dividend_years",
         "roic",
         "debt_growth_3y",

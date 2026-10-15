@@ -836,6 +836,37 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
     return evidence
 
 
+def _price_dependent_analysis_status(normalized):
+    valuation_inputs = {
+        "current_price": normalized.get("current_price"),
+        "eps": normalized.get("eps"),
+        "book_value_per_share": normalized.get("book_value_per_share"),
+        "shares_outstanding": normalized.get("shares_outstanding"),
+        "revenue": normalized.get("revenue"),
+    }
+    missing_inputs = [
+        name for name, value in valuation_inputs.items() if value is None
+    ]
+    valuation_outputs = {
+        "pe_ratio": normalized.get("pe_ratio"),
+        "pb_ratio": normalized.get("pb_ratio"),
+        "ps_ratio": normalized.get("ps_ratio"),
+    }
+    missing_outputs = [
+        name for name, value in valuation_outputs.items() if value is None
+    ]
+    return {
+        "status": "incomplete" if missing_inputs or missing_outputs else "complete",
+        "reason": (
+            "missing_inputs:" + ",".join(missing_inputs)
+            if missing_inputs
+            else "missing_outputs:" + ",".join(missing_outputs)
+            if missing_outputs
+            else None
+        ),
+    }
+
+
 async def fetch_data_node(state: GOATState) -> GOATState:
     """Fetch SEC fundamentals first, then add best-effort Yahoo market data."""
     ticker = state["ticker"]
@@ -1004,38 +1035,9 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "as_of": snapshot.current_price_as_of,
             "reason": None if current_price is not None else "current_market_price_unavailable",
         }
-        valuation_inputs = {
-            "current_price": current_price,
-            "eps": normalized.get("eps"),
-            "book_value_per_share": normalized.get("book_value_per_share"),
-            "shares_outstanding": normalized.get("shares_outstanding"),
-            "revenue": normalized.get("revenue"),
-        }
-        missing_valuation_inputs = [
-            name for name, value in valuation_inputs.items() if value is None
-        ]
-        valuation_outputs = {
-            "pe_ratio": normalized.get("pe_ratio"),
-            "pb_ratio": normalized.get("pb_ratio"),
-            "ps_ratio": normalized.get("ps_ratio"),
-        }
-        missing_valuation_outputs = [
-            name for name, value in valuation_outputs.items() if value is None
-        ]
-        state["data_status"]["price_dependent_analysis"] = {
-            "status": (
-                "incomplete"
-                if missing_valuation_inputs or missing_valuation_outputs
-                else "complete"
-            ),
-            "reason": (
-                "missing_inputs:" + ",".join(missing_valuation_inputs)
-                if missing_valuation_inputs
-                else "missing_outputs:" + ",".join(missing_valuation_outputs)
-                if missing_valuation_outputs
-                else None
-            ),
-        }
+        state["data_status"]["price_dependent_analysis"] = (
+            _price_dependent_analysis_status(normalized)
+        )
     except YahooChartError as yahoo_error:
         error_code = (
             "ticker_not_found"
@@ -1066,6 +1068,11 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         ratio_snapshot = None
         state["data_status"]["normalized_ratios"]["reason"] = (
             "ratio_data_failure"
+        )
+
+    if snapshot is not None:
+        state["data_status"]["price_dependent_analysis"] = (
+            _price_dependent_analysis_status(normalized)
         )
 
     state["normalized_data"] = normalized
@@ -1151,7 +1158,6 @@ _AGENT_REQUIRED_METRICS = {
         "shares_outstanding",
         "eps",
         "book_value_per_share",
-        "dividend_yield",
     ),
     "munger": (
         "gross_margin",

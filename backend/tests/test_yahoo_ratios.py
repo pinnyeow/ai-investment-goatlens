@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 import math
+import threading
 import time
 
 import pytest
@@ -110,6 +111,56 @@ async def test_invalid_ratio_values_fail_closed(invalid):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_field", "value", "metric"),
+    [
+        ("trailingPE", 0.0, "pe_ratio"),
+        ("trailingPE", -5.0, "pe_ratio"),
+        ("priceToBook", 0.0, "pb_ratio"),
+        ("priceToBook", -2.0, "pb_ratio"),
+        ("currentRatio", -1.0, "current_ratio"),
+        ("trailingAnnualDividendYield", -0.01, "dividend_yield"),
+        ("debtToEquity", -50.0, "debt_to_equity"),
+    ],
+)
+async def test_financially_invalid_ratio_domains_are_omitted(
+    provider_field, value, metric
+):
+    snapshot = await client_for(
+        {"symbol": "AMZN", provider_field: value, "profitMargins": -0.2}
+    ).get_snapshot("AMZN")
+
+    assert metric not in snapshot.values
+    assert snapshot.values["profit_margin"] == -0.2
+
+
+@pytest.mark.asyncio
+async def test_valid_zero_and_negative_profitability_ratios_are_preserved():
+    snapshot = await client_for(
+        {
+            "symbol": "AMZN",
+            "currentRatio": 0.0,
+            "trailingAnnualDividendYield": 0.0,
+            "debtToEquity": 0.0,
+            "returnOnEquity": -0.1,
+            "profitMargins": -0.2,
+            "grossMargins": -0.3,
+            "operatingMargins": -0.4,
+        }
+    ).get_snapshot("AMZN")
+
+    assert snapshot.values == {
+        "current_ratio": 0.0,
+        "dividend_yield": 0.0,
+        "roe": -0.1,
+        "profit_margin": -0.2,
+        "gross_margin": -0.3,
+        "operating_margin": -0.4,
+        "debt_to_equity": 0.0,
+    }
+
+
+@pytest.mark.asyncio
 async def test_repeated_snapshot_uses_bounded_process_cache():
     calls = []
 
@@ -163,6 +214,38 @@ async def test_hung_provider_is_bounded_by_fetch_deadline():
 
     with pytest.raises(YahooRatioTemporarilyUnavailable):
         await client.get_snapshot("AMZN")
+
+
+@pytest.mark.asyncio
+async def test_timed_out_provider_work_remains_coalesced_until_thread_finishes():
+    release = threading.Event()
+    calls = []
+
+    class BlockedTicker(FakeTicker):
+        def get_info(self):
+            release.wait(timeout=1)
+            return super().get_info()
+
+    def factory(symbol):
+        calls.append(symbol)
+        return BlockedTicker({"symbol": symbol, "grossMargins": 0.5})
+
+    client = YahooRatiosClient(
+        ticker_factory=factory,
+        now=lambda: NOW,
+        fetch_timeout_seconds=0.005,
+    )
+
+    with pytest.raises(YahooRatioTemporarilyUnavailable):
+        await client.get_snapshot("AMZN")
+    with pytest.raises(YahooRatioTemporarilyUnavailable):
+        await client.get_snapshot("AMZN")
+    assert calls == ["AMZN"]
+
+    release.set()
+    await asyncio.sleep(0.02)
+    assert (await client.get_snapshot("AMZN")).values == {"gross_margin": 0.5}
+    assert calls == ["AMZN"]
 
 
 @pytest.mark.asyncio

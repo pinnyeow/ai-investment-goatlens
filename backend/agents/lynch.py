@@ -97,6 +97,15 @@ class LynchAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        financials = dict(financials)
+        pe_ratio = financials.get("pe_ratio")
+        if (
+            isinstance(pe_ratio, (int, float))
+            and not isinstance(pe_ratio, bool)
+            and pe_ratio <= 0
+        ):
+            financials["pe_ratio"] = None
+
         required_metrics = ["pe_ratio", "debt_to_equity"]
         if financials.get("earnings_turnaround") == 1.0:
             required_metrics.append("earnings_turnaround")

@@ -375,11 +375,6 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             prior = debt_facts_for_period_end(prior_end, full_metrics)
             return (current, prior) if current is not None and prior is not None else (None, None)
 
-        component_metrics = ("long_term_debt_current", "long_term_debt_noncurrent")
-        current = debt_facts_for_period_end(current_end, component_metrics)
-        prior = debt_facts_for_period_end(prior_end, component_metrics)
-        if current is not None and prior is not None:
-            return current, prior
         return None, None
 
     def operating_margin_trend() -> Optional[float]:
@@ -512,6 +507,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
     current_assets = latest("current_assets")
     current_liabilities = latest("current_liabilities")
     gross_profit = latest("gross_profit")
+    cost_of_revenue = value_for_reference("cost_of_revenue", reference)
     operating_income = latest("operating_income")
     income_tax = latest("income_tax")
     pretax_income = latest("pretax_income")
@@ -676,6 +672,36 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         valid_inputs = tuple(item for item in raw_inputs if item is not None)
         if len(valid_inputs) == 2 * len(component_roles):
             metric_inputs["debt_growth_3y"] = valid_inputs
+    gross_margin = ratio(gross_profit, revenue)
+    gross_margin_formula = "gross_profit_divided_by_revenue"
+    if (
+        gross_margin is None
+        and revenue is not None
+        and revenue > 0
+        and cost_of_revenue is not None
+        and 0 <= cost_of_revenue <= revenue
+    ):
+        gross_margin = (revenue - cost_of_revenue) / revenue
+        fallback_inputs = tuple(
+            item
+            for item in (
+                evidence_input(
+                    "income.current.revenue",
+                    fact_for_reference("revenue", reference),
+                ),
+                evidence_input(
+                    "income.current.cost_of_revenue",
+                    fact_for_reference("cost_of_revenue", reference),
+                ),
+            )
+            if item is not None
+        )
+        if len(fallback_inputs) == 2:
+            metric_inputs["gross_margin"] = fallback_inputs
+            gross_margin_formula = (
+                "revenue_minus_cost_of_revenue_divided_by_revenue"
+            )
+
     values = {
         "ticker": data.ticker,
         "company_name": data.company_name,
@@ -703,7 +729,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         "revenue_growth_5y": growth("revenue", "revenue_growth_5y", years=5),
         "free_cash_flow_per_share": ratio(free_cash_flow, shares),
         "debt_to_equity": ratio(total_debt, equity),
-        "gross_margin": ratio(gross_profit, revenue),
+        "gross_margin": gross_margin,
         "operating_margin": ratio(operating_income, revenue),
         "roa": None,
         "roic": roic,
@@ -824,7 +850,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         "eps": "reported_diluted_eps",
         "book_value_per_share": "equity_divided_by_period_end_shares",
         "consecutive_dividend_years": "consecutive_positive_common_dividend_years",
-        "gross_margin": "gross_profit_divided_by_revenue",
+        "gross_margin": gross_margin_formula,
         "operating_margin": "operating_income_divided_by_revenue",
         "roic": "nopat_divided_by_average_invested_capital",
         "revenue_growth_5y": "five_year_revenue_cagr",
@@ -899,6 +925,11 @@ _METRICS = {
         ["CashAndCashEquivalentsAtCarryingValue"],
     ),
     "gross_profit": ("duration", "USD", ["GrossProfit"]),
+    "cost_of_revenue": (
+        "duration",
+        "USD",
+        ["CostOfGoodsAndServicesSold", "CostOfRevenue"],
+    ),
     "operating_income": ("duration", "USD", ["OperatingIncomeLoss"]),
     "shares_outstanding": ("instant", "shares", ["CommonStockSharesOutstanding"]),
     "income_tax": ("duration", "USD", ["IncomeTaxExpenseBenefit"]),

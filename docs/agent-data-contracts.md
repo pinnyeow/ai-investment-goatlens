@@ -15,7 +15,7 @@ This document defines the evidence required for a strategy to return a score and
 
 ## Contract inventory
 
-The current strategy contract contains **28 required strategy slots across five agents, representing 24 unique metrics** after shared metrics are deduplicated. This replaces the 36-field legacy inventory: institutional ownership, management beneficial ownership, unscaled cash balance, industrial interest coverage, dividend-history length, approximate ROIC, historical debt growth, and revenue variability are optional context rather than completeness requirements. Fabricated expected return was removed and replaced by required trailing realized return. The executable inventory is `_AGENT_REQUIRED_METRICS`, and every required or optional scored metric must have exactly one typed public metric-evidence contract.
+The primary strategy contract contains **27 required strategy slots across five agents, representing 23 unique metrics** after shared metrics are deduplicated. Lynch's SEC-backed turnaround branch substitutes `earnings_turnaround` for `earnings_growth`, expanding the union of executable required metrics to 24. This replaces the 36-field legacy inventory: institutional ownership, management beneficial ownership, unscaled cash balance, industrial interest coverage, current dividend yield, dividend-history length, approximate ROIC, historical debt growth, and revenue variability are optional context rather than completeness requirements. Fabricated expected return was removed and replaced by required trailing realized return. The executable inventory is `_AGENT_REQUIRED_METRICS`, and every required or optional scored metric must have exactly one typed public metric-evidence contract.
 
 ## Buffett
 
@@ -44,8 +44,7 @@ Required evidence:
 
 - timestamped market price;
 - SEC diluted EPS and period-end common shares;
-- SEC common equity, current assets, current liabilities, and total liabilities;
-- current dividend yield.
+- SEC common equity, current assets, current liabilities, and total liabilities.
 
 Ratio and derived-value precedence:
 
@@ -58,7 +57,7 @@ Ratio and derived-value precedence:
 - trailing-FY dividend yield = latest completed-FY common DPS / timestamped price;
 - consecutive dividend years = uninterrupted completed fiscal years with positive common DPS.
 
-The dividend record uses the declared common-dividend-per-share concept first. A provider-reported current yield of zero is a known non-dividend payer and fails the dividend criterion without invalidating the analysis. Dividend-history length is optional; when available, the defensive-investor threshold is twenty years and must not silently relax to ten. Missing dividend facts remain unavailable, not zero.
+The dividend record uses the declared common-dividend-per-share concept first. A provider-reported current yield of zero is a known non-dividend payer and fails the dividend criterion without invalidating the analysis. Current yield and dividend-history length are optional criteria: missing evidence earns no points, is disclosed publicly, and does not invalidate an otherwise supported Graham analysis. When history is available, the defensive-investor threshold is twenty years and must not silently relax to ten. Missing dividend facts remain unavailable, not zero.
 
 ## Munger
 
@@ -81,6 +80,8 @@ Approximate accounting ROIC is an optional quality signal, not a completeness bl
 - `ROIC = NOPAT / average(beginning invested capital, ending invested capital)`.
 
 Operating-margin trend is the ordinary-least-squares slope of five consecutive annual operating margins, expressed as decimal change per fiscal year.
+
+Yahoo provider-normalized gross margin takes precedence when available. If the ratio adapter is unavailable and reported SEC gross profit is absent, gross margin may be derived only from compatible facts in the same filing context as `(revenue - cost of revenue) / revenue`; the evidence exposes both facts and the fallback formula.
 
 ## Dalio
 

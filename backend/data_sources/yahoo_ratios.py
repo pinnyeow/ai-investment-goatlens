@@ -76,6 +76,13 @@ _FIELD_MAP = {
     "debt_to_equity": "debtToEquity",
 }
 
+_STRICTLY_POSITIVE_METRICS = {"pe_ratio", "pb_ratio"}
+_NONNEGATIVE_METRICS = {
+    "current_ratio",
+    "dividend_yield",
+    "debt_to_equity",
+}
+
 
 class YahooRatiosClient:
     """Fetch only the normalized Yahoo ratios consumed by GOATlens agents."""
@@ -166,18 +173,18 @@ class YahooRatiosClient:
 
                 task.add_done_callback(complete)
 
-        return await asyncio.shield(task)
-
-    async def _get_snapshot_uncached(self, symbol: str) -> YahooRatioSnapshot:
         try:
-            info = await asyncio.wait_for(
-                asyncio.to_thread(self._fetch_info, symbol),
+            return await asyncio.wait_for(
+                asyncio.shield(task),
                 timeout=self._fetch_timeout_seconds,
             )
         except asyncio.TimeoutError:
             raise YahooRatioTemporarilyUnavailable(
                 "Normalized ratios are temporarily unavailable."
             ) from None
+
+    async def _get_snapshot_uncached(self, symbol: str) -> YahooRatioSnapshot:
+        info = await asyncio.to_thread(self._fetch_info, symbol)
         returned_symbol = str(info.get("symbol") or "").strip().upper()
         if returned_symbol != symbol:
             raise YahooRatioMalformedResponse(
@@ -192,6 +199,10 @@ class YahooRatiosClient:
                 continue
             if metric == "debt_to_equity":
                 value /= 100.0
+            if metric in _STRICTLY_POSITIVE_METRICS and value <= 0:
+                continue
+            if metric in _NONNEGATIVE_METRICS and value < 0:
+                continue
             values[metric] = value
             provider_fields[metric] = provider_field
 
