@@ -17,6 +17,7 @@ httpx>=0.26.0
 
 # Data Sources
 curl-cffi>=0.13.0,<1.0
+yfinance==1.2.0
 
 # Data Processing
 pydantic>=2.5.0

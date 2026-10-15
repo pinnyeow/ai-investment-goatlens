@@ -24,8 +24,9 @@ from .incomplete import incomplete_if_missing
 @dataclass
 class LynchMetrics:
     """Key metrics for Lynch-style analysis."""
-    peg_ratio: float
-    earnings_growth: float
+    peg_ratio: Optional[float]
+    earnings_growth: Optional[float]
+    earnings_turnaround: bool
     pe_ratio: float
     institutional_ownership: Optional[float]
     debt_to_equity: float
@@ -96,14 +97,17 @@ class LynchAgent:
         Returns:
             Analysis result with verdict, score, and insights
         """
+        required_metrics = ["pe_ratio", "debt_to_equity"]
+        if financials.get("earnings_turnaround") == 1.0:
+            required_metrics.append("earnings_turnaround")
+        else:
+            required_metrics.append("earnings_growth")
         incomplete = incomplete_if_missing(
             agent=self.name,
             style=self.style,
             ticker=ticker,
             financials=financials,
-            required_metrics=(
-                "pe_ratio", "earnings_growth", "debt_to_equity",
-            ),
+            required_metrics=tuple(required_metrics),
         )
         if incomplete:
             return incomplete
@@ -144,14 +148,15 @@ class LynchAgent:
     def _calculate_metrics(self, financials: Dict[str, Any]) -> LynchMetrics:
         """Extract and calculate Lynch-relevant metrics."""
         pe = financials.get("pe_ratio", 0)
-        growth = financials.get("earnings_growth", 0)
-        
-        # PEG = P/E / Earnings Growth Rate
-        peg = pe / (growth * 100) if growth > 0 else float('inf')
+        growth = financials.get("earnings_growth")
+
+        # PEG is undefined when the historical earnings base is non-positive.
+        peg = pe / (growth * 100) if growth is not None and growth > 0 else None
         
         return LynchMetrics(
             peg_ratio=peg,
             earnings_growth=growth,
+            earnings_turnaround=financials.get("earnings_turnaround") == 1.0,
             pe_ratio=pe,
             institutional_ownership=financials.get("institutional_ownership"),
             debt_to_equity=financials.get("debt_to_equity", 0),
@@ -164,6 +169,8 @@ class LynchAgent:
         
         Lynch believed different categories need different strategies.
         """
+        if metrics.earnings_growth is None:
+            return "turnaround"
         growth = metrics.earnings_growth
         
         if growth < 0.05:
@@ -192,11 +199,14 @@ class LynchAgent:
         score = 0
         factors = []
         
-        if metrics.peg_ratio < 1.0:
+        if metrics.peg_ratio is not None and metrics.peg_ratio < 1.0:
             score += 30
             factors.append("Attractive PEG ratio")
-        
-        if metrics.earnings_growth >= 0.20:
+
+        if (
+            metrics.earnings_growth is not None
+            and metrics.earnings_growth >= 0.20
+        ):
             score += 25
             factors.append("High growth rate")
         
@@ -226,17 +236,18 @@ class LynchAgent:
         """Calculate overall Lynch score (-100 to +100)."""
         score = 0.0
         
-        # PEG ratio contribution (max 35 points)
-        if metrics.peg_ratio < 0.5:
-            score += 35
-        elif metrics.peg_ratio < 1.0:
-            score += 25
-        elif metrics.peg_ratio < 1.5:
-            score += 10
-        elif metrics.peg_ratio < 2.0:
-            score -= 10
-        else:
-            score -= 25
+        # PEG ratio contribution (max 35 points). Turnarounds have no valid PEG.
+        if metrics.peg_ratio is not None:
+            if metrics.peg_ratio < 0.5:
+                score += 35
+            elif metrics.peg_ratio < 1.0:
+                score += 25
+            elif metrics.peg_ratio < 1.5:
+                score += 10
+            elif metrics.peg_ratio < 2.0:
+                score -= 10
+            else:
+                score -= 25
         
         # Growth rate contribution (max 25 points)
         if category == "fast_grower":
@@ -245,6 +256,8 @@ class LynchAgent:
             score += 15
         elif category == "slow_grower":
             score -= 15
+        elif category == "turnaround" and metrics.earnings_turnaround:
+            score += 15
         
         # Institutional ownership (contrarian - max 15 points)
         if (
@@ -304,9 +317,19 @@ class LynchAgent:
     ) -> List[str]:
         """Generate LLM-powered insights using Lynch's voice."""
         relevant = self._get_relevant_context(metrics, category, ten_bagger)
+        peg_label = (
+            f"{relevant['peg_ratio']:.2f}"
+            if relevant["peg_ratio"] is not None
+            else "not applicable"
+        )
+        growth_label = (
+            f"{relevant['earnings_growth']:.1%}"
+            if relevant["earnings_growth"] is not None
+            else "turnaround from a non-positive base"
+        )
         prompt = (
-            f"Analyze {ticker}: PEG {relevant['peg_ratio']:.2f}, "
-            f"Earnings Growth {relevant['earnings_growth']:.1%}, "
+            f"Analyze {ticker}: PEG {peg_label}, "
+            f"Earnings Growth {growth_label}, "
             f"P/E {relevant['pe_ratio']:.1f}, "
             f"Category {relevant['stock_category']}, "
             f"Ten-Bagger Potential {relevant['ten_bagger_potential']}"
@@ -326,10 +349,14 @@ class LynchAgent:
         """Generate key insights from analysis."""
         insights = []
         
-        if metrics.peg_ratio < 1.0:
+        if metrics.peg_ratio is not None and metrics.peg_ratio < 1.0:
             insights.append(f"Attractive PEG ratio of {metrics.peg_ratio:.2f} - growth at reasonable price")
-        
-        if category == "fast_grower":
+
+        if category == "turnaround":
+            insights.append(
+                "Negative-to-positive earnings turnaround confirmed at the compared SEC endpoints; CAGR and PEG are not applicable"
+            )
+        elif category == "fast_grower" and metrics.earnings_growth is not None:
             insights.append(f"Fast grower with {metrics.earnings_growth:.1%} earnings growth")
         
         if (
@@ -349,7 +376,7 @@ class LynchAgent:
         """Identify potential concerns from Lynch's perspective."""
         concerns = []
         
-        if metrics.peg_ratio > 2.0:
+        if metrics.peg_ratio is not None and metrics.peg_ratio > 2.0:
             concerns.append(f"High PEG ratio of {metrics.peg_ratio:.2f} - paying too much for growth")
         
         if (
@@ -358,8 +385,13 @@ class LynchAgent:
         ):
             concerns.append("Heavy institutional ownership - may be fully discovered")
         
-        if metrics.earnings_growth < 0:
+        if metrics.earnings_growth is not None and metrics.earnings_growth < 0:
             concerns.append("Negative earnings growth")
+
+        if metrics.earnings_turnaround:
+            concerns.append(
+                "The endpoint turnaround does not establish the durability of the earnings recovery"
+            )
         
         return concerns
     
