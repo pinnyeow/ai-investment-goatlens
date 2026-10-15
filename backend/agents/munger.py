@@ -26,7 +26,7 @@ class MungerMetrics:
     """Key metrics for Munger-style analysis."""
     gross_margin: float
     operating_margin: float
-    roic: float  # Return on Invested Capital
+    roic: Optional[float]  # Return on Invested Capital
     revenue_growth_5y: float
     management_ownership: Optional[float]
     capex_to_revenue: float
@@ -104,7 +104,7 @@ class MungerAgent:
             ticker=ticker,
             financials=financials,
             required_metrics=(
-                "gross_margin", "operating_margin", "roic",
+                "gross_margin", "operating_margin",
                 "revenue_growth_5y", "capex_to_revenue", "debt_to_equity",
                 "margin_trend",
             ),
@@ -127,6 +127,10 @@ class MungerAgent:
             insights = await self._generate_llm_insights(ticker, metrics, quality_assessment, red_flags, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, quality_assessment)
+        if metrics.roic is None:
+            insights.append(
+                "ROIC is unavailable; the quality score excludes capital-efficiency points"
+            )
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
         
         concerns = list(red_flags)  # Copy so we don't modify the original
@@ -152,7 +156,7 @@ class MungerAgent:
         return MungerMetrics(
             gross_margin=financials.get("gross_margin", 0),
             operating_margin=financials.get("operating_margin", 0),
-            roic=financials.get("roic", 0),
+            roic=financials.get("roic"),
             revenue_growth_5y=financials.get("revenue_growth_5y", 0),
             management_ownership=financials.get("insider_ownership"),
             capex_to_revenue=financials.get("capex_to_revenue", 0),
@@ -185,7 +189,7 @@ class MungerAgent:
             factors.append("Efficient operations (high operating margins)")
         
         # High ROIC indicates capital efficiency
-        if metrics.roic >= self.MIN_ROIC:
+        if metrics.roic is not None and metrics.roic >= self.MIN_ROIC:
             quality_score += 25
             factors.append("Excellent capital allocation (high ROIC)")
         
@@ -246,7 +250,7 @@ class MungerAgent:
             red_flags.append("High capital requirements to maintain business")
         
         # Poor capital allocation
-        if metrics.roic < 0.08:
+        if metrics.roic is not None and metrics.roic < 0.08:
             red_flags.append("Poor return on invested capital")
         
         # Low insider ownership
@@ -359,10 +363,11 @@ class MungerAgent:
     ) -> List[str]:
         """Generate LLM-powered insights using Munger's voice."""
         relevant = self._get_relevant_context(metrics, quality_assessment, red_flags)
+        roic_label = f"{relevant['roic']:.1%}" if relevant["roic"] is not None else "unavailable"
         prompt = (
             f"Analyze {ticker}: Gross Margin {relevant['gross_margin']:.1%}, "
             f"Operating Margin {relevant['operating_margin']:.1%}, "
-            f"ROIC {relevant['roic']:.1%}, Quality {relevant['quality_level']}, "
+            f"ROIC {roic_label}, Quality {relevant['quality_level']}, "
             f"Red Flags {relevant['red_flags_count']}"
         )
         try:
@@ -383,7 +388,7 @@ class MungerAgent:
         if quality_assessment["level"] in ["Exceptional", "High"]:
             insights.append(f"{quality_assessment['level']} quality business")
         
-        if metrics.roic >= 0.20:
+        if metrics.roic is not None and metrics.roic >= 0.20:
             insights.append(f"Outstanding capital allocation with {metrics.roic:.1%} ROIC")
         
         if metrics.gross_margin >= 0.50:

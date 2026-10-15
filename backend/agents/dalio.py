@@ -101,7 +101,7 @@ class DalioAgent:
             financials=financials,
             required_metrics=(
                 "beta", "volatility_252d", "debt_to_equity",
-                "correlation_sp500", "debt_growth_3y",
+                "correlation_sp500",
                 "realized_total_return_252d",
             ),
         )
@@ -123,6 +123,10 @@ class DalioAgent:
             insights = await self._generate_llm_insights(ticker, metrics, cycle_analysis, risk_assessment, score, verdict, config=config)
         else:
             insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
+        if cycle_analysis["debt_trajectory"] == "unavailable":
+            insights.append(
+                "Historical debt trajectory is unavailable; this assessment uses current leverage only"
+            )
         insights.extend(self._earnings_insights(earnings_data or [], earnings_streak or {}))
         
         concerns = self._identify_concerns(metrics, cycle_analysis)
@@ -166,26 +170,34 @@ class DalioAgent:
         - Long-term debt cycle (~75-100 years)
         """
         debt_to_equity = financials.get("debt_to_equity", 0)
-        debt_growth = financials.get("debt_growth_3y", 0)
-        
-        # Assess debt cycle phase
-        if debt_growth > 0.15:
+        debt_growth = financials.get("debt_growth_3y")
+
+        # Debt trajectory is optional when a like-for-like historical series is absent.
+        if debt_growth is None:
+            cycle_phase = "unknown"
+            risk_level = "current_leverage_only"
+            debt_trajectory = "unavailable"
+        elif debt_growth > 0.15:
             cycle_phase = "expansion"
             risk_level = "elevated"
+            debt_trajectory = "increasing"
         elif debt_growth > 0:
             cycle_phase = "moderate_growth"
             risk_level = "normal"
+            debt_trajectory = "increasing"
         elif debt_growth > -0.10:
             cycle_phase = "deleveraging"
             risk_level = "normal"
+            debt_trajectory = "decreasing"
         else:
             cycle_phase = "aggressive_deleveraging"
             risk_level = "context_required"
-        
+            debt_trajectory = "decreasing"
+
         return {
             "cycle_phase": cycle_phase,
             "debt_level": debt_to_equity,
-            "debt_trajectory": "increasing" if debt_growth > 0 else "decreasing",
+            "debt_trajectory": debt_trajectory,
             "risk_level": risk_level,
             "leverage_sustainability": debt_to_equity < 1.0,
         }

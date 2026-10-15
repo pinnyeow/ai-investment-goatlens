@@ -68,11 +68,22 @@ def test_core_runtime_does_not_call_broad_yfinance_adapter():
     assert "YahooFinanceError" not in backend
 
 
-def test_removed_broad_yfinance_provider_has_no_runtime_footprint():
+def test_only_narrow_yahoo_ratio_adapter_has_yfinance_runtime_footprint():
     requirements = (ROOT / "backend" / "requirements.txt").read_text().lower()
-    assert "yfinance" not in requirements
-    assert "lxml" not in requirements
+    assert "yfinance==1.2.0" in requirements
     assert not (ROOT / "backend" / "data_sources" / "yahoo.py").exists()
+    adapter = (ROOT / "backend" / "data_sources" / "yahoo_ratios.py").read_text()
+    assert "income_stmt" not in adapter
+    assert "balance_sheet" not in adapter
+    assert "cashflow" not in adapter
+    assert "get_info()" in adapter
+
+
+def test_frontend_renders_typed_yahoo_ratio_provenance():
+    frontend = (ROOT / "frontend" / "index.html").read_text()
+    assert "input.kind === 'provider_metric'" in frontend
+    assert "input.provider_field" in frontend
+    assert "input.retrieved_at" in frontend
 
 
 def test_frontend_third_party_scripts_are_integrity_pinned_and_csp_limited():
@@ -218,12 +229,10 @@ def test_every_strategy_required_metric_has_one_public_evidence_contract():
             "eps",
             "book_value_per_share",
             "dividend_yield",
-            "consecutive_dividend_years",
         ),
         "munger": (
             "gross_margin",
             "operating_margin",
-            "roic",
             "revenue_growth_5y",
             "capex_to_revenue",
             "debt_to_equity",
@@ -234,16 +243,20 @@ def test_every_strategy_required_metric_has_one_public_evidence_contract():
             "volatility_252d",
             "debt_to_equity",
             "correlation_sp500",
-            "debt_growth_3y",
             "realized_total_return_252d",
         ),
     }
 
     assert main._AGENT_REQUIRED_METRICS == expected
     required = {metric for metrics in expected.values() for metric in metrics}
-    assert set(main._METRIC_EVIDENCE_CONTRACTS) == required | {
-        "cash_and_equivalents"
+    optional = {
+        "cash_and_equivalents",
+        "consecutive_dividend_years",
+        "roic",
+        "debt_growth_3y",
+        "earnings_turnaround",
     }
+    assert set(main._METRIC_EVIDENCE_CONTRACTS) == required | optional
 
 
 def test_aligned_market_metrics_use_the_aligned_window_end_as_as_of():
