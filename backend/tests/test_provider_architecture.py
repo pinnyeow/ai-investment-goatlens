@@ -33,16 +33,21 @@ def test_fmp_is_absent_from_runtime_configuration_and_documentation():
         assert "financial modeling prep" not in content, path
 
 
-def test_release_smoke_checks_sec_analysis_and_reports_market_status_once():
+def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     workflow = (
         ROOT / ".github" / "workflows" / "smoke-tests.yml"
     ).read_text()
 
     assert workflow.count("/api/fundamentals-health") == 1
     assert workflow.count("/api/market-data-health") == 1
-    assert workflow.count("/api/analyze") == 1
+    assert workflow.count("/api/analyze") == 2
     assert '"source":"sec"' in workflow
     assert '"fundamentals":{"available":true,"source":"sec"' in workflow
+    assert '"ticker":"AAPL"' in workflow
+    assert '"ticker":"AMZN"' in workflow
+    assert "body['data_status']['normalized_ratios']['available']" in workflow
+    assert "evidence['earnings_turnaround']['value'] == 1.0" in workflow
+    assert "evidence['earnings_growth']['value'] is None" in workflow
     assert '"agents":["buffett","lynch","graham","munger","dalio"]' in workflow
     assert "assert body['completed_analyses'] == 5" in workflow
     assert "assert body['requested_analyses'] == 5" in workflow
