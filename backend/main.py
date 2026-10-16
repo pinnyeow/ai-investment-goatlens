@@ -13,6 +13,8 @@ Features:
 
 import os
 import asyncio
+import hashlib
+import json
 import math
 import re
 import threading
@@ -96,7 +98,6 @@ from data_sources.yahoo_chart import (
     YahooChartError,
     YahooChartNotFound,
 )
-from data_sources.yahoo_ratios import YahooRatioError, YahooRatiosClient
 from data_sources.sec import (
     SECConfigurationError,
     SECError,
@@ -125,6 +126,63 @@ from rag import RAGRetriever
 # ============================================================================
 
 _TICKER_PATTERN = re.compile(r"(?=.{1,10}\Z)[A-Z0-9]+(?:[.-][A-Z0-9]+)?\Z")
+
+
+# One inventory owns both the completion gate and every optional numeric metric
+# a completed strategy may use for scoring, branching, insights, or concerns.
+_AGENT_CONSUMPTION_CONTRACTS = {
+    "buffett": {
+        "agent": "Warren Buffett",
+        "mandatory": ("roe", "profit_margin", "debt_to_equity", "free_cash_flow"),
+        "optional": (),
+    },
+    "lynch": {
+        "agent": "Peter Lynch",
+        "mandatory": ("pe_ratio", "earnings_growth", "debt_to_equity"),
+        "optional": ("institutional_ownership", "cash_and_equivalents"),
+    },
+    "graham": {
+        "agent": "Benjamin Graham",
+        "mandatory": (
+            "pe_ratio", "pb_ratio", "current_ratio", "current_price",
+            "current_assets", "total_liabilities", "shares_outstanding", "eps",
+            "book_value_per_share",
+        ),
+        "optional": ("dividend_yield", "consecutive_dividend_years"),
+    },
+    "munger": {
+        "agent": "Charlie Munger",
+        "mandatory": (
+            "gross_margin", "operating_margin", "revenue_growth_5y",
+            "capex_to_revenue", "debt_to_equity", "margin_trend",
+        ),
+        "optional": ("roic", "insider_ownership"),
+    },
+    "dalio": {
+        "agent": "Ray Dalio",
+        "mandatory": (
+            "beta", "volatility_252d", "debt_to_equity",
+            "correlation_sp500", "realized_total_return_252d",
+        ),
+        "optional": ("interest_coverage", "debt_growth_3y"),
+    },
+}
+_AGENT_CONSUMPTION_BY_NAME = {
+    contract["agent"]: contract
+    for contract in _AGENT_CONSUMPTION_CONTRACTS.values()
+}
+
+
+def _mandatory_consumed_metrics(contract, values):
+    mandatory = contract["mandatory"]
+    if (
+        contract["agent"] == "Peter Lynch"
+        and values.get("earnings_turnaround") == 1.0
+    ):
+        return tuple(metric for metric in mandatory if metric != "earnings_growth") + (
+            "earnings_turnaround",
+        )
+    return mandatory
 
 
 def _normalize_ticker(value: str) -> str:
@@ -189,6 +247,7 @@ class AgentResult(StrictAPIModel):
     concerns: List[str]
     status: Literal["complete", "incomplete"] = "complete"
     unavailable_metrics: List[str] = Field(default_factory=list)
+    required_metric_values: Dict[str, float] = Field(default_factory=dict)
 
     @field_validator("score", mode="before")
     @classmethod
@@ -225,6 +284,8 @@ class AgentResult(StrictAPIModel):
             raise ValueError("Incomplete agent results cannot claim score or verdict")
         if self.status == "incomplete" and not self.unavailable_metrics:
             raise ValueError("Incomplete agent results must identify unavailable metrics")
+        if any(not math.isfinite(value) for value in self.required_metric_values.values()):
+            raise ValueError("Required metric values must be finite")
         return self
 
 
@@ -406,16 +467,21 @@ class MarketSeriesInputResponse(StrictAPIModel):
     start: str = Field(min_length=1)
     end: str = Field(min_length=1)
     observation_count: int = Field(ge=1)
+    series_id: str = Field(min_length=1)
 
 
-class ProviderMetricInputResponse(StrictAPIModel):
-    kind: Literal["provider_metric"]
-    role: str = Field(min_length=1)
+class ReturnIntervalResponse(StrictAPIModel):
+    start: str = Field(min_length=1)
+    end: str = Field(min_length=1)
+    value: float
+
+
+class SnapshotSeriesResponse(StrictAPIModel):
+    series_id: str = Field(min_length=1)
     source: Literal["yahoo"]
     symbol: str = Field(min_length=1)
-    provider_field: str = Field(min_length=1)
-    value: float
-    retrieved_at: str = Field(min_length=1)
+    return_kind: Literal["log", "simple"]
+    intervals: List[ReturnIntervalResponse] = Field(min_length=1, max_length=252)
 
 
 MetricInputResponse = Annotated[
@@ -423,7 +489,6 @@ MetricInputResponse = Annotated[
         SECMetricInputResponse,
         MarketObservationInputResponse,
         MarketSeriesInputResponse,
-        ProviderMetricInputResponse,
     ],
     Field(discriminator="kind"),
 ]
@@ -434,8 +499,10 @@ class MetricEvidenceResponse(StrictAPIModel):
     available: bool
     source: Literal["sec", "yahoo", "sec+yahoo"]
     as_of: Optional[str]
+    filed_at: Optional[str] = None
     formula: str
     formula_version: str
+    formula_owner: Literal["goatlens", "yahoo"] = "goatlens"
     inputs: List[MetricInputResponse] = Field(default_factory=list)
     observation_count: Optional[int] = Field(default=None, ge=0)
     availability_reason: Optional[str] = None
@@ -467,6 +534,23 @@ class MarketAvailabilityStatus(StrictAPIModel):
     available: bool
     source: Literal["yahoo"]
     as_of: Optional[str]
+    retrieved_at: Optional[str] = Field(
+        default=None,
+        description="UTC timestamp when GOATlens retrieved the Yahoo snapshot."
+    )
+    currency: Optional[str] = Field(
+        default=None,
+        description="Yahoo quote currency, or null when market data is unavailable."
+    )
+    cache_age_seconds: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Age of the process-local Yahoo snapshot cache entry in seconds."
+    )
+    freshness: Literal["fresh", "stale", "unknown"] = Field(
+        default="unknown",
+        description="Fresh when the returned snapshot is inside the local cache TTL."
+    )
     reason: Optional[str] = None
 
 
@@ -478,7 +562,6 @@ class AnalysisCompletenessStatus(StrictAPIModel):
 class AnalysisDataStatus(StrictAPIModel):
     fundamentals: FundamentalsAvailabilityStatus
     market_data: MarketAvailabilityStatus
-    normalized_ratios: MarketAvailabilityStatus
     price_dependent_analysis: AnalysisCompletenessStatus
 
 
@@ -543,6 +626,7 @@ class AnalysisResponse(StrictAPIModel):
     fundamentals: Dict[str, FundamentalFactResponse]
     fundamentals_history: Dict[str, List[FundamentalFactResponse]]
     metric_evidence: Dict[str, MetricEvidenceResponse]
+    snapshot_series: List[SnapshotSeriesResponse] = Field(default_factory=list)
     
     # Consensus
     consensus_status: Literal["complete", "partial", "incomplete"]
@@ -575,14 +659,250 @@ class AnalysisResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_analysis_counts(self):
+        if set(self.metric_evidence) != set(_METRIC_EVIDENCE_CONTRACTS):
+            raise ValueError("Metric evidence keys must match the exact shipped registry")
+        _validate_formula_evidence(self)
+        series_by_id = {item.series_id: item for item in self.snapshot_series}
+        if len(series_by_id) != len(self.snapshot_series):
+            raise ValueError("Snapshot series IDs must be unique")
+        for series in self.snapshot_series:
+            canonical = json.dumps(
+                {
+                    "source": series.source,
+                    "symbol": series.symbol,
+                    "return_kind": series.return_kind,
+                    "intervals": [
+                        interval.model_dump() for interval in series.intervals
+                    ],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            expected_id = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+            if series.series_id != expected_id:
+                raise ValueError("Snapshot series ID must match its content digest")
+        expected_return_kinds = {
+            "beta": "simple",
+            "correlation_sp500": "simple",
+            "volatility_252d": "log",
+            "realized_total_return_252d": "log",
+        }
+        asset_role = "asset.adjusted_close_return_intervals"
+        benchmark_role = "benchmark.sp500.adjusted_close_return_intervals"
+        expected_dalio_inputs = {
+            "beta": ((asset_role, self.ticker), (benchmark_role, "^GSPC")),
+            "correlation_sp500": (
+                (asset_role, self.ticker),
+                (benchmark_role, "^GSPC"),
+            ),
+            "volatility_252d": ((asset_role, self.ticker),),
+            "realized_total_return_252d": ((asset_role, self.ticker),),
+        }
+        for metric, expected_inputs in expected_dalio_inputs.items():
+            evidence = self.metric_evidence.get(metric)
+            if evidence is None or not evidence.available:
+                continue
+            series_inputs = [
+                item
+                for item in evidence.inputs
+                if isinstance(item, MarketSeriesInputResponse)
+            ]
+            actual_inputs = tuple(
+                (item.role, item.symbol) for item in series_inputs
+            )
+            if actual_inputs != expected_inputs or len(evidence.inputs) != len(
+                expected_inputs
+            ):
+                raise ValueError("Dalio metric evidence requires exact series inputs")
+            if (
+                metric in {"beta", "correlation_sp500"}
+                and series_inputs[0].series_id == series_inputs[1].series_id
+            ):
+                raise ValueError(
+                    "Dalio market metrics require distinct series identities"
+                )
+
+        for metric, evidence in self.metric_evidence.items():
+            for typed_input in evidence.inputs:
+                if not isinstance(typed_input, MarketSeriesInputResponse):
+                    continue
+                series = series_by_id.get(typed_input.series_id)
+                if series is None:
+                    raise ValueError("Market-series evidence must reference snapshot_series")
+                if (
+                    typed_input.symbol != series.symbol
+                    or typed_input.observation_count != len(series.intervals)
+                    or typed_input.start != series.intervals[0].start
+                    or typed_input.end != series.intervals[-1].end
+                    or expected_return_kinds.get(metric) != series.return_kind
+                ):
+                    raise ValueError(
+                        "Market-series evidence must match referenced series metadata"
+                    )
+
+        recomputed_values = {}
+        for metric in expected_dalio_inputs:
+            evidence = self.metric_evidence.get(metric)
+            if evidence is None or not evidence.available:
+                continue
+            series_inputs = [
+                item
+                for item in evidence.inputs
+                if isinstance(item, MarketSeriesInputResponse)
+            ]
+            referenced_series = [
+                series_by_id[item.series_id] for item in series_inputs
+            ]
+            values_by_series = [
+                [interval.value for interval in series.intervals]
+                for series in referenced_series
+            ]
+            if any(
+                not math.isfinite(value)
+                for values in values_by_series
+                for value in values
+            ):
+                raise ValueError(
+                    "Dalio metric series must be finite and non-degenerate"
+                )
+
+            if metric in {"beta", "correlation_sp500"}:
+                asset_series, benchmark_series = referenced_series
+                asset_intervals = [
+                    (interval.start, interval.end)
+                    for interval in asset_series.intervals
+                ]
+                benchmark_intervals = [
+                    (interval.start, interval.end)
+                    for interval in benchmark_series.intervals
+                ]
+                asset_values, benchmark_values = values_by_series
+                if len(asset_values) < 2 or asset_intervals != benchmark_intervals:
+                    raise ValueError(
+                        "Dalio metric series must be finite and non-degenerate"
+                    )
+                asset_mean = sum(asset_values) / len(asset_values)
+                benchmark_mean = sum(benchmark_values) / len(benchmark_values)
+                asset_variance = sum(
+                    (value - asset_mean) ** 2 for value in asset_values
+                ) / (len(asset_values) - 1)
+                benchmark_variance = sum(
+                    (value - benchmark_mean) ** 2 for value in benchmark_values
+                ) / (len(benchmark_values) - 1)
+                if asset_variance <= 0 or benchmark_variance <= 0:
+                    raise ValueError(
+                        "Dalio metric series must be finite and non-degenerate"
+                    )
+                covariance = sum(
+                    (asset - asset_mean) * (benchmark - benchmark_mean)
+                    for asset, benchmark in zip(asset_values, benchmark_values)
+                ) / (len(asset_values) - 1)
+                if metric == "beta":
+                    recomputed_values[metric] = covariance / benchmark_variance
+                else:
+                    recomputed_values[metric] = covariance / math.sqrt(
+                        asset_variance * benchmark_variance
+                    )
+            elif metric == "volatility_252d":
+                asset_values = values_by_series[0]
+                if len(asset_values) < 2:
+                    raise ValueError(
+                        "Dalio metric series must be finite and non-degenerate"
+                    )
+                asset_mean = sum(asset_values) / len(asset_values)
+                sample_variance = sum(
+                    (value - asset_mean) ** 2 for value in asset_values
+                ) / (len(asset_values) - 1)
+                recomputed_values[metric] = math.sqrt(sample_variance) * math.sqrt(
+                    252
+                )
+            else:
+                try:
+                    recomputed_values[metric] = math.exp(
+                        sum(values_by_series[0])
+                    ) - 1
+                except OverflowError:
+                    raise ValueError(
+                        "Dalio metric series must be finite and non-degenerate"
+                    ) from None
+
+        for metric, recomputed_value in recomputed_values.items():
+            evidence = self.metric_evidence[metric]
+            if (
+                not math.isfinite(recomputed_value)
+                or evidence.value is None
+                or not math.isclose(
+                    evidence.value,
+                    recomputed_value,
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError("Dalio metric evidence must match recomputed value")
+
         agent_names = [result.agent for result in self.agent_results]
         if len(agent_names) != len(set(agent_names)):
             raise ValueError("Agent results must have unique agent identities")
+        if any(
+            result.agent not in _AGENT_CONSUMPTION_BY_NAME
+            for result in self.agent_results
+        ):
+            raise ValueError("Agent results require a known identity")
+        expected_comparison = [
+            ComparisonAgentResponse(
+                name=result.agent,
+                style=result.style,
+                verdict=result.verdict,
+                score=result.score,
+                key_metric=result.insights[0] if result.insights else "",
+            )
+            for result in self.agent_results
+        ]
+        if self.comparison_table.agents != expected_comparison:
+            raise ValueError("Comparison table must exactly project agent results")
         actual_requested = len(self.agent_results)
         completed_results = [
             result for result in self.agent_results if result.status == "complete"
         ]
         actual_completed = len(completed_results)
+        for result in completed_results:
+            contract = _AGENT_CONSUMPTION_BY_NAME.get(result.agent)
+            if contract is None:
+                continue
+            evidence_values = {
+                metric: evidence.value
+                for metric, evidence in self.metric_evidence.items()
+                if evidence.available
+            }
+            mandatory = _mandatory_consumed_metrics(contract, evidence_values)
+            expected = mandatory + tuple(
+                metric
+                for metric in contract["optional"]
+                if (
+                    (evidence := self.metric_evidence.get(metric)) is not None
+                    and evidence.available
+                    and evidence.value is not None
+                )
+            )
+            if set(result.required_metric_values) != set(expected):
+                raise ValueError(
+                    "Complete agents require exact consumed metric evidence keys"
+                )
+            for metric in expected:
+                evidence = self.metric_evidence.get(metric)
+                consumed = result.required_metric_values.get(metric)
+                if (
+                    evidence is None
+                    or not evidence.available
+                    or evidence.value is None
+                    or consumed is None
+                    or not math.isclose(
+                        evidence.value, consumed, rel_tol=0.0, abs_tol=1e-12
+                    )
+                ):
+                    raise ValueError(
+                        "Complete agents require matching required metric evidence"
+                    )
         if (
             self.requested_analyses != actual_requested
             or self.completed_analyses != actual_completed
@@ -727,6 +1047,7 @@ class GOATState(TypedDict):
     sec_fundamentals: Optional[Dict[str, Any]]
     sec_fundamentals_history: Optional[Dict[str, List[Dict[str, Any]]]]
     metric_evidence: NotRequired[Optional[Dict[str, Dict[str, Any]]]]
+    snapshot_series: NotRequired[List[Dict[str, Any]]]
     
     # Earnings data (actual vs. consensus)
     earnings_data: Optional[List[Dict[str, Any]]]
@@ -820,6 +1141,10 @@ _METRIC_EVIDENCE_CONTRACTS = {
     "roic": ("sec", "nopat_divided_by_average_invested_capital"),
     "revenue_growth_5y": ("sec", "five_year_revenue_cagr"),
     "capex_to_revenue": ("sec", "capex_divided_by_revenue"),
+    "interest_coverage": (
+        "sec",
+        "operating_income_divided_by_interest_expense",
+    ),
     "margin_trend": ("sec", "five_year_operating_margin_ols_slope"),
     "debt_growth_3y": ("sec", "three_year_funded_debt_cagr"),
     "current_price": ("yahoo", "provider_regular_market_price"),
@@ -842,11 +1167,557 @@ _METRIC_EVIDENCE_CONTRACTS = {
         "sec+yahoo",
         "annual_common_dividend_per_share_divided_by_current_price",
     ),
+    "market_cap": ("sec+yahoo", "current_price_times_period_end_common_shares"),
+    "ps_ratio": ("sec+yahoo", "market_cap_divided_by_annual_revenue"),
 }
 
 
-def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
+_FORMULA_EVIDENCE_CONTRACTS = {
+    "roe": ("sec", "net_income_divided_by_equity", "sec_companyfacts_v1",
+            ("income.current.net_income", "capital.end.equity")),
+    "profit_margin": ("sec", "net_income_divided_by_revenue", "sec_companyfacts_v1",
+                      ("income.current.net_income", "income.current.revenue")),
+    "debt_to_equity": ("sec", "funded_debt_divided_by_equity", "sec_companyfacts_v1", (
+        "debt.current.long_term_current", "debt.current.long_term_noncurrent",
+        "debt.current.short_term_borrowings", "capital.end.equity")),
+    "free_cash_flow": ("sec", "operating_cash_flow_minus_capex", "sec_companyfacts_v1",
+                       ("cashflow.current.operating", "cashflow.current.capex")),
+    "earnings_growth": ("sec", "three_year_net_income_cagr", "sec_companyfacts_v1",
+                        ("income.begin", "income.current")),
+    "earnings_turnaround": (
+        "sec", "negative_or_zero_to_positive_three_year_net_income_transition",
+        "sec_companyfacts_v1", ("income.begin", "income.current")),
+    "cash_and_equivalents": ("sec", "reported", "sec_companyfacts_v1", ("cash.current",)),
+    "current_ratio": ("sec", "current_assets_divided_by_current_liabilities",
+                      "sec_companyfacts_v1", (
+                          "balance.current.current_assets",
+                          "balance.current.current_liabilities")),
+    "current_assets": ("sec", "reported", "sec_companyfacts_v1",
+                       ("balance.current.current_assets",)),
+    "total_liabilities": ("sec", "reported_or_compatibly_derived", "sec_companyfacts_v1",
+                          ("balance.current.liabilities",)),
+    "shares_outstanding": ("sec", "reported_period_end", "sec_companyfacts_v1",
+                           ("shares.period_end",)),
+    "eps": ("sec", "reported_diluted_eps", "sec_companyfacts_v1",
+            ("income.current.diluted_eps",)),
+    "book_value_per_share": ("sec", "equity_divided_by_period_end_shares",
+                             "sec_companyfacts_v1",
+                             ("capital.end.equity", "shares.period_end")),
+    "consecutive_dividend_years": (
+        "sec", "consecutive_positive_common_dividend_years",
+        "sec_companyfacts_v1", None),
+    "gross_margin": ("sec", None, "sec_companyfacts_v1", None),
+    "operating_margin": ("sec", "operating_income_divided_by_revenue",
+                         "sec_companyfacts_v1", (
+                             "income.current.operating_income",
+                             "income.current.revenue")),
+    "roic": ("sec", "nopat_divided_by_average_invested_capital",
+             "sec_companyfacts_v1", (
+                 "income.current.operating_income", "income.current.tax",
+                 "income.current.pretax_income", "capital.begin.equity",
+                 "capital.end.equity", "capital.begin.cash", "capital.end.cash",
+                 "capital.begin.debt.long_term_current",
+                 "capital.begin.debt.long_term_noncurrent",
+                 "capital.begin.debt.short_term_borrowings",
+                 "capital.end.debt.long_term_current",
+                 "capital.end.debt.long_term_noncurrent",
+                 "capital.end.debt.short_term_borrowings")),
+    "revenue_growth_5y": ("sec", "five_year_revenue_cagr", "sec_companyfacts_v1",
+                          ("revenue.begin", "revenue.current")),
+    "capex_to_revenue": ("sec", "capex_divided_by_revenue", "sec_companyfacts_v1",
+                         ("cashflow.current.capex", "income.current.revenue")),
+    "interest_coverage": ("sec", "operating_income_divided_by_interest_expense",
+                          "sec_companyfacts_v1", (
+                              "income.current.operating_income",
+                              "income.current.interest_expense")),
+    "margin_trend": ("sec", "five_year_operating_margin_ols_slope",
+                     "sec_companyfacts_v1", None),
+    "debt_growth_3y": ("sec", "three_year_funded_debt_cagr", "sec_companyfacts_v1", (
+        "debt.current.long_term_current", "debt.current.long_term_noncurrent",
+        "debt.current.short_term_borrowings", "debt.begin.long_term_current",
+        "debt.begin.long_term_noncurrent", "debt.begin.short_term_borrowings")),
+    "current_price": ("yahoo", "provider_regular_market_price", "yahoo_chart_v1",
+                      ("price.current",)),
+    "beta": (
+        "yahoo",
+        "aligned_daily_return_sample_covariance_divided_by_benchmark_variance",
+        "goatlens_beta_v1",
+        (
+            "asset.adjusted_close_return_intervals",
+            "benchmark.sp500.adjusted_close_return_intervals",
+        ),
+    ),
+    "volatility_252d": (
+        "yahoo", "annualized_log_return_volatility_252_sessions",
+        "goatlens_volatility_252d_v1",
+        ("asset.adjusted_close_return_intervals",),
+    ),
+    "correlation_sp500": (
+        "yahoo", "aligned_daily_return_pearson_correlation",
+        "goatlens_correlation_sp500_v1",
+        (
+            "asset.adjusted_close_return_intervals",
+            "benchmark.sp500.adjusted_close_return_intervals",
+        ),
+    ),
+    "realized_total_return_252d": (
+        "yahoo", "adjusted_close_total_return_252_sessions",
+        "goatlens_realized_total_return_252d_v1",
+        ("asset.adjusted_close_return_intervals",),
+    ),
+    "pe_ratio": ("sec+yahoo", "current_price_divided_by_diluted_eps",
+                 "sec_yahoo_formula_v1", ("income.current.diluted_eps", "price.current")),
+    "pb_ratio": ("sec+yahoo", "current_price_divided_by_book_value_per_share",
+                 "sec_yahoo_formula_v1", (
+                     "capital.end.equity", "shares.period_end", "price.current")),
+    "dividend_yield": ("sec+yahoo",
+                       "annual_common_dividend_per_share_divided_by_current_price",
+                       "sec_yahoo_formula_v1", ("dividend.current", "price.current")),
+    "market_cap": ("sec+yahoo", "current_price_times_period_end_common_shares",
+                   "sec_yahoo_formula_v1", ("shares.period_end", "price.current")),
+    "ps_ratio": ("sec+yahoo", "market_cap_divided_by_annual_revenue",
+                 "sec_yahoo_formula_v1", (
+                     "shares.period_end", "income.current.revenue", "price.current")),
+}
+
+
+def _recompute_formula_value(metric, values, formula):
+    if metric in {
+        "cash_and_equivalents", "current_assets", "total_liabilities",
+        "shares_outstanding", "eps", "current_price",
+    }:
+        return values[0]
+    if metric in {"roe", "profit_margin", "current_ratio", "operating_margin",
+                  "capex_to_revenue", "interest_coverage"}:
+        return values[0] / values[1]
+    if metric == "debt_to_equity":
+        return sum(values[:3]) / values[3]
+    if metric == "free_cash_flow":
+        return values[0] - values[1]
+    if metric == "earnings_growth":
+        return (values[1] / values[0]) ** (1 / 3) - 1
+    if metric == "earnings_turnaround":
+        return 1.0 if values[0] <= 0 < values[1] else 0.0
+    if metric == "book_value_per_share":
+        return values[0] / values[1]
+    if metric == "gross_margin":
+        return (
+            values[0] / values[1]
+            if formula == "gross_profit_divided_by_revenue"
+            else (values[0] - values[1]) / values[0]
+        )
+    if metric == "roic":
+        operating_income, tax, pretax = values[:3]
+        begin_capital = values[3] + sum(values[7:10]) - values[5]
+        end_capital = values[4] + sum(values[10:13]) - values[6]
+        return operating_income * (1 - tax / pretax) / (
+            (begin_capital + end_capital) / 2
+        )
+    if metric == "revenue_growth_5y":
+        return (values[1] / values[0]) ** (1 / 5) - 1
+    if metric == "margin_trend":
+        margins = [values[index + 1] / values[index] for index in range(0, 10, 2)]
+        mean = sum(margins) / 5
+        return sum((index - 2) * (value - mean) for index, value in enumerate(margins)) / 10
+    if metric == "debt_growth_3y":
+        return (sum(values[:3]) / sum(values[3:])) ** (1 / 3) - 1
+    if metric == "consecutive_dividend_years":
+        return float(len(values) - 1)
+    if metric == "pe_ratio":
+        return values[1] / values[0]
+    if metric == "pb_ratio":
+        return values[2] / (values[0] / values[1])
+    if metric == "dividend_yield":
+        return values[0] / values[1]
+    if metric == "market_cap":
+        return values[0] * values[1]
+    if metric == "ps_ratio":
+        return values[2] * values[0] / values[1]
+    raise ValueError("Unsupported formula evidence contract")
+
+
+_SEC_ROLE_FUNDAMENTAL_KEYS = {
+    "income.current.net_income": "net_income",
+    "capital.end.equity": "equity",
+    "income.current.revenue": "revenue",
+    "debt.current.long_term_current": "long_term_debt_current",
+    "debt.current.long_term_noncurrent": "long_term_debt_noncurrent",
+    "debt.current.short_term_borrowings": "short_term_borrowings",
+    "cashflow.current.operating": "operating_cash_flow",
+    "cashflow.current.capex": "capex_payments",
+    "income.begin": "net_income",
+    "income.current": "net_income",
+    "cash.current": "cash_and_equivalents",
+    "balance.current.current_assets": "current_assets",
+    "balance.current.current_liabilities": "current_liabilities",
+    "balance.current.liabilities": "liabilities",
+    "shares.period_end": "shares_outstanding",
+    "income.current.diluted_eps": "diluted_eps",
+    "income.current.gross_profit": "gross_profit",
+    "income.current.cost_of_revenue": "cost_of_revenue",
+    "income.current.operating_income": "operating_income",
+    "income.current.tax": "income_tax",
+    "income.current.pretax_income": "pretax_income",
+    "capital.begin.equity": "equity",
+    "capital.begin.cash": "cash_and_equivalents",
+    "capital.end.cash": "cash_and_equivalents",
+    "capital.begin.debt.long_term_current": "long_term_debt_current",
+    "capital.begin.debt.long_term_noncurrent": "long_term_debt_noncurrent",
+    "capital.begin.debt.short_term_borrowings": "short_term_borrowings",
+    "capital.end.debt.long_term_current": "long_term_debt_current",
+    "capital.end.debt.long_term_noncurrent": "long_term_debt_noncurrent",
+    "capital.end.debt.short_term_borrowings": "short_term_borrowings",
+    "revenue.begin": "revenue",
+    "revenue.current": "revenue",
+    "income.current.interest_expense": "interest_expense",
+    "debt.begin.long_term_current": "long_term_debt_current",
+    "debt.begin.long_term_noncurrent": "long_term_debt_noncurrent",
+    "debt.begin.short_term_borrowings": "short_term_borrowings",
+    "dividend.current": "dividend_per_share",
+}
+
+
+def _fundamental_key_for_role(role):
+    if role.startswith("margin."):
+        return "revenue" if role.endswith(".revenue") else "operating_income"
+    if role.startswith("streak."):
+        return "dividend_per_share"
+    return _SEC_ROLE_FUNDAMENTAL_KEYS.get(role)
+
+
+def _validate_formula_evidence(response):
+    public_facts = {
+        key: [item] + response.fundamentals_history.get(key, [])
+        for key, item in response.fundamentals.items()
+    }
+    current_facts = {
+        key: [item] for key, item in response.fundamentals.items()
+    }
+    for evidence in response.metric_evidence.values():
+        sec_inputs = [
+            item for item in evidence.inputs
+            if isinstance(item, SECMetricInputResponse)
+        ]
+        observation_inputs = [
+            item for item in evidence.inputs
+            if isinstance(item, MarketObservationInputResponse)
+        ]
+        series_inputs = [
+            item for item in evidence.inputs
+            if isinstance(item, MarketSeriesInputResponse)
+        ]
+        expected_filed_at = (
+            max(item.provenance.filed for item in sec_inputs)
+            if sec_inputs else None
+        )
+        if evidence.source == "yahoo":
+            expected_as_of = (
+                observation_inputs[0].observed_at
+                if len(observation_inputs) == 1
+                else max(item.end for item in series_inputs)
+                if series_inputs else None
+            )
+        else:
+            expected_as_of = (
+                max(item.provenance.end for item in sec_inputs)
+                if sec_inputs else None
+            )
+        if observation_inputs:
+            expected_observation_count = len(observation_inputs)
+        elif series_inputs:
+            series_counts = {item.observation_count for item in series_inputs}
+            expected_observation_count = (
+                next(iter(series_counts)) if len(series_counts) == 1 else None
+            )
+        else:
+            expected_observation_count = None
+        if (
+            evidence.as_of != expected_as_of
+            or evidence.filed_at != expected_filed_at
+            or evidence.observation_count != expected_observation_count
+        ):
+            raise ValueError("Metric evidence metadata must derive from typed inputs")
+
+    current_price = response.metric_evidence.get("current_price")
+    canonical_price_input = None
+    if current_price is not None and current_price.available:
+        price_inputs = [
+            item for item in current_price.inputs
+            if isinstance(item, MarketObservationInputResponse)
+        ]
+        if len(price_inputs) == 1:
+            canonical_price_input = price_inputs[0]
+        if (
+            canonical_price_input is None
+            or canonical_price_input.observed_at
+            != response.data_status.market_data.as_of
+        ):
+            raise ValueError("Current price timestamp must match market status as_of")
+
+    for metric, contract in _FORMULA_EVIDENCE_CONTRACTS.items():
+        evidence = response.metric_evidence.get(metric)
+        if evidence is None:
+            continue
+        source, formula, version, expected_roles = contract
+        expected_owner = "yahoo" if metric == "current_price" else "goatlens"
+        if (
+            evidence.source != source
+            or evidence.formula_version != version
+            or evidence.formula_owner != expected_owner
+            or (formula is not None and evidence.formula != formula)
+        ):
+            raise ValueError("Metric formula evidence contract is inconsistent")
+        if not evidence.available:
+            continue
+
+        roles = tuple(item.role for item in evidence.inputs)
+        if metric == "gross_margin":
+            gross_contracts = {
+                "gross_profit_divided_by_revenue": (
+                    "income.current.gross_profit", "income.current.revenue"),
+                "revenue_minus_cost_of_revenue_divided_by_revenue": (
+                    "income.current.revenue", "income.current.cost_of_revenue"),
+            }
+            expected_roles = gross_contracts.get(evidence.formula)
+        elif metric == "margin_trend":
+            if len(roles) != 10 or any(
+                re.fullmatch(
+                    r"margin\.\d{4}\.(revenue|operating_income)", role
+                ) is None
+                for role in roles
+            ):
+                expected_roles = ()
+            else:
+                years = [role.split(".")[1] for role in roles[::2]]
+                numeric_years = [int(year) for year in years]
+                expected_roles = tuple(
+                    role
+                    for year in years
+                    for role in (
+                        f"margin.{year}.revenue",
+                        f"margin.{year}.operating_income",
+                    )
+                )
+                if (
+                    len(set(numeric_years)) != 5
+                    or numeric_years != sorted(numeric_years)
+                    or any(
+                        later - earlier != 1
+                        for earlier, later in zip(numeric_years, numeric_years[1:])
+                    )
+                    or any(
+                        int(item.provenance.end[:4]) != int(item.role.split(".")[1])
+                        for item in evidence.inputs
+                        if isinstance(item, SECMetricInputResponse)
+                    )
+                ):
+                    expected_roles = ()
+        elif metric == "consecutive_dividend_years":
+            expected_roles = roles
+            valid_roles = bool(roles) and all(
+                re.fullmatch(r"streak\.\d{4}\.dividend", role)
+                for role in roles[:-1]
+            ) and re.fullmatch(r"streak\.\d{4}\.terminator", roles[-1])
+            if valid_roles:
+                years = [int(role.split(".")[1]) for role in roles]
+                valid_roles = all(
+                    earlier - later == 1
+                    for earlier, later in zip(years, years[1:])
+                ) and all(
+                    int(item.provenance.end[:4]) == int(item.role.split(".")[1])
+                    for item in evidence.inputs
+                    if isinstance(item, SECMetricInputResponse)
+                )
+            if not valid_roles:
+                expected_roles = ()
+        if expected_roles is None or roles != expected_roles:
+            if metric in {
+                "beta", "volatility_252d", "correlation_sp500",
+                "realized_total_return_252d",
+            }:
+                raise ValueError(
+                    "Dalio metric evidence requires exact series inputs"
+                )
+            raise ValueError("Metric formula evidence requires exact input roles")
+
+        sec_role_inputs = [
+            item for item in evidence.inputs
+            if isinstance(item, SECMetricInputResponse)
+        ]
+        context_groups = {}
+        for item in sec_role_inputs:
+            segments = item.role.split(".")
+            if "begin" in segments:
+                group = "begin"
+            elif "current" in segments or "end" in segments or "period_end" in segments:
+                group = "current"
+            elif item.role.startswith("margin."):
+                group = ".".join(segments[:2])
+            else:
+                group = None
+            if group is not None:
+                context_groups.setdefault(group, []).append(item)
+        for grouped_inputs in context_groups.values():
+            contexts = {
+                (
+                    item.provenance.end,
+                    item.provenance.accession,
+                    item.provenance.form,
+                    item.provenance.filed,
+                    item.provenance.fiscal_year,
+                )
+                for item in grouped_inputs
+            }
+            duration_starts = {
+                item.provenance.start
+                for item in grouped_inputs
+                if item.provenance.start is not None
+            }
+            if len(contexts) != 1 or len(duration_starts) > 1:
+                raise ValueError(
+                    "Same-period SEC formula inputs require compatible filing context"
+                )
+        begin_inputs = context_groups.get("begin", [])
+        current_inputs = context_groups.get("current", [])
+        if begin_inputs and current_inputs and not (
+            max(item.provenance.end for item in begin_inputs)
+            < min(item.provenance.end for item in current_inputs)
+        ):
+            raise ValueError("Historical SEC formula roles require strict chronology")
+
+        if metric in {
+            "beta", "volatility_252d", "correlation_sp500",
+            "realized_total_return_252d",
+        }:
+            if not all(
+                isinstance(item, MarketSeriesInputResponse)
+                for item in evidence.inputs
+            ):
+                raise ValueError("Metric formula evidence has an invalid input source")
+            # Exact series identity, windows, content digests, and independent
+            # recomputation are enforced by AnalysisResponse below.
+            continue
+
+        for item in evidence.inputs:
+            if isinstance(item, SECMetricInputResponse):
+                fundamental_key = _fundamental_key_for_role(item.role)
+                role_segments = item.role.split(".")
+                allowed_facts = (
+                    current_facts
+                    if "current" in role_segments
+                    else public_facts
+                )
+                if not any(
+                    math.isclose(item.value, fact.value, rel_tol=0.0, abs_tol=1e-12)
+                    and item.provenance == fact.provenance
+                    for fact in allowed_facts.get(fundamental_key, [])
+                    if fact.value is not None and fact.provenance is not None
+                ):
+                    message = (
+                        "SEC current roles must bind to current fundamentals"
+                        if "current" in role_segments
+                        else "SEC formula evidence must bind to public fundamentals"
+                    )
+                    raise ValueError(message)
+            elif isinstance(item, MarketObservationInputResponse):
+                if (
+                    canonical_price_input is None
+                    or item != canonical_price_input
+                    or item.symbol != response.ticker
+                ):
+                    raise ValueError(
+                        "Market formula evidence must bind to the public observation"
+                    )
+            else:
+                raise ValueError("Metric formula evidence has an invalid input source")
+
+        values = [item.value for item in evidence.inputs]
+        try:
+            recomputed = _recompute_formula_value(metric, values, evidence.formula)
+        except (ArithmeticError, OverflowError, ValueError):
+            raise ValueError("Metric formula evidence cannot be recomputed") from None
+        if (
+            evidence.value is None
+            or not math.isfinite(recomputed)
+            or not math.isclose(
+                evidence.value, recomputed, rel_tol=1e-12, abs_tol=1e-12
+            )
+        ):
+            raise ValueError("Metric formula evidence must match recomputed value")
+
+
+def _build_snapshot_series(snapshot, ticker):
+    if snapshot is None:
+        return [], {}
+
+    def returns(points):
+        if len(points) < 253:
+            return [], [], []
+        window = points[-253:]
+        log_returns = []
+        simple_returns = []
+        intervals = []
+        for previous, current in zip(window, window[1:]):
+            log_returns.append(
+                math.log(current.adjusted_close / previous.adjusted_close)
+            )
+            simple_returns.append(
+                current.adjusted_close / previous.adjusted_close - 1
+            )
+            intervals.append((previous.session_date, current.session_date))
+        return log_returns, simple_returns, intervals
+
+    asset_logs, asset_simple, asset_intervals = returns(snapshot.history)
+    benchmark_history = getattr(snapshot, "benchmark_history", [])
+    _, benchmark_simple, benchmark_intervals = returns(benchmark_history)
+    asset_simple_by_interval = dict(zip(asset_intervals, asset_simple))
+    benchmark_simple_by_interval = dict(zip(benchmark_intervals, benchmark_simple))
+    shared = sorted(set(asset_simple_by_interval) & set(benchmark_simple_by_interval))[-252:]
+    series_by_id = {}
+    references = {}
+
+    def add_series(role, symbol, return_kind, intervals, values):
+        if not intervals or len(intervals) != len(values):
+            return
+        observations = [
+            {"start": start, "end": end, "value": float(value)}
+            for (start, end), value in zip(intervals, values)
+        ]
+        canonical = json.dumps(
+            {
+                "source": "yahoo",
+                "symbol": symbol,
+                "return_kind": return_kind,
+                "intervals": observations,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        series_id = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+        series_by_id[series_id] = {
+            "series_id": series_id,
+            "source": "yahoo",
+            "symbol": symbol,
+            "return_kind": return_kind,
+            "intervals": observations,
+        }
+        references[role] = series_id
+
+    add_series("asset_log", ticker, "log", asset_intervals, asset_logs)
+    add_series(
+        "asset_aligned", ticker, "simple", shared,
+        [asset_simple_by_interval[item] for item in shared],
+    )
+    add_series(
+        "benchmark_aligned", "^GSPC", "simple", shared,
+        [benchmark_simple_by_interval[item] for item in shared],
+    )
+    return list(series_by_id.values()), references
+
+
+def _build_metric_evidence(normalized, snapshot=None, series_references=None):
     evidence = {}
+    series_references = series_references or {}
     market_as_of = (
         getattr(snapshot, "current_price_as_of", None) if snapshot is not None else None
     )
@@ -881,13 +1752,19 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
         }]
 
     def market_series(
-        role, symbol, observations, start=market_window_start, end=market_window_end
+        role,
+        symbol,
+        observations,
+        series_role,
+        start=market_window_start,
+        end=market_window_end,
     ):
         if (
             start is None
             or end is None
             or type(observations) is not int
             or observations < 1
+            or series_role not in series_references
         ):
             return []
         return [{
@@ -898,42 +1775,24 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
             "start": start,
             "end": end,
             "observation_count": observations,
+            "series_id": series_references[series_role],
         }]
 
     sec_metrics = getattr(normalized, "metrics", {})
-    combined_sec_metric = {
-        "pe_ratio": "eps",
-        "pb_ratio": "book_value_per_share",
-        "dividend_yield": "dividend_per_share",
+    combined_sec_metrics = {
+        "pe_ratio": ("eps",),
+        "pb_ratio": ("book_value_per_share",),
+        "dividend_yield": ("dividend_per_share",),
+        "market_cap": ("shares_outstanding",),
+        "ps_ratio": ("shares_outstanding", "revenue"),
     }
     for metric, (source, formula) in _METRIC_EVIDENCE_CONTRACTS.items():
         value = normalized.get(metric)
         observations = None
         inputs = []
         reason = "required_inputs_unavailable"
-        ratio_value = (
-            ratio_snapshot.values.get(metric)
-            if ratio_snapshot is not None
-            else None
-        )
-        if metric_is_available(ratio_value):
-            value = ratio_value
-            source = "yahoo"
-            formula = "provider_normalized_ratio"
-            as_of = None
-            observations = 1
-            inputs = [{
-                "kind": "provider_metric",
-                "role": f"ratio.{metric}",
-                "source": "yahoo",
-                "symbol": ratio_snapshot.symbol,
-                "provider_field": ratio_snapshot.provider_fields[metric],
-                "value": float(ratio_value),
-                "retrieved_at": ratio_snapshot.fetched_at,
-            }]
-            available = True
-            version = "yahoo_quote_summary_v1"
-        elif source == "sec":
+        filed_at = None
+        if source == "sec":
             canonical = sec_metrics.get(metric)
             if canonical is not None:
                 value = canonical.value
@@ -941,6 +1800,11 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
                 inputs = sec_inputs(canonical)
                 reason = canonical.availability_reason or "required_provenance_unavailable"
                 as_of = (
+                    max(item.provenance.end for item in canonical.inputs)
+                    if canonical.inputs
+                    else None
+                )
+                filed_at = (
                     max(item.provenance.filed for item in canonical.inputs).isoformat()
                     if canonical.inputs
                     else None
@@ -968,6 +1832,7 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
                     "asset.adjusted_close_return_intervals",
                     normalized.get("ticker"),
                     observations,
+                    "asset_aligned",
                     aligned_start,
                     aligned_end,
                 )
@@ -975,6 +1840,7 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
                     "benchmark.sp500.adjusted_close_return_intervals",
                     "^GSPC",
                     observations,
+                    "benchmark_aligned",
                     aligned_start,
                     aligned_end,
                 )
@@ -984,26 +1850,66 @@ def _build_metric_evidence(normalized, snapshot=None, ratio_snapshot=None):
                     "asset.adjusted_close_return_intervals",
                     normalized.get("ticker"),
                     observations,
+                    "asset_log",
                 )
             available = metric_is_available(value) and bool(inputs)
-            version = "yahoo_chart_v1"
+            version = {
+                "beta": "goatlens_beta_v1",
+                "volatility_252d": "goatlens_volatility_252d_v1",
+                "correlation_sp500": "goatlens_correlation_sp500_v1",
+                "realized_total_return_252d": (
+                    "goatlens_realized_total_return_252d_v1"
+                ),
+            }.get(metric, "yahoo_chart_v1")
         else:
-            as_of = market_as_of
-            observations = 1 if metric_is_available(value) else None
-            canonical = sec_metrics.get(combined_sec_metric[metric])
-            if canonical is not None and canonical.available:
-                inputs = sec_inputs(canonical)
+            canonical_inputs = [
+                sec_metrics.get(name) for name in combined_sec_metrics[metric]
+            ]
+            available_canonicals = [
+                item
+                for item in canonical_inputs
+                if item is not None and item.available
+            ]
+            if len(available_canonicals) == len(canonical_inputs):
+                inputs = [
+                    typed_input
+                    for item in available_canonicals
+                    for typed_input in sec_inputs(item)
+                ]
+                as_of = max(
+                    item.provenance.end
+                    for canonical in available_canonicals
+                    for item in canonical.inputs
+                )
+                filed_at = max(
+                    item.provenance.filed
+                    for canonical in available_canonicals
+                    for item in canonical.inputs
+                ).isoformat()
+            else:
+                as_of = None
             inputs += market_observation(normalized.get("current_price"))
-            available = metric_is_available(value) and bool(inputs) and canonical is not None and canonical.available
+            observations = 1 if any(
+                item["kind"] == "market_observation" for item in inputs
+            ) else None
+            available = (
+                metric_is_available(value)
+                and bool(inputs)
+                and len(available_canonicals) == len(canonical_inputs)
+            )
             version = "sec_yahoo_formula_v1"
+
+        reason = normalized.get(f"{metric}_availability_reason") or reason
 
         evidence[metric] = {
             "value": float(value) if available else None,
             "available": available,
             "source": source,
             "as_of": as_of,
+            "filed_at": filed_at,
             "formula": formula,
             "formula_version": version,
+            "formula_owner": "yahoo" if metric == "current_price" else "goatlens",
             "inputs": inputs,
             "observation_count": observations,
             "availability_reason": None if available else reason,
@@ -1040,6 +1946,36 @@ def _price_dependent_analysis_status(normalized):
             else None
         ),
     }
+
+
+def _price_sec_compatibility_reason(normalized, snapshot):
+    if snapshot.currency != "USD":
+        return (
+            "non_usd_quote_currency"
+            if snapshot.currency
+            else "unproven_quote_currency"
+        )
+    shares_metric = getattr(normalized, "metrics", {}).get("shares_outstanding")
+    if shares_metric is None or not shares_metric.available:
+        return "unproven_price_sec_compatibility"
+    supported = all(
+        item.provenance.namespace == "us-gaap"
+        and item.provenance.form in {"10-K", "10-K/A"}
+        and item.provenance.concept == "CommonStockSharesOutstanding"
+        and item.provenance.unit == "shares"
+        for item in shares_metric.inputs
+    )
+    if not supported:
+        return "unsupported_filing_or_security_basis"
+    split_events = getattr(snapshot, "split_events", None)
+    if split_events is None:
+        return "unproven_price_sec_compatibility"
+    share_period_end = max(
+        item.provenance.end for item in shares_metric.inputs
+    )
+    if any(event.effective_date > share_period_end for event in split_events):
+        return "post_filing_split_unadjusted_sec_basis"
+    return None
 
 
 async def fetch_data_node(state: GOATState) -> GOATState:
@@ -1126,13 +2062,11 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "available": False,
             "source": "yahoo",
             "as_of": None,
+            "retrieved_at": None,
+            "currency": None,
+            "cache_age_seconds": None,
+            "freshness": "unknown",
             "reason": "market_data_unavailable",
-        },
-        "normalized_ratios": {
-            "available": False,
-            "source": "yahoo",
-            "as_of": None,
-            "reason": "provider_temporarily_unavailable",
         },
         "price_dependent_analysis": {
             "status": "incomplete",
@@ -1146,7 +2080,6 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     state["data_source"] = "sec"
 
     snapshot = None
-    ratio_snapshot = None
     try:
         async with YahooChartClient() as client:
             snapshot = await client.get_snapshot(ticker)
@@ -1163,7 +2096,22 @@ async def fetch_data_node(state: GOATState) -> GOATState:
                 ),
             }
         )
-        if current_price is not None:
+        price_sec_compatibility_reason = _price_sec_compatibility_reason(
+            normalized, snapshot
+        )
+        if price_sec_compatibility_reason is not None:
+            for metric in (
+                "pe_ratio",
+                "pb_ratio",
+                "ps_ratio",
+                "market_cap",
+                "dividend_yield",
+            ):
+                normalized[metric] = None
+                normalized[f"{metric}_availability_reason"] = (
+                    price_sec_compatibility_reason
+                )
+        elif current_price is not None:
             eps = normalized.get("eps")
             book_value = normalized.get("book_value_per_share")
             shares = normalized.get("shares_outstanding")
@@ -1208,6 +2156,10 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "available": current_price is not None,
             "source": "yahoo",
             "as_of": snapshot.current_price_as_of,
+            "retrieved_at": snapshot.fetched_at,
+            "currency": snapshot.currency or None,
+            "cache_age_seconds": snapshot.cache_age_seconds,
+            "freshness": "fresh",
             "reason": None if current_price is not None else "current_market_price_unavailable",
         }
         state["data_status"]["price_dependent_analysis"] = (
@@ -1225,36 +2177,18 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     except Exception:
         state["data_status"]["market_data"]["reason"] = "market_data_failure"
 
-    try:
-        async with YahooRatiosClient() as client:
-            ratio_snapshot = await client.get_snapshot(ticker)
-        normalized.update(ratio_snapshot.values)
-        state["data_source"] = "sec+yahoo"
-        state["data_status"]["normalized_ratios"] = {
-            "available": True,
-            "source": "yahoo",
-            "as_of": ratio_snapshot.fetched_at,
-            "reason": None,
-        }
-    except YahooRatioError as ratio_error:
-        ratio_snapshot = None
-        state["data_status"]["normalized_ratios"]["reason"] = ratio_error.code
-    except Exception:
-        ratio_snapshot = None
-        state["data_status"]["normalized_ratios"]["reason"] = (
-            "ratio_data_failure"
-        )
-
     if snapshot is not None:
         state["data_status"]["price_dependent_analysis"] = (
             _price_dependent_analysis_status(normalized)
         )
 
     state["normalized_data"] = normalized
+    snapshot_series, series_references = _build_snapshot_series(snapshot, ticker)
+    state["snapshot_series"] = snapshot_series
     state["metric_evidence"] = _build_metric_evidence(
         normalized,
         snapshot,
-        ratio_snapshot,
+        series_references,
     )
 
     try:
@@ -1312,43 +2246,8 @@ AGENT_REGISTRY = [
 ]
 
 _AGENT_REQUIRED_METRICS = {
-    "buffett": (
-        "roe",
-        "profit_margin",
-        "debt_to_equity",
-        "free_cash_flow",
-    ),
-    "lynch": (
-        "pe_ratio",
-        "earnings_growth",
-        "debt_to_equity",
-    ),
-    "graham": (
-        "pe_ratio",
-        "pb_ratio",
-        "current_ratio",
-        "current_price",
-        "current_assets",
-        "total_liabilities",
-        "shares_outstanding",
-        "eps",
-        "book_value_per_share",
-    ),
-    "munger": (
-        "gross_margin",
-        "operating_margin",
-        "revenue_growth_5y",
-        "capex_to_revenue",
-        "debt_to_equity",
-        "margin_trend",
-    ),
-    "dalio": (
-        "beta",
-        "volatility_252d",
-        "debt_to_equity",
-        "correlation_sp500",
-        "realized_total_return_252d",
-    ),
+    key: contract["mandatory"]
+    for key, contract in _AGENT_CONSUMPTION_CONTRACTS.items()
 }
 
 
@@ -1391,18 +2290,44 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     # creates a named span. Config flows through automatically, linking
     # the ChatOpenAI child span via parent_run_id.
     tasks = []
+    task_metric_values = []
     for name, agent in agents.items():
-        required_metrics = _AGENT_REQUIRED_METRICS.get(name, ())
-        if name == "lynch" and financials.get("earnings_turnaround") == 1.0:
-            required_metrics = tuple(
-                metric for metric in required_metrics if metric != "earnings_growth"
-            ) + ("earnings_turnaround",)
-        unavailable = [
-            metric
-            for metric in required_metrics
-            if not metric_is_available(financials.get(metric))
-        ]
+        contract = _AGENT_CONSUMPTION_CONTRACTS.get(name)
+        required_metrics = (
+            _mandatory_consumed_metrics(contract, financials) if contract else ()
+        )
+        evidence = state.get("metric_evidence") or {}
+        unavailable = []
+        required_metric_values = {}
+        consumed_candidates = required_metrics + (
+            contract["optional"] if contract else ()
+        )
+        agent_financials = dict(financials)
+        for metric in consumed_candidates:
+            value = financials.get(metric)
+            metric_evidence = evidence.get(metric)
+            evidence_value = (
+                metric_evidence.get("value")
+                if isinstance(metric_evidence, dict)
+                else None
+            )
+            evidence_matches = (
+                isinstance(metric_evidence, dict)
+                and metric_evidence.get("available") is True
+                and metric_is_available(evidence_value)
+                and metric_is_available(value)
+                and value is not None
+                and evidence_value is not None
+                and math.isclose(value, evidence_value, rel_tol=0.0, abs_tol=1e-12)
+            )
+            if not evidence_matches:
+                agent_financials[metric] = None
+                if metric in required_metrics:
+                    unavailable.append(metric)
+            else:
+                required_metric_values[metric] = float(value)
         if unavailable:
+            task_metric_values.append({})
             async def _incomplete(
                 _, *, _agent=agent, _missing=unavailable, config=None
             ):
@@ -1428,9 +2353,11 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
             )
             continue
 
-        async def _analyze(_, *, _agent=agent, config=None):
+        async def _analyze(
+            _, *, _agent=agent, _financials=agent_financials, config=None
+        ):
             return await _agent.analyze(
-                ticker, financials,
+                ticker, _financials,
                 earnings_data=earnings_data,
                 earnings_streak=earnings_streak,
                 config=config,
@@ -1438,13 +2365,16 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
         
         runnable = RunnableLambda(_analyze).with_config({"run_name": f"agent.{name}"})
         tasks.append(runnable.ainvoke({"ticker": ticker, "agent": name}, config=config))
+        task_metric_values.append(required_metric_values)
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Preserve every requested agent. A failed agent is explicit and cannot
     # disappear from the consensus denominator.
     state["agent_results"] = []
-    for (name, agent), result in zip(agents.items(), results):
+    for (name, agent), result, consumed_metrics in zip(
+        agents.items(), results, task_metric_values
+    ):
         if isinstance(result, Exception):
             state["agent_results"].append(
                 {
@@ -1489,7 +2419,11 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
                     }
                 )
             else:
-                state["agent_results"].append(validated_result.model_dump())
+                completed_payload = validated_result.model_dump()
+                completed_payload["required_metric_values"] = consumed_metrics
+                state["agent_results"].append(
+                    AgentResult.model_validate(completed_payload).model_dump()
+                )
     
     return state
 
@@ -1658,6 +2592,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
         "fundamentals": state.get("sec_fundamentals") or {},
         "fundamentals_history": state.get("sec_fundamentals_history") or {},
         "metric_evidence": state.get("metric_evidence") or {},
+        "snapshot_series": state.get("snapshot_series") or [],
         "consensus": state["consensus"],
         "agent_results": agent_results,
         "temporal_results": state.get("temporal_results", {}),
@@ -1728,13 +2663,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="GOATlens",
     description="Multi-Agent Investment Analysis using Legendary Investor Mental Models",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-4JLobWz3z0/YJKEU+st+ouIbUPyHBG3g49wsCKht9uI=' "
+    "script-src 'self' 'sha256-LLFBr32IVBVPEeHNhEh9RDNq9Jht9B+nsx1OTf+1R5w=' "
     "https://unpkg.com https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src https://fonts.gstatic.com; img-src 'self' data:; "
@@ -2197,6 +3132,7 @@ async def analyze_company(request: AnalysisRequest):
         fundamentals=report["fundamentals"],
         fundamentals_history=report["fundamentals_history"],
         metric_evidence=report["metric_evidence"],
+        snapshot_series=report.get("snapshot_series", []),
         consensus_status=consensus.get("status", "complete"),
         consensus_verdict=consensus["verdict"],
         agreement_score=consensus["agreement_score"],
@@ -2215,6 +3151,7 @@ async def analyze_company(request: AnalysisRequest):
                 concerns=r.get("concerns", []),
                 status=r.get("status", "complete"),
                 unavailable_metrics=r.get("unavailable_metrics", []),
+                required_metric_values=r.get("required_metric_values", {}),
             )
             for r in report["agent_results"]
         ],

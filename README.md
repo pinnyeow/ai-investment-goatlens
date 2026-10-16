@@ -5,8 +5,8 @@ GOATlens is an educational investment-research application that evaluates U.S. p
 ## Data architecture
 
 - **SEC EDGAR Company Facts** is authoritative for annual accounting fundamentals and provenance.
-- **Yahoo Finance** is best-effort enrichment: the chart endpoint supplies prices and adjusted history, while a narrow `yfinance` adapter supplies allowlisted provider-normalized current ratios.
-- If Yahoo quote-summary is blocked, GOATlens may derive gross margin from compatible SEC revenue and cost-of-revenue facts with full provenance. Dividend yield remains unavailable unless supported by SEC or normalized-provider evidence; it never defaults to zero.
+- **Yahoo Finance** is a narrow, best-effort market boundary: the chart endpoint supplies current price and adjusted price history only.
+- GOATlens computes versioned, transparent metrics from compatible SEC facts and Yahoo market observations. It does not ingest Yahoo financial statements or normalized ratios.
 - SEC-backed fundamental analysis remains available when Yahoo is unavailable.
 - Price-dependent agents return `incomplete` when required market inputs are missing.
 - Missing financial values remain unavailable; they are never replaced with fabricated zeroes.
@@ -60,7 +60,7 @@ curl -X POST "http://localhost:8000/api/analyze" \
   -d '{"ticker":"AAPL","time_period":"1y"}'
 ```
 
-The response includes `data_status` for SEC fundamentals, Yahoo market data, and Yahoo normalized ratios. Each agent result includes `status` and `unavailable_metrics` so partial analysis is explicit.
+The response includes `data_status` for SEC fundamentals and Yahoo chart market data. Yahoo status separates quote observation time from retrieval time and exposes quote currency, process-local cache age, and freshness. Each agent result includes `status` and `unavailable_metrics` so partial analysis is explicit.
 
 Other endpoints:
 
@@ -76,8 +76,7 @@ backend/
   main.py                 FastAPI and LangGraph workflow
   agents/                 Investor scoring agents
   data_sources/sec.py     SEC Company Facts adapter
-  data_sources/yahoo_chart.py   Best-effort price/history enrichment
-  data_sources/yahoo_ratios.py  Narrow normalized-ratio enrichment
+  data_sources/yahoo_chart.py   Best-effort current-price/history boundary
   temporal/               Current-period moat assessment
   tests/                  Pytest suite and SEC fixtures
 frontend/index.html       Browser application
