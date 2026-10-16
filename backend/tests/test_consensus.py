@@ -11,6 +11,7 @@ from strategies import (
     Verdict,
     calculate_consensus,
     calculate_consensus_with_llm,
+    calculate_ordinal_consensus,
 )
 
 
@@ -24,6 +25,29 @@ def result(name: str, score: float, verdict: Verdict) -> StrategyResult:
         moat_assessment="",
         score=score,
     )
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "expected"),
+    [
+        ([Verdict.BUY, Verdict.STRONG_BUY], ConsensusVerdict.BUY),
+        ([Verdict.SELL, Verdict.STRONG_SELL], ConsensusVerdict.SELL),
+        ([Verdict.SELL, Verdict.BUY], ConsensusVerdict.MIXED),
+        ([Verdict.HOLD, Verdict.BUY], ConsensusVerdict.MIXED),
+        (
+            [Verdict.SELL, Verdict.HOLD, Verdict.BUY],
+            ConsensusVerdict.HOLD,
+        ),
+    ],
+)
+def test_shared_ordinal_helper_matches_strategy_consensus(verdicts, expected):
+    _, helper_verdict = calculate_ordinal_consensus(verdicts)
+    strategy_verdict = calculate_consensus(
+        [result(str(index), 0.0, verdict) for index, verdict in enumerate(verdicts)]
+    ).consensus_verdict
+
+    assert helper_verdict is expected
+    assert strategy_verdict is expected
 
 
 def test_mixed_pltr_votes_produce_low_agreement_hold_not_high_agreement_buy():

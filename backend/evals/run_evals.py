@@ -306,10 +306,14 @@ async def run_evals_for_ticker(
         if not consensus:
             # Rebuild from flat API response
             consensus = {
+                "status": analysis.get("consensus_status", ""),
                 "verdict": analysis.get("consensus_verdict", ""),
                 "agreement_score": analysis.get("agreement_score"),
+                "partial_indication": analysis.get("partial_indication"),
                 "consensus_points": analysis.get("consensus_points", []),
                 "divergence_points": analysis.get("divergence_points", []),
+                "completed_analyses": analysis.get("completed_analyses", 0),
+                "requested_analyses": analysis.get("requested_analyses", 0),
             }
         agent_results = analysis.get("agent_results", [])
         layer3 = await run_consensus_evals(

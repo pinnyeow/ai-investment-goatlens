@@ -109,7 +109,13 @@ from data_sources.sec import (
 )
 from data_sources.news import NewsClient
 from temporal import TemporalAnalyzer
-from strategies import calculate_consensus, calculate_consensus_with_llm, StrategyResult, Verdict
+from strategies import (
+    StrategyResult,
+    Verdict,
+    calculate_consensus,
+    calculate_consensus_with_llm,
+    calculate_ordinal_consensus,
+)
 from llm import get_llm_client
 from rag import RAGRetriever
 
@@ -490,6 +496,44 @@ class ComparisonTableResponse(StrictAPIModel):
     agents: List[ComparisonAgentResponse]
 
 
+class ExcludedAgentResponse(StrictAPIModel):
+    agent: str = Field(min_length=1)
+    unavailable_metrics: List[str]
+
+
+class PartialIndicationResponse(StrictAPIModel):
+    verdict: Literal[
+        "strong_buy", "buy", "hold", "sell", "strong_sell", "mixed"
+    ]
+    directional_support: Optional[float] = Field(default=None, ge=0, le=1)
+    supporting_analyses: int = Field(ge=0)
+    completed_analyses: int = Field(ge=2)
+    requested_analyses: int = Field(ge=2)
+    excluded_agents: List[ExcludedAgentResponse]
+    consensus_points: List[str] = Field(default_factory=list)
+    divergence_points: List[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_directional_support(self):
+        if self.verdict == "mixed":
+            if self.directional_support is not None or self.supporting_analyses != 0:
+                raise ValueError(
+                    "Mixed partial indication cannot claim directional support"
+                )
+        elif (
+            self.directional_support is None
+            or self.supporting_analyses == 0
+            or not math.isclose(
+                self.directional_support,
+                self.supporting_analyses / self.completed_analyses,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+        ):
+            raise ValueError("Partial indication support fields are inconsistent")
+        return self
+
+
 class AnalysisResponse(StrictAPIModel):
     """Complete analysis response."""
     ticker: str
@@ -516,6 +560,7 @@ class AnalysisResponse(StrictAPIModel):
     )
     completed_analyses: int = Field(ge=0)
     requested_analyses: int = Field(ge=1)
+    partial_indication: Optional[PartialIndicationResponse] = None
     consensus_points: List[str]
     divergence_points: List[str]
     
@@ -530,8 +575,130 @@ class AnalysisResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_analysis_counts(self):
+        agent_names = [result.agent for result in self.agent_results]
+        if len(agent_names) != len(set(agent_names)):
+            raise ValueError("Agent results must have unique agent identities")
+        actual_requested = len(self.agent_results)
+        completed_results = [
+            result for result in self.agent_results if result.status == "complete"
+        ]
+        actual_completed = len(completed_results)
+        if (
+            self.requested_analyses != actual_requested
+            or self.completed_analyses != actual_completed
+        ):
+            raise ValueError("Analysis counts must match agent results")
         if self.completed_analyses > self.requested_analyses:
             raise ValueError("Completed analyses cannot exceed requested analyses")
+        if (
+            self.consensus_status == "partial"
+            and self.consensus_verdict != "incomplete"
+        ):
+            raise ValueError(
+                "Partial analysis cannot publish a final consensus verdict"
+            )
+
+        expected_verdict = None
+        if actual_completed >= 2:
+            _, expected_consensus = calculate_ordinal_consensus(
+                [Verdict(result.verdict) for result in completed_results]
+            )
+            expected_verdict = expected_consensus.value
+            published_verdict = (
+                self.partial_indication.verdict
+                if self.consensus_status == "partial" and self.partial_indication
+                else self.consensus_verdict
+            )
+            if published_verdict != expected_verdict:
+                raise ValueError(
+                    "Published verdict does not match the expected ordinal "
+                    f"consensus verdict {expected_verdict!r}"
+                )
+
+        indication = self.partial_indication
+        direction_by_verdict = {
+            "strong_sell": -1,
+            "sell": -1,
+            "hold": 0,
+            "buy": 1,
+            "strong_buy": 1,
+        }
+        if self.consensus_status == "complete":
+            if self.consensus_verdict == "mixed":
+                support_valid = self.agreement_score is None
+            else:
+                consensus_direction = direction_by_verdict.get(self.consensus_verdict)
+                supporting = sum(
+                    direction_by_verdict.get(result.verdict or "") == consensus_direction
+                    for result in completed_results
+                )
+                support_valid = (
+                    self.agreement_score is not None
+                    and math.isclose(
+                        self.agreement_score,
+                        supporting / self.completed_analyses,
+                        rel_tol=0.0,
+                        abs_tol=1e-9,
+                    )
+                )
+            valid = (
+                self.completed_analyses >= 2
+                and self.completed_analyses == self.requested_analyses
+                and self.consensus_verdict != "incomplete"
+                and indication is None
+                and support_valid
+            )
+        elif self.consensus_status == "partial":
+            incomplete_projection = [
+                ExcludedAgentResponse(
+                    agent=result.agent,
+                    unavailable_metrics=result.unavailable_metrics,
+                )
+                for result in self.agent_results
+                if result.status == "incomplete"
+            ]
+            if indication is None or indication.verdict == "mixed":
+                indication_support_valid = indication is not None
+            else:
+                indication_direction = direction_by_verdict[indication.verdict]
+                supporting = sum(
+                    direction_by_verdict.get(result.verdict or "") == indication_direction
+                    for result in completed_results
+                )
+                indication_support_valid = (
+                    indication.supporting_analyses == supporting
+                    and indication.directional_support is not None
+                    and math.isclose(
+                        indication.directional_support,
+                        supporting / self.completed_analyses,
+                        rel_tol=0.0,
+                        abs_tol=1e-9,
+                    )
+                )
+            valid = (
+                2 <= self.completed_analyses < self.requested_analyses
+                and self.consensus_verdict == "incomplete"
+                and self.agreement_score is None
+                and not self.consensus_points
+                and indication is not None
+                and indication.completed_analyses == self.completed_analyses
+                and indication.requested_analyses == self.requested_analyses
+                and len(indication.excluded_agents)
+                == self.requested_analyses - self.completed_analyses
+                and indication.supporting_analyses <= self.completed_analyses
+                and indication.excluded_agents == incomplete_projection
+                and indication_support_valid
+            )
+        else:
+            valid = (
+                self.completed_analyses < 2
+                and self.consensus_verdict == "incomplete"
+                and self.agreement_score is None
+                and indication is None
+                and not self.consensus_points
+            )
+        if not valid:
+            raise ValueError("Consensus fields are inconsistent")
         return self
     
     # Earnings history
@@ -1366,76 +1533,105 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
     
     llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
 
-    if not strategy_results:
+    if completed_analyses < 2:
         state["consensus"] = {
             "status": "incomplete",
             "verdict": "incomplete",
             "agreement_score": None,
+            "partial_indication": None,
             "consensus_points": [],
             "divergence_points": [
-                "Consensus unavailable because every selected analysis is incomplete."
+                "Consensus unavailable because fewer than two selected analyses "
+                "are complete."
             ],
-            "completed_analyses": completed_analyses,
-            "requested_analyses": requested_analyses,
-        }
-    elif completed_analyses == 1 and requested_analyses > 1:
-        state["consensus"] = {
-            "status": "partial",
-            "verdict": "incomplete",
-            "agreement_score": None,
-            "consensus_points": [],
-            "divergence_points": [
-                "Consensus unavailable because only one selected analysis is complete."
-            ],
-            "completed_analyses": completed_analyses,
-            "requested_analyses": requested_analyses,
-        }
-    elif completed_analyses == requested_analyses == 1:
-        state["consensus"] = {
-            "status": "incomplete",
-            "verdict": "incomplete",
-            "agreement_score": None,
-            "consensus_points": [],
-            "divergence_points": [
-                "Single-strategy result; multi-agent agreement is unavailable."
-            ],
-            "completed_analyses": 1,
-            "requested_analyses": 1,
-        }
-    elif llm:
-        # Wrap in RunnableLambda so the LangChain instrumentor creates a
-        # named "consensus.synthesis" span, with the ChatOpenAI call nested
-        # underneath via parent_run_id from config.
-        async def _consensus_fn(_, config=None):
-            return await calculate_consensus_with_llm(
-                strategy_results, llm, state["ticker"], config=config,
-            )
-        
-        consensus = await (
-            RunnableLambda(_consensus_fn)
-            .with_config({"run_name": "consensus.synthesis"})
-            .ainvoke({"ticker": state["ticker"]}, config=config)
-        )
-        state["consensus"] = {
-            "status": "partial" if len(complete_results) < len(agent_results) else "complete",
-            "verdict": consensus.consensus_verdict.value,
-            "agreement_score": consensus.agreement_score,
-            "consensus_points": consensus.consensus_points,
-            "divergence_points": consensus.divergence_points,
             "completed_analyses": completed_analyses,
             "requested_analyses": requested_analyses,
         }
     else:
-        consensus = calculate_consensus(strategy_results)
-        state["consensus"] = {
-            "status": "partial" if len(complete_results) < len(agent_results) else "complete",
-            "verdict": consensus.consensus_verdict.value,
-            "agreement_score": consensus.agreement_score,
-            "consensus_points": consensus.consensus_points,
-            "divergence_points": consensus.divergence_points,
-            "completed_analyses": completed_analyses,
-            "requested_analyses": requested_analyses,
-        }
+        if llm:
+            # Wrap in RunnableLambda so the LangChain instrumentor creates a
+            # named "consensus.synthesis" span, with the ChatOpenAI call nested
+            # underneath via parent_run_id from config.
+            async def _consensus_fn(_, config=None):
+                return await calculate_consensus_with_llm(
+                    strategy_results, llm, state["ticker"], config=config,
+                )
+
+            consensus = await (
+                RunnableLambda(_consensus_fn)
+                .with_config({"run_name": "consensus.synthesis"})
+                .ainvoke({"ticker": state["ticker"]}, config=config)
+            )
+        else:
+            consensus = calculate_consensus(strategy_results)
+
+        verdict = consensus.consensus_verdict.value
+        if completed_analyses == requested_analyses:
+            state["consensus"] = {
+                "status": "complete",
+                "verdict": verdict,
+                "agreement_score": consensus.agreement_score,
+                "partial_indication": None,
+                "consensus_points": consensus.consensus_points,
+                "divergence_points": (
+                    [
+                        "Single selected investor; final result reflects one completed opinion."
+                    ]
+                    if requested_analyses == 1
+                    else consensus.divergence_points
+                ),
+                "completed_analyses": completed_analyses,
+                "requested_analyses": requested_analyses,
+            }
+        else:
+            direction_by_verdict = {
+                "strong_sell": -1,
+                "sell": -1,
+                "hold": 0,
+                "buy": 1,
+                "strong_buy": 1,
+            }
+            consensus_direction = direction_by_verdict.get(verdict)
+            supporting_analyses = (
+                0
+                if consensus_direction is None
+                else sum(
+                    direction_by_verdict[result["verdict"]] == consensus_direction
+                    for result in complete_results
+                )
+            )
+            state["consensus"] = {
+                "status": "partial",
+                "verdict": "incomplete",
+                "agreement_score": None,
+                "partial_indication": {
+                    "verdict": verdict,
+                    "directional_support": consensus.agreement_score,
+                    "supporting_analyses": supporting_analyses,
+                    "completed_analyses": completed_analyses,
+                    "requested_analyses": requested_analyses,
+                    "excluded_agents": [
+                        {
+                            "agent": result["agent"],
+                            "unavailable_metrics": result.get(
+                                "unavailable_metrics", []
+                            ),
+                        }
+                        for result in agent_results
+                        if result.get("status", "complete") != "complete"
+                    ],
+                    "consensus_points": consensus.consensus_points,
+                    "divergence_points": consensus.divergence_points,
+                },
+                "consensus_points": [],
+                "divergence_points": [
+                    "Final consensus unavailable because "
+                    f"{completed_analyses} of {requested_analyses} requested "
+                    "analyses completed."
+                ],
+                "completed_analyses": completed_analyses,
+                "requested_analyses": requested_analyses,
+            }
     
     # Build comparison table
     comparison_table = {
@@ -1538,7 +1734,7 @@ app = FastAPI(
 
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-NVbdyzSzSfcMqQh2NLZTqiqAV/36ktGEm11PDyYJfpg=' "
+    "script-src 'self' 'sha256-4JLobWz3z0/YJKEU+st+ouIbUPyHBG3g49wsCKht9uI=' "
     "https://unpkg.com https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src https://fonts.gstatic.com; img-src 'self' data:; "
@@ -2006,6 +2202,7 @@ async def analyze_company(request: AnalysisRequest):
         agreement_score=consensus["agreement_score"],
         completed_analyses=consensus["completed_analyses"],
         requested_analyses=consensus["requested_analyses"],
+        partial_indication=consensus.get("partial_indication"),
         consensus_points=consensus["consensus_points"],
         divergence_points=consensus["divergence_points"],
         agent_results=[

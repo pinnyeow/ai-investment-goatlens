@@ -4,7 +4,7 @@ GOATlens - Strategy Evaluation Logic
 Contains the core evaluation strategies and scoring mechanisms.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
@@ -51,15 +51,13 @@ class ConsensusResult:
     individual_results: List[StrategyResult]
 
 
-def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
-    """
-    Calculate consensus from multiple agent evaluations.
-    
-    Identifies where GOATs agree vs. where they'd debate.
-    """
-    if not results:
-        raise ValueError("No results to calculate consensus from")
-    
+def calculate_ordinal_consensus(
+    verdicts: List[Verdict],
+) -> Tuple[Optional[int], ConsensusVerdict]:
+    """Return the conservative ordinal median and aggregate verdict."""
+    if not verdicts:
+        raise ValueError("No verdicts to calculate consensus from")
+
     verdict_value = {
         Verdict.STRONG_SELL: -2,
         Verdict.SELL: -1,
@@ -78,22 +76,46 @@ def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
     def direction(value: int) -> int:
         return 0 if value == 0 else 1 if value > 0 else -1
 
-    ordered_votes = sorted(verdict_value[result.verdict] for result in results)
+    ordered_votes = sorted(verdict_value[verdict] for verdict in verdicts)
     midpoint = len(ordered_votes) // 2
     if len(ordered_votes) % 2:
         consensus_value = ordered_votes[midpoint]
-        consensus_verdict = value_verdict[consensus_value]
-    else:
-        lower = ordered_votes[midpoint - 1]
-        upper = ordered_votes[midpoint]
-        same_direction = direction(lower) == direction(upper)
-        if same_direction:
-            # A same-direction intensity split resolves conservatively toward HOLD.
-            consensus_value = int((lower + upper) / 2)
-            consensus_verdict = value_verdict[consensus_value]
-        else:
-            consensus_value = None
-            consensus_verdict = ConsensusVerdict.MIXED
+        return consensus_value, value_verdict[consensus_value]
+
+    lower = ordered_votes[midpoint - 1]
+    upper = ordered_votes[midpoint]
+    if direction(lower) != direction(upper):
+        return None, ConsensusVerdict.MIXED
+
+    # A same-direction intensity split resolves conservatively toward HOLD.
+    consensus_value = int((lower + upper) / 2)
+    return consensus_value, value_verdict[consensus_value]
+
+
+def calculate_consensus(results: List[StrategyResult]) -> ConsensusResult:
+    """
+    Calculate consensus from multiple agent evaluations.
+
+    Identifies where GOATs agree vs. where they'd debate.
+    """
+    if not results:
+        raise ValueError("No results to calculate consensus from")
+
+    verdict_value = {
+        Verdict.STRONG_SELL: -2,
+        Verdict.SELL: -1,
+        Verdict.HOLD: 0,
+        Verdict.BUY: 1,
+        Verdict.STRONG_BUY: 2,
+    }
+
+    def direction(value: int) -> int:
+        return 0 if value == 0 else 1 if value > 0 else -1
+
+    ordered_votes = sorted(verdict_value[result.verdict] for result in results)
+    consensus_value, consensus_verdict = calculate_ordinal_consensus(
+        [result.verdict for result in results]
+    )
 
     if consensus_value is None:
         agreement_score = None

@@ -16,21 +16,52 @@ import main
 ROOT = Path(__file__).parents[2]
 
 
-def test_fmp_is_absent_from_runtime_configuration_and_documentation():
-    assert not (ROOT / "backend" / "data_sources" / "fmp.py").exists()
-    skipped_parts = {".git", "venv", ".pytest_cache", "__pycache__"}
+def _provider_isolation_paths(root):
     text_suffixes = {".py", ".md", ".html", ".yaml", ".yml", ".toml"}
-    for path in ROOT.rglob("*"):
+    skipped_parts = {"venv", ".pytest_cache", "__pycache__"}
+    candidates = [path for path in root.iterdir() if path.is_file()]
+    for shipped_root_name in ("backend", "frontend", "docs", ".github"):
+        shipped_root = root / shipped_root_name
+        if shipped_root.exists():
+            candidates.extend(shipped_root.rglob("*"))
+    return [
+        path
+        for path in candidates
         if (
-            not path.is_file()
-            or path == Path(__file__)
-            or path.suffix not in text_suffixes
-            or skipped_parts.intersection(path.relative_to(ROOT).parts)
-        ):
-            continue
+            path.is_file()
+            and path.suffix in text_suffixes
+            and path != Path(__file__)
+            and not skipped_parts.intersection(path.relative_to(root).parts)
+        )
+    ]
+
+
+def _assert_fmp_absent(root):
+    for path in _provider_isolation_paths(root):
         content = path.read_text(errors="replace").lower()
         assert "fmp" not in content, path
         assert "financial modeling prep" not in content, path
+
+
+def test_provider_scan_excludes_internal_plans_but_still_scans_shipped_docs(
+    tmp_path,
+):
+    (tmp_path / ".hermes" / "plans").mkdir(parents=True)
+    (tmp_path / ".hermes" / "plans" / "internal.md").write_text("FMP plan")
+    (tmp_path / "docs").mkdir()
+    shipped_doc = tmp_path / "docs" / "shipped.md"
+    shipped_doc.write_text("provider-neutral documentation")
+
+    _assert_fmp_absent(tmp_path)
+
+    shipped_doc.write_text("Financial Modeling Prep")
+    with pytest.raises(AssertionError, match="shipped.md"):
+        _assert_fmp_absent(tmp_path)
+
+
+def test_fmp_is_absent_from_runtime_configuration_and_documentation():
+    assert not (ROOT / "backend" / "data_sources" / "fmp.py").exists()
+    _assert_fmp_absent(ROOT)
 
 
 def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
