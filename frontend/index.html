@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-NVbdyzSzSfcMqQh2NLZTqiqAV/36ktGEm11PDyYJfpg=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4JLobWz3z0/YJKEU+st+ouIbUPyHBG3g49wsCKht9uI=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2792,6 +2792,7 @@
                         <div class="consensus-label">Consensus Verdict</div>
                         <div class="consensus-verdict" id="consensusVerdict">Buy</div>
                         <div class="agent-availability" id="consensusStatusNotice"></div>
+                        <div class="agent-availability" id="partialIndication" hidden></div>
                     </div>
                     <div class="agreement-meter">
                         <div class="agreement-label" title="Share of completed agents supporting the consensus direction; Buy and Strong Buy count together, as do Sell and Strong Sell.">Directional Support</div>
@@ -3587,6 +3588,53 @@
             section.style.display = entries.length ? 'block' : 'none';
         }
 
+        function getConsensusUiState(data) {
+            const completed = data.completed_analyses;
+            const requested = data.requested_analyses;
+            const indication = data.partial_indication;
+            let status;
+            if (data.consensus_status === 'partial') {
+                status = `Incomplete — ${completed} of ${requested} requested analyses complete.`;
+            } else if (data.consensus_status === 'incomplete') {
+                status = completed === 0
+                    ? 'Incomplete — no requested analysis is complete.'
+                    : `Incomplete — ${completed} of ${requested} requested analyses complete; at least 2 are required for consensus.`;
+            } else {
+                status = 'Complete consensus — all requested analyses are complete.';
+            }
+
+            if (!indication) {
+                return {
+                    headline: formatVerdict(data.consensus_verdict),
+                    status,
+                    partialIndication: '',
+                    showPartialIndication: false
+                };
+            }
+
+            const completedLabel = indication.completed_analyses === 1
+                ? 'completed investor'
+                : 'completed investors';
+            const support = indication.directional_support == null
+                ? 'No directional support for mixed completed votes.'
+                : `Directional support: ${indication.supporting_analyses} of ${indication.completed_analyses} completed.`;
+            const excluded = indication.excluded_agents.map(item => {
+                const metrics = item.unavailable_metrics
+                    .map(metric => metric.replaceAll('_', ' '))
+                    .join(', ');
+                return metrics ? `${item.agent} (${metrics})` : item.agent;
+            }).join('; ');
+            const excludedText = excluded ? ` Excluded: ${excluded}.` : '';
+            const warnings = (indication.divergence_points || []).join(' ');
+            const warningText = warnings ? ` Completed-vote warning: ${warnings}` : '';
+            return {
+                headline: 'Incomplete',
+                status,
+                partialIndication: `Partial indication: ${formatVerdict(indication.verdict)} among ${indication.completed_analyses} ${completedLabel}. ${support}${excludedText}${warningText}`,
+                showPartialIndication: true
+            };
+        }
+
         function displayResults(data) {
             hideLoading();
             currentTicker = data.ticker;
@@ -3608,20 +3656,16 @@
             renderNextEarnings(data.next_earnings_date);
 
             // Consensus
+            const consensusUi = getConsensusUiState(data);
             const verdictEl = document.getElementById('consensusVerdict');
-            verdictEl.textContent = formatVerdict(data.consensus_verdict);
+            verdictEl.textContent = consensusUi.headline;
             verdictEl.className = `consensus-verdict verdict-${data.consensus_verdict}`;
 
-            const completeAgentCount = data.completed_analyses;
-            const requestedAgentCount = data.requested_analyses;
             const consensusStatusNotice = document.getElementById('consensusStatusNotice');
-            if (data.consensus_status === 'partial') {
-                consensusStatusNotice.textContent = `Partial consensus — ${completeAgentCount} of ${requestedAgentCount} analyses complete; agreement is among complete analyses only.`;
-            } else if (data.consensus_status === 'incomplete') {
-                consensusStatusNotice.textContent = 'Consensus unavailable — no analysis is complete.';
-            } else {
-                consensusStatusNotice.textContent = 'Complete consensus — all requested analyses are complete.';
-            }
+            consensusStatusNotice.textContent = consensusUi.status;
+            const partialIndication = document.getElementById('partialIndication');
+            partialIndication.textContent = consensusUi.partialIndication;
+            partialIndication.hidden = !consensusUi.showPartialIndication;
 
             const agreementValue = document.getElementById('agreementValue');
             const agreementFill = document.getElementById('agreementFill');
@@ -4526,6 +4570,7 @@
                 'strong_buy': 'Strong Buy',
                 'buy': 'Buy',
                 'hold': 'Hold',
+                'mixed': 'Mixed',
                 'incomplete': 'Incomplete',
                 'sell': 'Sell',
                 'strong_sell': 'Strong Sell'

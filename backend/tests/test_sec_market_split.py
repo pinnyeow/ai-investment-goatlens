@@ -425,6 +425,7 @@ def test_analysis_continues_from_sec_when_yahoo_is_unavailable(monkeypatch):
     assert body["consensus_status"] == "incomplete"
     assert body["consensus_verdict"] == "incomplete"
     assert body["agreement_score"] is None
+    assert body["partial_indication"] is None
     assert body["consensus_points"] == []
     revenue = body["fundamentals"]["revenue"]
     assert revenue["value"] == 416161000000
@@ -1279,15 +1280,36 @@ async def test_multi_agent_agreement_uses_all_and_only_complete_results(
 
     consensus = state["consensus"]
     assert consensus["status"] == expected_status
-    assert consensus["verdict"] == "buy"
-    assert consensus["agreement_score"] == pytest.approx(1.0)
-    assert consensus["consensus_points"] == ["Shared durable advantage"]
     assert consensus["completed_analyses"] == 2
     assert consensus["requested_analyses"] == expected_requested
+    if include_incomplete:
+        assert consensus["verdict"] == "incomplete"
+        assert consensus["agreement_score"] is None
+        assert consensus["consensus_points"] == []
+        assert consensus["partial_indication"] == {
+            "verdict": "buy",
+            "directional_support": pytest.approx(1.0),
+            "supporting_analyses": 2,
+            "completed_analyses": 2,
+            "requested_analyses": 3,
+            "excluded_agents": [
+                {
+                    "agent": "Unavailable Agent",
+                    "unavailable_metrics": ["current_price"],
+                }
+            ],
+            "consensus_points": ["Shared durable advantage"],
+            "divergence_points": [],
+        }
+    else:
+        assert consensus["verdict"] == "buy"
+        assert consensus["agreement_score"] == pytest.approx(1.0)
+        assert consensus["consensus_points"] == ["Shared durable advantage"]
+        assert consensus["partial_indication"] is None
 
 
 @pytest.mark.asyncio
-async def test_agent_exception_is_preserved_and_consensus_is_partial(monkeypatch):
+async def test_agent_exception_is_preserved_and_single_vote_has_no_consensus(monkeypatch):
     class CompleteAgent:
         name = "Complete Agent"
         style = "Complete"
@@ -1339,10 +1361,11 @@ async def test_agent_exception_is_preserved_and_consensus_is_partial(monkeypatch
     assert "private failure details" not in str(failed)
 
     await main.synthesize_node(state)
-    assert state["consensus"]["status"] == "partial"
+    assert state["consensus"]["status"] == "incomplete"
     assert state["consensus"]["verdict"] == "incomplete"
     assert state["consensus"]["agreement_score"] is None
     assert state["consensus"]["consensus_points"] == []
+    assert state["consensus"]["partial_indication"] is None
     assert state["consensus"]["completed_analyses"] == 1
     assert state["consensus"]["requested_analyses"] == 2
 
@@ -1527,6 +1550,11 @@ def test_openapi_constrains_sec_provenance_status_and_consensus_contracts():
     assert response["completed_analyses"]["minimum"] == 0
     assert response["requested_analyses"]["type"] == "integer"
     assert response["requested_analyses"]["minimum"] == 1
+    assert response["partial_indication"]["anyOf"][0]["$ref"].endswith(
+        "/PartialIndicationResponse"
+    )
+    partial_indication = schemas["PartialIndicationResponse"]
+    assert partial_indication["properties"]["completed_analyses"]["minimum"] == 2
     assert response["agreement_score"]["anyOf"][0]["minimum"] == 0
     assert response["agreement_score"]["anyOf"][0]["maximum"] == 1
     assert response["comparison_table"]["$ref"].endswith(

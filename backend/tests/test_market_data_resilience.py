@@ -362,13 +362,16 @@ assert.strictEqual(
         assert "formatAgentAvailability(agent)" in display_results
         assert 'class="agent-availability"' in display_results
         assert "consensusStatusNotice" in display_results
-        assert "Partial consensus" in display_results
-        assert "agreement is among complete analyses only" in display_results
-        assert "data.completed_analyses" in display_results
-        assert "data.requested_analyses" in display_results
+        assert "getConsensusUiState(data)" in display_results
+        assert "consensusUi.headline" in display_results
+        assert "partialIndication.textContent" in display_results
+        assert "partialIndication.hidden" in display_results
         assert "data.agreement_score == null" in display_results
         assert "agreementValue.textContent = 'Unavailable'" in display_results
         assert 'id="consensusStatusNotice"' in html
+        assert 'id="partialIndication"' in html
+        assert "Incomplete — ${completed} of ${requested} requested analyses complete." in html
+        assert "Directional support: ${indication.supporting_analyses} of ${indication.completed_analyses} completed." in html
         assert "map(p => `<li>${escapeHtml(p)}</li>`)" in display_results
         assert "<h3>${escapeHtml(agent.agent)}</h3>" in display_results
         assert "<div class=\"agent-style\">${escapeHtml(agent.style)}</div>" in display_results

@@ -18,23 +18,203 @@ Layer 2 checks each agent independently. Layer 3 checks the
 """
 
 import math
-from typing import Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 from .data_pipeline_evals import EvalResult, LayerResults
+from strategies import Verdict, calculate_ordinal_consensus
 
 
 # ─── Code-Based Consensus Checks ───
 
 
-def eval_agreement_score_valid(consensus: Dict[str, Any]) -> List[EvalResult]:
+def _completed_vote_contract(consensus: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the final consensus or subordinate completed-vote indication."""
+    if consensus.get("status") != "partial":
+        return consensus
+    indication = consensus.get("partial_indication")
+    if not isinstance(indication, dict):
+        return consensus
+    return {
+        **indication,
+        "agreement_score": indication.get("directional_support"),
+    }
+
+
+def _completed_agent_outputs(
+    agent_outputs: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    return [
+        output
+        for output in agent_outputs
+        if output.get("status", "complete") == "complete"
+    ]
+
+
+def eval_consensus_structural_integrity(
+    consensus: Dict[str, Any],
+    agent_outputs: List[Dict[str, Any]],
+) -> List[EvalResult]:
+    """Recompute quorum and partial-result structure from agent outputs."""
+    completed_outputs = _completed_agent_outputs(agent_outputs)
+    actual_requested = len(agent_outputs)
+    actual_completed = len(completed_outputs)
+    declared_requested = consensus.get("requested_analyses")
+    declared_completed = consensus.get("completed_analyses")
+    status = consensus.get("status")
+    indication = consensus.get("partial_indication")
+
+    error = ""
+    agent_names = [output.get("agent") for output in agent_outputs]
+    if (
+        any(not isinstance(name, str) or not name for name in agent_names)
+        or len(agent_names) != len(set(agent_names))
+    ):
+        error = "Agent results must contain unique non-empty identities"
+    elif (
+        declared_requested != actual_requested
+        or declared_completed != actual_completed
+    ):
+        error = (
+            "Declared analysis counts do not match agent results: "
+            f"declared {declared_completed}/{declared_requested}, "
+            f"actual {actual_completed}/{actual_requested}"
+        )
+    elif status == "complete":
+        if actual_completed < 2 or actual_completed != actual_requested:
+            error = (
+                "A final consensus requires every requested agent to complete "
+                "and at least two completed analyses"
+            )
+        elif indication is not None:
+            error = "A final consensus cannot include a partial indication"
+    elif status == "partial":
+        if not (2 <= actual_completed < actual_requested):
+            error = "A partial response requires 2 <= completed < requested"
+        elif not isinstance(indication, dict):
+            error = "A partial response requires a subordinate indication"
+        elif (
+            consensus.get("verdict") != "incomplete"
+            or consensus.get("agreement_score") is not None
+            or bool(consensus.get("consensus_points"))
+        ):
+            error = "A partial response cannot publish headline consensus fields"
+        elif (
+            indication.get("completed_analyses") != actual_completed
+            or indication.get("requested_analyses") != actual_requested
+        ):
+            error = "Partial indication counts do not match agent results"
+        else:
+            expected_excluded = [
+                {
+                    "agent": output.get("agent"),
+                    "unavailable_metrics": output.get("unavailable_metrics", []),
+                }
+                for output in agent_outputs
+                if output.get("status", "complete") != "complete"
+            ]
+            if indication.get("excluded_agents") != expected_excluded:
+                error = (
+                    "Partial indication excluded agents must exactly match "
+                    "incomplete agent identities and unavailable metrics"
+                )
+            else:
+                direction_by_verdict = {
+                    "strong_sell": -1,
+                    "sell": -1,
+                    "hold": 0,
+                    "buy": 1,
+                    "strong_buy": 1,
+                }
+                indication_verdict = indication.get("verdict")
+                if indication_verdict == "mixed":
+                    expected_supporting = 0
+                elif indication_verdict in direction_by_verdict:
+                    expected_direction = direction_by_verdict[indication_verdict]
+                    expected_supporting = sum(
+                        direction_by_verdict.get(str(output.get("verdict", "")))
+                        == expected_direction
+                        for output in completed_outputs
+                    )
+                else:
+                    expected_supporting = None
+                if indication.get("supporting_analyses") != expected_supporting:
+                    error = (
+                        "Partial indication supporting analyses must exactly match "
+                        "completed votes on the indicated direction"
+                    )
+    elif status == "incomplete":
+        if actual_completed >= 2:
+            error = "An incomplete response requires fewer than two completions"
+        elif (
+            consensus.get("verdict") != "incomplete"
+            or consensus.get("agreement_score") is not None
+            or indication is not None
+            or bool(consensus.get("consensus_points"))
+        ):
+            error = (
+                "An incomplete response cannot publish a verdict, support, "
+                "partial indication, or consensus points"
+            )
+    else:
+        error = f"Unknown consensus status: {status!r}"
+
+    return [EvalResult(
+        name="consensus_structural_integrity",
+        passed=not error,
+        details=error,
+    )]
+
+
+def _fewer_than_two_contract_result(
+    check_name: str,
+    consensus: Dict[str, Any],
+    agent_outputs: List[Dict[str, Any]],
+) -> Optional[EvalResult]:
+    """Abstain only when an unavailable consensus obeys the integrity contract."""
+    if len(_completed_agent_outputs(agent_outputs)) >= 2:
+        return None
+    valid_abstention = (
+        consensus.get("status") == "incomplete"
+        and consensus.get("verdict") == "incomplete"
+        and consensus.get("agreement_score") is None
+        and consensus.get("partial_indication") is None
+        and not consensus.get("consensus_points")
+    )
+    suffix = (
+        "abstain_fewer_than_two"
+        if valid_abstention
+        else "integrity_fewer_than_two"
+    )
+    return EvalResult(
+        name=f"{check_name}_{suffix}",
+        passed=valid_abstention,
+        details=(
+            ""
+            if valid_abstention
+            else "Fewer than two completed analyses must not publish consensus"
+        ),
+    )
+
+
+def eval_agreement_score_valid(
+    consensus: Dict[str, Any],
+    agent_outputs: Optional[List[Dict[str, Any]]] = None,
+) -> List[EvalResult]:
     """
     Check the legacy agreement_score directional-support contract.
 
     Mixed consensus has no direction and therefore requires a null value.
     Other verdicts require a finite numeric share between 0.0 and 1.0.
     """
-    score = consensus.get("agreement_score")
-    verdict = consensus.get("verdict")
+    if agent_outputs is not None:
+        abstention = _fewer_than_two_contract_result(
+            "agreement_score", consensus, agent_outputs
+        )
+        if abstention is not None:
+            return [abstention]
+    evaluated = _completed_vote_contract(consensus)
+    score = evaluated.get("agreement_score")
+    verdict = evaluated.get("verdict")
     if verdict == "mixed":
         return [EvalResult(
             name="mixed_directional_support_unavailable",
@@ -67,8 +247,15 @@ def eval_directional_support_matches_agents(
     agent_outputs: List[Dict[str, Any]],
 ) -> List[EvalResult]:
     """Independently verify directional support against completed verdicts."""
-    verdict = consensus.get("verdict")
-    score = consensus.get("agreement_score")
+    abstention = _fewer_than_two_contract_result(
+        "directional_support", consensus, agent_outputs
+    )
+    if abstention is not None:
+        return [abstention]
+    evaluated = _completed_vote_contract(consensus)
+    verdict = evaluated.get("verdict")
+    score = evaluated.get("agreement_score")
+    completed_outputs = _completed_agent_outputs(agent_outputs)
     if verdict == "mixed":
         expected = None
     else:
@@ -86,7 +273,7 @@ def eval_directional_support_matches_agents(
                 details=f"Cannot verify support for verdict '{verdict}'",
             )]
         valid_agent_verdicts: List[str] = []
-        for output in agent_outputs:
+        for output in completed_outputs:
             candidate = output.get("verdict")
             if isinstance(candidate, str) and candidate in direction_by_verdict:
                 valid_agent_verdicts.append(candidate)
@@ -124,9 +311,15 @@ def eval_consensus_matches_majority(
     """
     Check the consensus against the independent ordinal-median contract.
     """
+    abstention = _fewer_than_two_contract_result(
+        "consensus_majority", consensus, agent_outputs
+    )
+    if abstention is not None:
+        return [abstention]
     verdict_order = ["strong_sell", "sell", "hold", "buy", "strong_buy"]
 
-    consensus_verdict = consensus.get("verdict", "")
+    evaluated = _completed_vote_contract(consensus)
+    consensus_verdict = evaluated.get("verdict", "")
     if consensus_verdict not in {*verdict_order, "mixed"}:
         return [EvalResult(
             name="consensus_verdict_known",
@@ -134,8 +327,11 @@ def eval_consensus_matches_majority(
             details=f"Unknown consensus verdict: '{consensus_verdict}'",
         )]
 
-    # Get agent verdicts
-    agent_verdicts = [o.get("verdict", "") for o in agent_outputs]
+    # Get completed agent verdicts
+    agent_verdicts = [
+        output.get("verdict", "")
+        for output in _completed_agent_outputs(agent_outputs)
+    ]
     valid_verdicts = [v for v in agent_verdicts if v in verdict_order]
 
     if not valid_verdicts:
@@ -145,20 +341,10 @@ def eval_consensus_matches_majority(
             details="No valid agent verdicts to compare",
         )]
 
-    positions = sorted(verdict_order.index(v) - 2 for v in valid_verdicts)
-    midpoint = len(positions) // 2
-    if len(positions) % 2:
-        expected = verdict_order[positions[midpoint] + 2]
-    else:
-        lower = positions[midpoint - 1]
-        upper = positions[midpoint]
-        lower_direction = 0 if lower == 0 else 1 if lower > 0 else -1
-        upper_direction = 0 if upper == 0 else 1 if upper > 0 else -1
-        expected = (
-            verdict_order[int((lower + upper) / 2) + 2]
-            if lower_direction == upper_direction
-            else "mixed"
-        )
+    _, expected_consensus = calculate_ordinal_consensus(
+        [Verdict(verdict) for verdict in valid_verdicts]
+    )
+    expected = expected_consensus.value
     ok = consensus_verdict == expected
 
     return [EvalResult(
@@ -182,8 +368,17 @@ def eval_no_extreme_contradiction(
     Example: All agents say sell/strong_sell, consensus says buy/strong_buy.
     This is a critical bug in the synthesis logic.
     """
-    consensus_verdict = consensus.get("verdict", "")
-    agent_verdicts = [o.get("verdict", "") for o in agent_outputs]
+    abstention = _fewer_than_two_contract_result(
+        "no_extreme_contradiction", consensus, agent_outputs
+    )
+    if abstention is not None:
+        return [abstention]
+    evaluated = _completed_vote_contract(consensus)
+    consensus_verdict = evaluated.get("verdict", "")
+    agent_verdicts = [
+        output.get("verdict", "")
+        for output in _completed_agent_outputs(agent_outputs)
+    ]
 
     positive = {"buy", "strong_buy"}
     negative = {"sell", "strong_sell"}
@@ -208,15 +403,25 @@ def eval_no_extreme_contradiction(
     )]
 
 
-def eval_consensus_points_exist(consensus: Dict[str, Any]) -> List[EvalResult]:
+def eval_consensus_points_exist(
+    consensus: Dict[str, Any],
+    agent_outputs: Optional[List[Dict[str, Any]]] = None,
+) -> List[EvalResult]:
     """
     Check that consensus has at least one consensus or divergence point.
     
     WHY: The consensus section with no points looks empty to the user.
     The LLM should always find something agents agree or disagree on.
     """
-    consensus_points = consensus.get("consensus_points", [])
-    divergence_points = consensus.get("divergence_points", [])
+    if agent_outputs is not None:
+        abstention = _fewer_than_two_contract_result(
+            "consensus_points", consensus, agent_outputs
+        )
+        if abstention is not None:
+            return [abstention]
+    evaluated = _completed_vote_contract(consensus)
+    consensus_points = evaluated.get("consensus_points", [])
+    divergence_points = evaluated.get("divergence_points", [])
 
     total = len(consensus_points) + len(divergence_points)
 
@@ -271,9 +476,16 @@ async def eval_consensus_coherence(
     The judge reads all agent outputs and the consensus, then decides
     if the consensus actually makes sense given the agent results.
     """
+    abstention = _fewer_than_two_contract_result(
+        "consensus_coherence", consensus, agent_outputs
+    )
+    if abstention is not None:
+        return [abstention]
+    evaluated = _completed_vote_contract(consensus)
+
     # Build agent summaries
     summaries = []
-    for output in agent_outputs:
+    for output in _completed_agent_outputs(agent_outputs):
         name = output.get("agent", "Unknown")
         verdict = output.get("verdict", "unknown")
         score = output.get("score", 0)
@@ -283,10 +495,14 @@ async def eval_consensus_coherence(
     prompt = CONSENSUS_COHERENCE_PROMPT.format(
         ticker=ticker,
         agent_summaries="\n".join(summaries),
-        consensus_verdict=consensus.get("verdict", "unknown"),
-        agreement_score=consensus.get("agreement_score", "N/A"),
-        consensus_points="\n".join(f"  - {p}" for p in consensus.get("consensus_points", [])),
-        divergence_points="\n".join(f"  - {p}" for p in consensus.get("divergence_points", [])),
+        consensus_verdict=evaluated.get("verdict", "unknown"),
+        agreement_score=evaluated.get("agreement_score", "N/A"),
+        consensus_points="\n".join(
+            f"  - {point}" for point in evaluated.get("consensus_points", [])
+        ),
+        divergence_points="\n".join(
+            f"  - {point}" for point in evaluated.get("divergence_points", [])
+        ),
     )
 
     try:
@@ -335,13 +551,14 @@ async def run_consensus_evals(
     layer = LayerResults(layer="Layer 3: Consensus Quality")
 
     # Code-based checks (always run)
-    layer.results.extend(eval_agreement_score_valid(consensus))
+    layer.results.extend(eval_consensus_structural_integrity(consensus, agent_outputs))
+    layer.results.extend(eval_agreement_score_valid(consensus, agent_outputs))
     layer.results.extend(
         eval_directional_support_matches_agents(consensus, agent_outputs)
     )
     layer.results.extend(eval_consensus_matches_majority(consensus, agent_outputs))
     layer.results.extend(eval_no_extreme_contradiction(consensus, agent_outputs))
-    layer.results.extend(eval_consensus_points_exist(consensus))
+    layer.results.extend(eval_consensus_points_exist(consensus, agent_outputs))
 
     # LLM-as-judge (only if API key available)
     if llm_client:
