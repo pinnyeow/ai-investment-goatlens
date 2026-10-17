@@ -318,6 +318,7 @@ class PricePoint(StrictAPIModel):
     high: float
     low: float
     close: float
+    adjusted_close: float
     volume: int
 
 
@@ -482,6 +483,28 @@ class SnapshotSeriesResponse(StrictAPIModel):
     symbol: str = Field(min_length=1)
     return_kind: Literal["log", "simple"]
     intervals: List[ReturnIntervalResponse] = Field(min_length=1, max_length=252)
+
+    @model_validator(mode="after")
+    def validate_interval_chronology(self):
+        parsed = []
+        for interval in self.intervals:
+            try:
+                start = date.fromisoformat(interval.start)
+                end = date.fromisoformat(interval.end)
+            except ValueError:
+                raise ValueError("Return intervals require parseable ISO dates") from None
+            if start >= end:
+                raise ValueError("Return intervals require start before end")
+            parsed.append((start, end))
+
+        for previous, current in zip(parsed, parsed[1:]):
+            if current <= previous:
+                raise ValueError(
+                    "Return intervals must be strictly ascending and distinct"
+                )
+            if current[0] < previous[1]:
+                raise ValueError("Return intervals must be non-overlapping")
+        return self
 
 
 MetricInputResponse = Annotated[
@@ -681,6 +704,18 @@ class AnalysisResponse(StrictAPIModel):
             expected_id = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
             if series.series_id != expected_id:
                 raise ValueError("Snapshot series ID must match its content digest")
+        referenced_series_ids = {
+            typed_input.series_id
+            for evidence in self.metric_evidence.values()
+            if evidence.available
+            for typed_input in evidence.inputs
+            if isinstance(typed_input, MarketSeriesInputResponse)
+        }
+        if set(series_by_id) != referenced_series_ids:
+            raise ValueError(
+                "Published snapshot series IDs must exactly match available evidence "
+                "referenced series IDs"
+            )
         expected_return_kinds = {
             "beta": "simple",
             "correlation_sp500": "simple",
@@ -777,9 +812,13 @@ class AnalysisResponse(StrictAPIModel):
                     for interval in benchmark_series.intervals
                 ]
                 asset_values, benchmark_values = values_by_series
-                if len(asset_values) < 2 or asset_intervals != benchmark_intervals:
+                if len(asset_values) < 2:
                     raise ValueError(
                         "Dalio metric series must be finite and non-degenerate"
+                    )
+                if asset_intervals != benchmark_intervals:
+                    raise ValueError(
+                        "Dalio asset and benchmark series require aligned interval windows"
                     )
                 asset_mean = sum(asset_values) / len(asset_values)
                 benchmark_mean = sum(benchmark_values) / len(benchmark_values)
@@ -1852,6 +1891,10 @@ def _build_metric_evidence(normalized, snapshot=None, series_references=None):
                     observations,
                     "asset_log",
                 )
+            if not metric_is_available(value):
+                inputs = []
+                as_of = None
+                observations = None
             available = metric_is_available(value) and bool(inputs)
             version = {
                 "beta": "goatlens_beta_v1",
@@ -1948,7 +1991,9 @@ def _price_dependent_analysis_status(normalized):
     }
 
 
-def _price_sec_compatibility_reason(normalized, snapshot):
+def _price_sec_compatibility_reason(ticker, normalized, snapshot):
+    if "." in ticker or "-" in ticker:
+        return "unproven_share_class_price_sec_compatibility"
     if snapshot.currency != "USD":
         return (
             "non_usd_quote_currency"
@@ -2097,7 +2142,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             }
         )
         price_sec_compatibility_reason = _price_sec_compatibility_reason(
-            normalized, snapshot
+            ticker, normalized, snapshot
         )
         if price_sec_compatibility_reason is not None:
             for metric in (
@@ -2184,12 +2229,24 @@ async def fetch_data_node(state: GOATState) -> GOATState:
 
     state["normalized_data"] = normalized
     snapshot_series, series_references = _build_snapshot_series(snapshot, ticker)
-    state["snapshot_series"] = snapshot_series
-    state["metric_evidence"] = _build_metric_evidence(
+    metric_evidence = _build_metric_evidence(
         normalized,
         snapshot,
         series_references,
     )
+    referenced_series_ids = {
+        typed_input["series_id"]
+        for evidence in metric_evidence.values()
+        if evidence["available"]
+        for typed_input in evidence["inputs"]
+        if typed_input["kind"] == "market_series"
+    }
+    state["snapshot_series"] = [
+        series
+        for series in snapshot_series
+        if series["series_id"] in referenced_series_ids
+    ]
+    state["metric_evidence"] = metric_evidence
 
     try:
         news_client = NewsClient()
@@ -2669,7 +2726,7 @@ app = FastAPI(
 
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-LLFBr32IVBVPEeHNhEh9RDNq9Jht9B+nsx1OTf+1R5w=' "
+    "script-src 'self' 'sha256-3mMjJooNr/i21sq1ZM9hwrLZ/+wQWro9H60VSJDDSuA=' "
     "https://unpkg.com https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src https://fonts.gstatic.com; img-src 'self' data:; "
@@ -3271,6 +3328,7 @@ async def get_price_history(
             "high": point.high,
             "low": point.low,
             "close": point.close,
+            "adjusted_close": point.adjusted_close,
             "volume": point.volume,
         }
         for point in snapshot.history

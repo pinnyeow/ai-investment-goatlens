@@ -1,11 +1,14 @@
 name: Smoke Tests
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '17 15 * * *' # daily live dependency canary
-  workflow_dispatch: # allow manual trigger
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact deployed commit SHA to verify
+        required: true
+        type: string
 
 concurrency:
   group: smoke-${{ github.ref }}
@@ -16,8 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for the expected Render release
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           for ATTEMPT in {1..30}; do
             BODY=$(curl --silent --show-error --max-time 5 \

@@ -65,7 +65,7 @@ The response includes `data_status` for SEC fundamentals and Yahoo chart market 
 Other endpoints:
 
 - `GET /api/agents`
-- `GET /api/price-history/{ticker}`
+- `GET /api/price-history/{ticker}` (raw OHLCV plus explicit `adjusted_close`; the UI plots adjusted history)
 - `GET /api/earnings/{ticker}`
 - `GET /health` (includes the exact deployed release SHA)
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-LLFBr32IVBVPEeHNhEh9RDNq9Jht9B+nsx1OTf+1R5w=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-3mMjJooNr/i21sq1ZM9hwrLZ/+wQWro9H60VSJDDSuA=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2730,7 +2730,7 @@
             <div class="search-row">
                 <div class="input-group">
                     <label>Ticker</label>
-                    <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="10" pattern="[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)?">
+                    <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="10" pattern="[A-Za-z0-9]+([.\-][A-Za-z0-9]+)?">
                 </div>
                 <div class="input-group">
                     <label>Time Period</label>
@@ -3963,7 +3963,7 @@
                 // Set price data
                 const priceData = data.prices.map(p => ({
                     time: p.date,
-                    value: p.close,
+                    value: p.adjusted_close,
                 }));
                 areaSeries.setData(priceData);
 

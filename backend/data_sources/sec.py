@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from data_sources.symbols import canonicalize_class_symbol
+
 
 class SECError(Exception):
     """Base exception for SEC fundamentals failures."""
@@ -1002,6 +1004,7 @@ class SECFundamentalsClient:
         as_of: Optional[date] = None,
     ) -> SECFundamentals:
         ticker = ticker.strip().upper()
+        provider_ticker = canonicalize_class_symbol(ticker)
         as_of = as_of or date.today()
         ticker_response = await self._get_response(
             "https://www.sec.gov/files/company_tickers.json"
@@ -1015,7 +1018,7 @@ class SECFundamentalsClient:
             (
                 item
                 for item in ticker_map.values()
-                if str(item.get("ticker", "")).upper() == ticker
+                if str(item.get("ticker", "")).upper() == provider_ticker
             ),
             None,
         )

@@ -119,6 +119,25 @@ async def test_snapshot_uses_two_chart_calls_and_independent_expected_metrics():
     assert snapshot.errors == []
 
 
+@pytest.mark.asyncio
+async def test_dot_class_ticker_uses_yahoo_hyphen_symbol_without_rewriting_benchmark():
+    returns = [0.001 for _ in range(252)]
+    session = FakeSession([
+        FakeResponse(200, _chart_payload("BRK-B", returns, price=500.0)),
+        FakeResponse(200, _chart_payload("^GSPC", returns, price=6800.0)),
+    ])
+    client = YahooChartClient(
+        session=session,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    snapshot = await client.get_snapshot("BRK.B")
+
+    assert snapshot.symbol == "BRK-B"
+    assert session.calls[0][0].endswith("/chart/BRK-B")
+    assert session.calls[1][0].endswith("/chart/%5EGSPC")
+
+
 def test_chart_parses_split_events_from_the_public_payload():
     payload = _chart_payload("AAPL", [0.001 for _ in range(252)])
     split_timestamp = int(
@@ -516,7 +535,7 @@ def test_price_history_endpoint_uses_narrow_chart_snapshot(monkeypatch):
                         high=202.0,
                         low=197.0,
                         close=200.0,
-                        adjusted_close=200.0,
+                        adjusted_close=190.0,
                         volume=1_000_000,
                     )
                 ]
@@ -538,6 +557,7 @@ def test_price_history_endpoint_uses_narrow_chart_snapshot(monkeypatch):
                 "high": 202.0,
                 "low": 197.0,
                 "close": 200.0,
+                "adjusted_close": 190.0,
                 "volume": 1_000_000,
             }
         ],
@@ -545,6 +565,34 @@ def test_price_history_endpoint_uses_narrow_chart_snapshot(monkeypatch):
         "next_earnings_date": None,
     }
     assert WorkingChartClient.calls == ["AAPL"]
+
+
+def test_price_history_dot_class_ticker_uses_fixture_and_preserves_public_identity(
+    monkeypatch,
+):
+    returns = [0.001 for _ in range(252)]
+    session = FakeSession([
+        FakeResponse(200, _chart_payload("BRK-B", returns, price=500.0)),
+        FakeResponse(200, _chart_payload("^GSPC", returns, price=6800.0)),
+    ])
+
+    monkeypatch.setattr(
+        main,
+        "YahooChartClient",
+        lambda: YahooChartClient(
+            session=session,
+            now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get("/api/price-history/brk.b?period=1mo")
+
+    assert response.status_code == 200
+    assert response.json()["ticker"] == "BRK.B"
+    assert response.json()["prices"]
+    assert session.calls[0][0].endswith("/chart/BRK-B")
+    assert session.calls[1][0].endswith("/chart/%5EGSPC")
 
 
 def test_price_history_endpoint_applies_requested_window(monkeypatch):

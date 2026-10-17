@@ -16,6 +16,8 @@ from urllib.parse import quote
 
 from curl_cffi import requests as curl_requests
 
+from data_sources.symbols import canonicalize_class_symbol
+
 
 class YahooChartError(Exception):
     """Base class for sanitized Yahoo chart failures."""
@@ -153,7 +155,7 @@ class YahooChartClient:
         normalized = symbol.strip().upper()
         if not self._SYMBOL.fullmatch(normalized):
             raise YahooChartInvalidSymbol("The market symbol is invalid.")
-        return normalized
+        return canonicalize_class_symbol(normalized)
 
     def _validate_observation_times(
         self, quote_time: datetime, latest_session: datetime

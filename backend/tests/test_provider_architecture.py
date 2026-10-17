@@ -91,6 +91,40 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '[[ "$BODY" == *' not in workflow
 
 
+def test_repository_requires_explicit_deployment_and_canary_gate():
+    render = (ROOT / "render.yaml").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "smoke-tests.yml").read_text()
+
+    assert "autoDeploy: false" in render
+    assert "push:" not in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" in workflow
+    assert "EXPECTED_SHA: ${{ inputs.expected_sha }}" in workflow
+    assert "EXPECTED_SHA: ${{ github.sha }}" not in workflow
+    assert "if: ${{ github.event_name == 'workflow_dispatch' }}" in workflow
+
+
+def test_frontend_plots_explicit_adjusted_close_history():
+    frontend = (ROOT / "frontend" / "index.html").read_text()
+
+    assert "value: p.adjusted_close" in frontend
+    assert "value: p.close" not in frontend
+
+
+def test_unreleased_adjusted_close_change_stays_in_0_2_0_migration():
+    note = ROOT / "docs" / "migrations" / "0.2.0-ratio-contract-removal.md"
+    superseding_note = ROOT / "docs" / "migrations" / "0.2.1-adjusted-price-history.md"
+
+    content = note.read_text()
+    assert "adjusted_close" in content
+    assert "close" in content
+    assert "additive" in content.lower()
+    assert not superseding_note.exists()
+    with TestClient(main.app) as client:
+        schema = client.get("/openapi.json").json()
+    assert schema["info"]["version"] == "0.2.0"
+
+
 def test_frontend_defines_agreement_as_directional_support():
     frontend = (ROOT / "frontend" / "index.html").read_text()
 

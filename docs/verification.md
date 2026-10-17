@@ -53,17 +53,19 @@ Before committing, run a fail-closed independent review of the complete diff. Se
 
 GitHub Actions must pass on the exact PR head SHA.
 
-## 5. Merge and production gate
+## 5. Merge and explicit production gate
 
-Merging and production configuration require explicit approval. Configure `SEC_USER_AGENT` in Render with a real application identifier and operational contact; do not commit personal contact data.
+Merging does not deploy: `render.yaml` disables automatic deployment. A maintainer must explicitly approve and start a manual Render deployment. Configure `SEC_USER_AGENT` in Render with a real application identifier and operational contact; do not commit personal contact data. Confirm the live Render service also has Auto-Deploy disabled because the repository cannot prove an existing dashboard setting.
 
-After merge:
+After the manual deployment:
 
-1. Poll `/health` until its `release` equals the merge SHA.
+1. Manually dispatch the Smoke Tests workflow with the deployed commit's exact SHA. The workflow polls `/health` until `release` equals that input SHA; it does not infer that `main` was deployed.
 2. Call `/api/fundamentals-health` exactly once and require SEC health.
 3. Call `/api/market-data-health` exactly once and record Yahoo status without treating Yahoo failure as SEC failure.
 4. Run the documented Buffett-only AAPL `/api/analyze` request and require the expected AAPL revenue literal and accession provenance, a complete Buffett result, and consensus unavailable/incomplete because fewer than two analyses completed.
 5. Verify the production browser behavior, including degraded market data.
 6. Inspect Render logs before changing code if any production boundary fails.
+
+The scheduled Smoke Tests run is a canary for the release that is already live. It intentionally skips the exact-SHA wait so it never treats an undeployed `main` commit as the expected production release.
 
 A healthy server, merged PR, or successful deployment is not sufficient by itself.

@@ -247,6 +247,61 @@ class WorkingYahoo(UnavailableYahoo):
         )
 
 
+def _refresh_market_metrics(snapshot):
+    asset_logs, _, asset_intervals = YahooChartClient._returns(snapshot.history)
+    beta, correlation, aligned_count, aligned_start, aligned_end = (
+        YahooChartClient._aligned_market_metrics(
+            snapshot.history, snapshot.benchmark_history
+        )
+    )
+    snapshot.beta_sp500 = beta
+    snapshot.correlation_sp500 = correlation
+    snapshot.aligned_return_observations = aligned_count
+    snapshot.aligned_metric_session_start = aligned_start
+    snapshot.aligned_metric_session_end = aligned_end
+    snapshot.asset_return_observations = len(asset_logs)
+    snapshot.metric_session_start = asset_intervals[0][0]
+    snapshot.metric_session_end = asset_intervals[-1][1]
+    snapshot.volatility_252d = statistics.stdev(asset_logs) * (252 ** 0.5)
+    snapshot.realized_total_return_252d = (
+        snapshot.history[-1].adjusted_close
+        / snapshot.history[0].adjusted_close
+        - 1
+    )
+    return snapshot
+
+
+class ZeroBenchmarkVarianceYahoo(WorkingYahoo):
+    async def get_snapshot(self, ticker):
+        snapshot = await super().get_snapshot(ticker)
+        snapshot.benchmark_history = [
+            replace(point, adjusted_close=100.0)
+            for point in snapshot.benchmark_history
+        ]
+        return _refresh_market_metrics(snapshot)
+
+
+class ZeroAssetVarianceYahoo(WorkingYahoo):
+    async def get_snapshot(self, ticker):
+        snapshot = await super().get_snapshot(ticker)
+        snapshot.history = [
+            replace(point, adjusted_close=100.0) for point in snapshot.history
+        ]
+        return _refresh_market_metrics(snapshot)
+
+
+class SparseAlignedHistoryYahoo(WorkingYahoo):
+    async def get_snapshot(self, ticker):
+        snapshot = await super().get_snapshot(ticker)
+        snapshot.benchmark_history = [
+            replace(point, session_date=f"2020-{index // 28 + 1:02d}-{index % 28 + 1:02d}")
+            if index < 127
+            else point
+            for index, point in enumerate(snapshot.benchmark_history)
+        ]
+        return _refresh_market_metrics(snapshot)
+
+
 class NonUSDYahoo(WorkingYahoo):
     async def get_snapshot(self, ticker):
         snapshot = await super().get_snapshot(ticker)
@@ -362,6 +417,12 @@ class UnsupportedShareBasisSEC(FixtureCompleteMetricsSEC):
         result.latest["shares_outstanding"] = unsupported
         result.history["shares_outstanding"][0] = unsupported
         return result
+
+
+class FixtureShareClassSEC(FixtureCompleteMetricsSEC):
+    async def get_fundamentals(self, ticker, as_of=None):
+        result = await super().get_fundamentals("METR", as_of=as_of)
+        return replace(result, ticker=ticker)
 
 
 def test_analysis_continues_from_sec_when_yahoo_is_unavailable(monkeypatch):
@@ -946,6 +1007,52 @@ def test_non_usd_quote_fails_price_sec_metrics_closed_at_public_seam(monkeypatch
     assert body["consensus_status"] == "incomplete"
 
 
+def test_unproven_share_class_fails_only_sec_price_metrics_closed(monkeypatch):
+    WorkingYahoo.calls = []
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureShareClassSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze",
+            json={
+                "ticker": "BRK.B",
+                "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ticker"] == "BRK.B"
+    assert WorkingYahoo.calls == ["BRK.B"]
+    reason = "unproven_share_class_price_sec_compatibility"
+    for metric in ("pe_ratio", "pb_ratio", "ps_ratio", "market_cap", "dividend_yield"):
+        assert body["metric_evidence"][metric]["available"] is False
+        assert body["metric_evidence"][metric]["availability_reason"] == reason
+
+    for metric in (
+        "current_price",
+        "beta",
+        "volatility_252d",
+        "correlation_sp500",
+        "realized_total_return_252d",
+    ):
+        assert body["metric_evidence"][metric]["available"] is True
+
+    statuses = {result["agent"]: result["status"] for result in body["agent_results"]}
+    assert statuses == {
+        "Warren Buffett": "complete",
+        "Peter Lynch": "incomplete",
+        "Benjamin Graham": "incomplete",
+        "Charlie Munger": "complete",
+        "Ray Dalio": "complete",
+    }
+
+
 def test_unsupported_sec_share_basis_fails_price_sec_metrics_closed(monkeypatch):
     monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1098,6 +1205,7 @@ def test_browser_ticker_and_formula_copy_match_runtime_contracts():
     html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
 
     assert 'id="tickerInput" placeholder="AAPL" maxlength="10"' in html
+    assert 'pattern="[A-Za-z0-9]+([.\\-][A-Za-z0-9]+)?"' in html
     assert "(?=.{1,10}$)[A-Z0-9]+(?:[.-][A-Z0-9]+)?" in html
     assert "Free Cash Flow" in html
     assert "Positive</td><td>+15" in html
@@ -1276,6 +1384,90 @@ def test_all_five_agents_complete_from_sec_and_narrow_market_data(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(
+    ("yahoo_client", "expected_asset_values"),
+    [
+        (ZeroBenchmarkVarianceYahoo, None),
+        (ZeroAssetVarianceYahoo, (0.0, 0.0)),
+        (SparseAlignedHistoryYahoo, None),
+    ],
+    ids=[
+        "zero-benchmark-variance",
+        "zero-asset-variance",
+        "fewer-than-126-aligned-intervals",
+    ],
+)
+def test_degraded_paired_history_preserves_independent_public_evidence(
+    monkeypatch,
+    yahoo_client,
+    expected_asset_values,
+):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureCompleteMetricsSEC)
+    monkeypatch.setattr(main, "YahooChartClient", yahoo_client)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze",
+            json={
+                "ticker": "METR",
+                "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    main.AnalysisResponse.model_validate(body)
+    evidence = body["metric_evidence"]
+    assert evidence["roe"]["available"] is True
+    assert evidence["current_price"]["value"] == 200.0
+    assert evidence["volatility_252d"]["available"] is True
+    assert evidence["realized_total_return_252d"]["available"] is True
+    if expected_asset_values is not None:
+        assert evidence["volatility_252d"]["value"] == expected_asset_values[0]
+        assert evidence["realized_total_return_252d"]["value"] == expected_asset_values[1]
+    for metric in ("beta", "correlation_sp500"):
+        assert evidence[metric]["available"] is False
+        assert evidence[metric]["value"] is None
+        assert evidence[metric]["availability_reason"] == "required_inputs_unavailable"
+        assert evidence[metric]["inputs"] == []
+        assert evidence[metric]["observation_count"] is None
+
+    referenced_series_ids = {
+        item["series_id"]
+        for item in evidence.values()
+        if item["available"]
+        for item in item["inputs"]
+        if item["kind"] == "market_series"
+    }
+    published_series_ids = [item["series_id"] for item in body["snapshot_series"]]
+    assert set(published_series_ids) == referenced_series_ids
+    assert len(published_series_ids) == len(set(published_series_ids)) == 1
+    assert (
+        evidence["volatility_252d"]["inputs"][0]["series_id"]
+        == evidence["realized_total_return_252d"]["inputs"][0]["series_id"]
+    )
+
+    agents = {item["agent"]: item for item in body["agent_results"]}
+    assert {
+        name: agents[name]["status"]
+        for name in ("Warren Buffett", "Peter Lynch", "Benjamin Graham", "Charlie Munger")
+    } == {
+        "Warren Buffett": "complete",
+        "Peter Lynch": "complete",
+        "Benjamin Graham": "complete",
+        "Charlie Munger": "complete",
+    }
+    assert agents["Ray Dalio"]["status"] == "incomplete"
+    assert agents["Ray Dalio"]["unavailable_metrics"] == [
+        "beta",
+        "correlation_sp500",
+    ]
+
+
 def test_public_snapshot_series_recompute_all_dalio_market_metrics(monkeypatch):
     monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -1302,6 +1494,16 @@ def test_public_snapshot_series_recompute_all_dalio_market_metrics(monkeypatch):
         assert all(item["series_id"] in series for item in evidence[metric]["inputs"])
 
     asset_logs_id = evidence["volatility_252d"]["inputs"][0]["series_id"]
+    assert asset_logs_id == evidence["realized_total_return_252d"]["inputs"][0][
+        "series_id"
+    ]
+    assert evidence["beta"]["inputs"][0]["series_id"] == evidence[
+        "correlation_sp500"
+    ]["inputs"][0]["series_id"]
+    assert evidence["beta"]["inputs"][1]["series_id"] == evidence[
+        "correlation_sp500"
+    ]["inputs"][1]["series_id"]
+    assert len(series) == len(body["snapshot_series"]) == 3
     asset_logs = [item["value"] for item in series[asset_logs_id]["intervals"]]
     assert statistics.stdev(asset_logs) * math.sqrt(252) == pytest.approx(
         evidence["volatility_252d"]["value"]
@@ -1557,6 +1759,107 @@ def test_public_response_rejects_inconsistent_snapshot_series_references(monkeyp
     for mutated in mutations:
         with pytest.raises(ValidationError):
             main.AnalysisResponse.model_validate(mutated)
+
+
+def _redigest_snapshot_series(series):
+    canonical = json.dumps(
+        {
+            "source": series["source"],
+            "symbol": series["symbol"],
+            "return_kind": series["return_kind"],
+            "intervals": series["intervals"],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    series["series_id"] = "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _replace_snapshot_series_id(body, old_id, series):
+    for evidence in body["metric_evidence"].values():
+        changed = False
+        for typed_input in evidence["inputs"]:
+            if typed_input.get("series_id") != old_id:
+                continue
+            changed = True
+            typed_input.update(
+                series_id=series["series_id"],
+                start=series["intervals"][0]["start"],
+                end=series["intervals"][-1]["end"],
+            )
+        if changed:
+            evidence["as_of"] = series["intervals"][-1]["end"]
+
+
+def test_public_response_rejects_digested_unreferenced_snapshot_series(monkeypatch):
+    body = _complete_metric_response(monkeypatch, ["dalio"])
+    rogue = copy.deepcopy(body["snapshot_series"][0])
+    rogue["symbol"] = "ROGUE"
+    _redigest_snapshot_series(rogue)
+    body["snapshot_series"].append(rogue)
+
+    with pytest.raises(ValidationError, match="exactly match.*referenced"):
+        main.AnalysisResponse.model_validate(body)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        ("invalid_date", "ISO dates"),
+        ("reversed", "start before end"),
+        ("duplicate", "strictly ascending.*distinct"),
+        ("non_monotonic", "strictly ascending.*distinct"),
+        ("overlapping", "non-overlapping"),
+    ],
+)
+def test_public_response_rejects_falsified_return_interval_chronology(
+    monkeypatch, mutation, expected_error
+):
+    body = _complete_metric_response(monkeypatch, ["dalio"])
+    old_id = body["metric_evidence"]["volatility_252d"]["inputs"][0]["series_id"]
+    series = next(
+        item for item in body["snapshot_series"] if item["series_id"] == old_id
+    )
+    intervals = series["intervals"]
+    if mutation == "invalid_date":
+        intervals[0]["start"] = "not-a-date"
+    elif mutation == "reversed":
+        intervals[0]["start"], intervals[0]["end"] = (
+            intervals[0]["end"],
+            intervals[0]["start"],
+        )
+    elif mutation == "duplicate":
+        intervals[1] = copy.deepcopy(intervals[0])
+    elif mutation == "non_monotonic":
+        intervals[0], intervals[1] = intervals[1], intervals[0]
+    else:
+        intervals[1]["start"] = intervals[0]["start"]
+    _redigest_snapshot_series(series)
+    _replace_snapshot_series_id(body, old_id, series)
+
+    with pytest.raises(ValidationError, match=expected_error):
+        main.AnalysisResponse.model_validate(body)
+
+
+def test_public_response_rejects_misaligned_asset_and_benchmark_windows(monkeypatch):
+    body = _complete_metric_response(monkeypatch, ["dalio"])
+    benchmark_input = body["metric_evidence"]["beta"]["inputs"][1]
+    old_id = benchmark_input["series_id"]
+    series = next(
+        item for item in body["snapshot_series"] if item["series_id"] == old_id
+    )
+    for interval in series["intervals"]:
+        interval["start"] = (
+            datetime.fromisoformat(interval["start"]) + timedelta(days=1)
+        ).date().isoformat()
+        interval["end"] = (
+            datetime.fromisoformat(interval["end"]) + timedelta(days=1)
+        ).date().isoformat()
+    _redigest_snapshot_series(series)
+    _replace_snapshot_series_id(body, old_id, series)
+
+    with pytest.raises(ValidationError, match="aligned interval windows"):
+        main.AnalysisResponse.model_validate(body)
 
 
 def test_price_present_does_not_overstate_missing_valuation_inputs(monkeypatch):
