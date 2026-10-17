@@ -1,8 +1,10 @@
 """Contracts for the narrow, crumb-less Yahoo chart adapter."""
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import math
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -118,6 +120,54 @@ async def test_snapshot_uses_two_chart_calls_and_independent_expected_metrics():
 
 
 @pytest.mark.asyncio
+async def test_dot_class_ticker_uses_yahoo_hyphen_symbol_without_rewriting_benchmark():
+    returns = [0.001 for _ in range(252)]
+    session = FakeSession([
+        FakeResponse(200, _chart_payload("BRK-B", returns, price=500.0)),
+        FakeResponse(200, _chart_payload("^GSPC", returns, price=6800.0)),
+    ])
+    client = YahooChartClient(
+        session=session,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    snapshot = await client.get_snapshot("BRK.B")
+
+    assert snapshot.symbol == "BRK-B"
+    assert session.calls[0][0].endswith("/chart/BRK-B")
+    assert session.calls[1][0].endswith("/chart/%5EGSPC")
+
+
+def test_chart_parses_split_events_from_the_public_payload():
+    payload = _chart_payload("AAPL", [0.001 for _ in range(252)])
+    split_timestamp = int(
+        datetime(2025, 9, 15, 13, 30, tzinfo=timezone.utc).timestamp()
+    )
+    payload["chart"]["result"][0]["events"] = {
+        "splits": {
+            str(split_timestamp): {
+                "date": split_timestamp,
+                "numerator": 4.0,
+                "denominator": 1.0,
+                "splitRatio": "4:1",
+            }
+        }
+    }
+    client = YahooChartClient(
+        session=FakeSession([FakeResponse(200, payload)]),
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    chart = client._fetch_chart("AAPL")
+
+    assert len(chart["split_events"]) == 1
+    split = chart["split_events"][0]
+    assert split.effective_date == "2025-09-15"
+    assert split.numerator == 4.0
+    assert split.denominator == 1.0
+
+
+@pytest.mark.asyncio
 async def test_snapshot_cache_reuses_complete_two_call_operation_across_clients():
     returns = [0.001 for _ in range(252)]
     first_session = FakeSession([
@@ -137,7 +187,8 @@ async def test_snapshot_cache_reuses_complete_two_call_operation_across_clients(
 
     assert len(first_session.calls) == 2
     assert second_session.calls == []
-    assert second_snapshot == first_snapshot
+    assert second_snapshot.cache_age_seconds >= 0.0
+    assert replace(second_snapshot, cache_age_seconds=0.0) == first_snapshot
 
 
 @pytest.mark.asyncio
@@ -306,6 +357,63 @@ async def test_cancelled_waiter_does_not_close_session_before_shared_work_finish
 
 
 @pytest.mark.asyncio
+async def test_waiter_deadlines_keep_stalled_snapshot_registered_and_coalesced(monkeypatch):
+    release = asyncio.Event()
+    calls = []
+
+    class BlockingClient(YahooChartClient):
+        async def _get_snapshot_uncached(self, symbol):
+            calls.append(symbol)
+            await release.wait()
+            return SimpleNamespace(symbol=symbol)
+
+    monkeypatch.setattr(yahoo_chart, "_SNAPSHOT_DEADLINE_SECONDS", 0.01)
+    client = BlockingClient(session=FakeSession([]))
+
+    with pytest.raises(YahooChartTemporarilyUnavailable):
+        await client.get_snapshot("AAPL")
+    with pytest.raises(YahooChartTemporarilyUnavailable):
+        await client.get_snapshot("AAPL")
+
+    assert calls == ["AAPL"]
+    assert len(yahoo_chart._INFLIGHT_SNAPSHOTS) == 1
+    release.set()
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_waiter_timeout_defers_session_close_until_shared_work_finishes(monkeypatch):
+    release = asyncio.Event()
+    closed = asyncio.Event()
+
+    class ClosingSession(FakeSession):
+        def close(self):
+            closed.set()
+
+    class BlockingClient(YahooChartClient):
+        async def _get_snapshot_uncached(self, symbol):
+            await release.wait()
+            return SimpleNamespace(symbol=symbol)
+
+    monkeypatch.setattr(yahoo_chart, "_SNAPSHOT_DEADLINE_SECONDS", 0.01)
+    client = BlockingClient(session=ClosingSession([]))
+    client._owns_session = True
+
+    async with client:
+        with pytest.raises(YahooChartTemporarilyUnavailable):
+            await client.get_snapshot("AAPL")
+
+    assert not closed.is_set()
+    release.set()
+    for _ in range(10):
+        if closed.is_set():
+            break
+        await asyncio.sleep(0)
+    assert closed.is_set()
+
+
+@pytest.mark.asyncio
 async def test_benchmark_failure_preserves_independent_asset_metrics():
     asset_returns = [0.001 for _ in range(252)]
     session = FakeSession([
@@ -322,6 +430,38 @@ async def test_benchmark_failure_preserves_independent_asset_metrics():
     assert snapshot.beta_sp500 is None
     assert snapshot.correlation_sp500 is None
     assert snapshot.errors == ["benchmark_temporarily_unavailable"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_has_one_overall_deadline_across_asset_and_benchmark(monkeypatch):
+    returns = [0.001 for _ in range(252)]
+
+    class SlowSession(FakeSession):
+        def get(self, url, **kwargs):
+            if "%5EGSPC" in url:
+                time.sleep(0.2)
+            return super().get(url, **kwargs)
+
+    session = SlowSession([
+        FakeResponse(200, _chart_payload("AAPL", returns)),
+        FakeResponse(200, _chart_payload("^GSPC", returns)),
+    ])
+    monkeypatch.setattr(yahoo_chart, "_SNAPSHOT_DEADLINE_SECONDS", 0.1)
+    client = YahooChartClient(
+        session=session,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+    started = time.monotonic()
+    snapshot = await client.get_snapshot("AAPL")
+
+    assert time.monotonic() - started < 0.15
+    assert snapshot.current_price == 200.0
+    assert snapshot.realized_total_return_252d is not None
+    assert snapshot.beta_sp500 is None
+    assert snapshot.correlation_sp500 is None
+    assert snapshot.status == "partial"
+    assert snapshot.errors == ["benchmark_deadline_exceeded"]
 
 
 @pytest.mark.asyncio
@@ -395,7 +535,7 @@ def test_price_history_endpoint_uses_narrow_chart_snapshot(monkeypatch):
                         high=202.0,
                         low=197.0,
                         close=200.0,
-                        adjusted_close=200.0,
+                        adjusted_close=190.0,
                         volume=1_000_000,
                     )
                 ]
@@ -417,6 +557,7 @@ def test_price_history_endpoint_uses_narrow_chart_snapshot(monkeypatch):
                 "high": 202.0,
                 "low": 197.0,
                 "close": 200.0,
+                "adjusted_close": 190.0,
                 "volume": 1_000_000,
             }
         ],
@@ -424,6 +565,34 @@ def test_price_history_endpoint_uses_narrow_chart_snapshot(monkeypatch):
         "next_earnings_date": None,
     }
     assert WorkingChartClient.calls == ["AAPL"]
+
+
+def test_price_history_dot_class_ticker_uses_fixture_and_preserves_public_identity(
+    monkeypatch,
+):
+    returns = [0.001 for _ in range(252)]
+    session = FakeSession([
+        FakeResponse(200, _chart_payload("BRK-B", returns, price=500.0)),
+        FakeResponse(200, _chart_payload("^GSPC", returns, price=6800.0)),
+    ])
+
+    monkeypatch.setattr(
+        main,
+        "YahooChartClient",
+        lambda: YahooChartClient(
+            session=session,
+            now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        ),
+    )
+
+    with TestClient(main.app) as client:
+        response = client.get("/api/price-history/brk.b?period=1mo")
+
+    assert response.status_code == 200
+    assert response.json()["ticker"] == "BRK.B"
+    assert response.json()["prices"]
+    assert session.calls[0][0].endswith("/chart/BRK-B")
+    assert session.calls[1][0].endswith("/chart/%5EGSPC")
 
 
 def test_price_history_endpoint_applies_requested_window(monkeypatch):

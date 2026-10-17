@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from data_sources.symbols import canonicalize_class_symbol
+
 
 class SECError(Exception):
     """Base exception for SEC fundamentals failures."""
@@ -722,13 +724,15 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         "diluted_weighted_average_shares": latest("diluted_shares"),
         "book_value_per_share": ratio(equity, shares),
         "profit_margin": ratio(net_income, revenue),
-        "roe": ratio(net_income, equity),
+        "roe": ratio(net_income, equity) if equity is not None and equity > 0 else None,
         "revenue_growth": growth("revenue", "revenue_growth"),
         "earnings_growth": growth("net_income", "earnings_growth", years=3),
         "earnings_turnaround": earnings_turnaround(),
         "revenue_growth_5y": growth("revenue", "revenue_growth_5y", years=5),
         "free_cash_flow_per_share": ratio(free_cash_flow, shares),
-        "debt_to_equity": ratio(total_debt, equity),
+        "debt_to_equity": (
+            ratio(total_debt, equity) if equity is not None and equity > 0 else None
+        ),
         "gross_margin": gross_margin,
         "operating_margin": ratio(operating_income, revenue),
         "roa": None,
@@ -777,6 +781,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             metric_inputs[output_metric] = selected
 
     current_specs = {
+        "revenue": [("income.current.revenue", "revenue", reference)],
         "roe": [
             ("income.current.net_income", "net_income", reference),
             ("capital.end.equity", "equity", reference),
@@ -828,6 +833,10 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             ("cashflow.current.capex", "capex_payments", reference),
             ("income.current.revenue", "revenue", reference),
         ],
+        "interest_coverage": [
+            ("income.current.operating_income", "operating_income", reference),
+            ("income.current.interest_expense", "interest_expense", reference),
+        ],
         "dividend_per_share": [
             ("dividend.current", "dividend_per_share", reference)
         ],
@@ -836,6 +845,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         set_inputs(output_metric, specifications)
 
     formulas = {
+        "revenue": "reported",
         "roe": "net_income_divided_by_equity",
         "profit_margin": "net_income_divided_by_revenue",
         "debt_to_equity": "funded_debt_divided_by_equity",
@@ -855,6 +865,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         "roic": "nopat_divided_by_average_invested_capital",
         "revenue_growth_5y": "five_year_revenue_cagr",
         "capex_to_revenue": "capex_divided_by_revenue",
+        "interest_coverage": "operating_income_divided_by_interest_expense",
         "margin_trend": "five_year_operating_margin_ols_slope",
         "debt_growth_3y": "three_year_funded_debt_cagr",
         "dividend_per_share": "reported_annual_common_dividend_per_share",
@@ -865,11 +876,14 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         inputs = metric_inputs.get(name, ())
         reason = None
         if value is None:
-            reason = (
-                free_cash_flow_reason
-                if name == "free_cash_flow" and free_cash_flow_reason
-                else "required_inputs_unavailable"
-            )
+            if name in {"roe", "debt_to_equity"} and equity is not None and equity <= 0:
+                reason = "nonpositive_equity_not_meaningful"
+            else:
+                reason = (
+                    free_cash_flow_reason
+                    if name == "free_cash_flow" and free_cash_flow_reason
+                    else "required_inputs_unavailable"
+                )
         elif not inputs:
             value = None
             values[name] = None
@@ -990,6 +1004,7 @@ class SECFundamentalsClient:
         as_of: Optional[date] = None,
     ) -> SECFundamentals:
         ticker = ticker.strip().upper()
+        provider_ticker = canonicalize_class_symbol(ticker)
         as_of = as_of or date.today()
         ticker_response = await self._get_response(
             "https://www.sec.gov/files/company_tickers.json"
@@ -1003,7 +1018,7 @@ class SECFundamentalsClient:
             (
                 item
                 for item in ticker_map.values()
-                if str(item.get("ticker", "")).upper() == ticker
+                if str(item.get("ticker", "")).upper() == provider_ticker
             ),
             None,
         )

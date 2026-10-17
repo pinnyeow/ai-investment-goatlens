@@ -95,6 +95,28 @@ async def test_aapl_fundamentals_match_literal_10k_values_with_provenance():
 
 
 @pytest.mark.asyncio
+async def test_dot_class_ticker_uses_sec_hyphen_symbol_and_preserves_ticker_identity():
+    ticker_map = {
+        "0": {"cik_str": 320193, "ticker": "BRK-B", "title": "Berkshire Hathaway"}
+    }
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(
+            ticker_map,
+            load_json("companyfacts_aapl.json"),
+        ),
+    ) as client:
+        result = await client.get_fundamentals(
+            "BRK.B",
+            as_of=date.fromisoformat("2026-10-14"),
+        )
+
+    assert result.ticker == "BRK.B"
+    assert result.cik == "0000320193"
+
+
+@pytest.mark.asyncio
 async def test_sec_derives_multi_year_agent_metrics_without_defaults():
     def duration(year, value):
         return {

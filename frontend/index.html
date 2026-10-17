@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-4JLobWz3z0/YJKEU+st+ouIbUPyHBG3g49wsCKht9uI=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-3mMjJooNr/i21sq1ZM9hwrLZ/+wQWro9H60VSJDDSuA=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2666,7 +2666,7 @@
                 <div class="scoring-card">
                     <h4>Warren Buffett</h4>
                     <div class="style">Value + Quality</div>
-                    <p>ROE &gt;15%, high margins, low debt. Seeks durable moats and owner earnings. Rewards consistent earnings beats.</p>
+                    <p>ROE &gt;15%, high margins, low debt. Seeks durable moats and positive free cash flow. Rewards consistent earnings beats.</p>
                 </div>
                 <div class="scoring-card">
                     <h4>Peter Lynch</h4>
@@ -2730,7 +2730,7 @@
             <div class="search-row">
                 <div class="input-group">
                     <label>Ticker</label>
-                    <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="5">
+                    <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="10" pattern="[A-Za-z0-9]+([.\-][A-Za-z0-9]+)?">
                 </div>
                 <div class="input-group">
                     <label>Time Period</label>
@@ -3026,6 +3026,8 @@
                                 <tr><td rowspan="3">Debt-to-Equity</td><td>≤0.5</td><td>+20</td></tr>
                                 <tr><td>≤1.0</td><td>+10</td></tr>
                                 <tr><td>&gt;1.0</td><td>-20</td></tr>
+                                <tr><td rowspan="2">Free Cash Flow</td><td>Positive</td><td>+15</td></tr>
+                                <tr><td>Negative</td><td>-20</td></tr>
                                 <tr><td rowspan="3">Earnings Consistency</td><td>Beat rate ≥80%</td><td>+10</td></tr>
                                 <tr><td>Beat rate ≥60%</td><td>+5</td></tr>
                                 <tr><td>4+ consecutive beats</td><td>+5</td></tr>
@@ -3225,10 +3227,8 @@
                                 <tr><td>Diversification</td><td>Based on correlation</td><td>Up to +20 (scaled)</td></tr>
                                 <tr><td rowspan="2">Debt Cycle</td><td>Sustainable leverage</td><td>+15</td></tr>
                                 <tr><td>Unsustainable leverage</td><td>-20</td></tr>
-                                <tr><td rowspan="4">Cycle Phase</td><td>Moderate growth</td><td>+10</td></tr>
+                                <tr><td rowspan="2">Cycle Phase</td><td>Moderate growth</td><td>+10</td></tr>
                                 <tr><td>Expansion</td><td>+5</td></tr>
-                                <tr><td>Deleveraging</td><td>-5</td></tr>
-                                <tr><td>Aggressive deleveraging</td><td>-15</td></tr>
                                 <tr><td rowspan="3">Beta</td><td>0.8-1.2</td><td>+15</td></tr>
                                 <tr><td>0.5-1.5</td><td>+10</td></tr>
                                 <tr><td>Other</td><td>-10</td></tr>
@@ -3256,7 +3256,7 @@
 
     <footer>
         <p class="disclaimer">
-            Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Fundamentals come from SEC filings; market enrichment comes from Yahoo Finance when available.
+            Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Fundamentals come from SEC filings; Yahoo Finance market data is an unofficial, best-effort source with no SLA.
         </p>
     </footer>
 
@@ -3275,7 +3275,7 @@
         
         // Score tooltips for each investor
         const investorTooltips = {
-            'Warren Buffett': 'Buffett scores based on ROE (25pts), profit margins (20pts), debt levels (20pts), and earnings consistency (15pts). Loves durable competitive advantages.',
+            'Warren Buffett': 'Buffett scores based on ROE (25pts), profit margins (20pts), debt levels (20pts), free cash flow (+15/-20pts), and earnings consistency (15pts). Loves durable competitive advantages.',
             'Peter Lynch': 'Lynch scores PEG ratio (35pts), growth rate (25pts), institutional ownership (15pts), and ten-bagger potential (25pts). Seeks growth at fair prices.',
             'Benjamin Graham': 'Graham scores margin of safety (40pts), P/E ratio (20pts), current ratio (15pts), and dividend history (15pts). Demands deep value.',
             'Charlie Munger': 'Munger scores business quality (100pts base) minus red flags (-20 each). Focuses on avoiding mistakes and finding quality.',
@@ -3479,6 +3479,11 @@
                 showError('Please enter a ticker symbol');
                 return;
             }
+            const tickerPattern = /^(?=.{1,10}$)[A-Z0-9]+(?:[.-][A-Z0-9]+)?$/;
+            if (!tickerPattern.test(ticker)) {
+                showError('Ticker must be 1-10 letters or digits with one optional . or -');
+                return;
+            }
 
             if (selectedInvestors.length === 0) {
                 showError('Please select at least one investor');
@@ -3564,10 +3569,11 @@
                 name.textContent = metric.replaceAll('_', ' ');
                 const detail = document.createElement('div');
                 const asOf = evidence.as_of ? ` · as of ${evidence.as_of}` : '';
+                const filedAt = evidence.filed_at ? ` · filed ${evidence.filed_at}` : '';
                 const observations = evidence.observation_count != null
                     ? ` · ${evidence.observation_count} observations`
                     : '';
-                detail.textContent = `${evidence.value} · ${evidence.source} · ${evidence.formula} (${evidence.formula_version})${asOf}${observations}`;
+                detail.textContent = `${evidence.value} · ${evidence.source} · ${evidence.formula} (${evidence.formula_version})${asOf}${filedAt}${observations}`;
                 row.append(name, detail);
                 (evidence.inputs || []).forEach(input => {
                     const inputDetail = document.createElement('div');
@@ -3578,8 +3584,6 @@
                         inputDetail.textContent = `${input.role} (${input.symbol}): ${input.value} · observed ${input.observed_at}`;
                     } else if (input.kind === 'market_series') {
                         inputDetail.textContent = `${input.role} (${input.symbol}): ${input.observation_count} observations · ${input.start} to ${input.end}`;
-                    } else if (input.kind === 'provider_metric') {
-                        inputDetail.textContent = `${input.role} (${input.symbol}): ${input.provider_field} = ${input.value} · retrieved ${input.retrieved_at}`;
                     }
                     row.append(inputDetail);
                 });
@@ -3959,7 +3963,7 @@
                 // Set price data
                 const priceData = data.prices.map(p => ({
                     time: p.date,
-                    value: p.close,
+                    value: p.adjusted_close,
                 }));
                 areaSeries.setData(priceData);
 
@@ -4464,7 +4468,7 @@
                 // No more confusing "Context / Prior" column with mixed meanings
                 let tableRows = '';
 
-                // Row 1: EPS — always present (Yahoo)
+                // Row 1: EPS — render only when reported by the earnings endpoint
                 const epsSurprise = ins.eps_surprise_pct != null
                     ? ` <span class="metric-context"><span class="${pctClass(ins.eps_surprise_pct)}">${fmtPct(ins.eps_surprise_pct)} vs est ${epsEstimate}</span></span>`
                     : (ins.eps_estimate != null ? ` <span class="metric-context">est ${epsEstimate}</span>` : '');

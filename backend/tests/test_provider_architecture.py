@@ -78,7 +78,7 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '"ticker":"AMZN"' in workflow
     assert "revenue_minus_cost_of_revenue_divided_by_revenue" in workflow
     assert "not evidence['dividend_yield']['available']" in workflow
-    assert "assert ratios['available'] or" in workflow
+
     assert "evidence['earnings_turnaround']['value'] == 1.0" in workflow
     assert "evidence['earnings_growth']['value'] is None" in workflow
     assert '"agents":["buffett","lynch","graham","munger","dalio"]' in workflow
@@ -91,11 +91,61 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '[[ "$BODY" == *' not in workflow
 
 
+def test_repository_requires_explicit_deployment_and_canary_gate():
+    render = (ROOT / "render.yaml").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "smoke-tests.yml").read_text()
+
+    assert "autoDeploy: false" in render
+    assert "push:" not in workflow
+    assert "workflow_dispatch:" in workflow
+    assert "schedule:" in workflow
+    assert "EXPECTED_SHA: ${{ inputs.expected_sha }}" in workflow
+    assert "EXPECTED_SHA: ${{ github.sha }}" not in workflow
+    assert "if: ${{ github.event_name == 'workflow_dispatch' }}" in workflow
+
+
+def test_frontend_plots_explicit_adjusted_close_history():
+    frontend = (ROOT / "frontend" / "index.html").read_text()
+
+    assert "value: p.adjusted_close" in frontend
+    assert "value: p.close" not in frontend
+
+
+def test_unreleased_adjusted_close_change_stays_in_0_2_0_migration():
+    note = ROOT / "docs" / "migrations" / "0.2.0-ratio-contract-removal.md"
+    superseding_note = ROOT / "docs" / "migrations" / "0.2.1-adjusted-price-history.md"
+
+    content = note.read_text()
+    assert "adjusted_close" in content
+    assert "close" in content
+    assert "additive" in content.lower()
+    assert not superseding_note.exists()
+    with TestClient(main.app) as client:
+        schema = client.get("/openapi.json").json()
+    assert schema["info"]["version"] == "0.2.0"
+
+
 def test_frontend_defines_agreement_as_directional_support():
     frontend = (ROOT / "frontend" / "index.html").read_text()
 
     assert "Directional Support" in frontend
     assert "GOAT Agreement" not in frontend
+
+
+def test_frontend_labels_sec_period_end_and_filing_date_separately():
+    frontend = (ROOT / "frontend" / "index.html").read_text()
+
+    assert "as of ${evidence.as_of}" in frontend
+    assert "filed ${evidence.filed_at}" in frontend
+
+
+def test_yahoo_unofficial_best_effort_risk_is_disclosed_in_docs_and_ui():
+    docs = (ROOT / "docs" / "agent-data-contracts.md").read_text().lower()
+    frontend = (ROOT / "frontend" / "index.html").read_text().lower()
+
+    for phrase in ("unofficial", "best-effort", "no sla", "public-use risk"):
+        assert phrase in docs
+    assert "unofficial, best-effort source with no sla" in frontend
 
 
 def test_no_unproven_synthetic_demo_claims_remain():
@@ -107,28 +157,67 @@ def test_no_unproven_synthetic_demo_claims_remain():
     assert "Demo API returns valid data" not in workflow
 
 
-def test_core_runtime_does_not_call_broad_yfinance_adapter():
-    backend = (ROOT / "backend" / "main.py").read_text()
-    assert "YahooFinanceClient" not in backend
-    assert "YahooFinanceError" not in backend
+def _assert_removed_ratio_surface_absent(root):
+    forbidden = (
+        "yfinance",
+        "get_info",
+        "yahooratiosclient",
+        "provider_metric",
+        "normalized_ratios",
+        "quote-summary",
+    )
+    permitted = root / "docs" / "migrations" / "0.2.0-ratio-contract-removal.md"
+    for path in _provider_isolation_paths(root):
+        relative_parts = path.relative_to(root).parts
+        if path == permitted or relative_parts[:2] == ("backend", "tests"):
+            continue
+        content = path.read_text(errors="replace").lower()
+        for token in forbidden:
+            assert token.lower() not in content, f"{token}: {path}"
 
 
-def test_only_narrow_yahoo_ratio_adapter_has_yfinance_runtime_footprint():
-    requirements = (ROOT / "backend" / "requirements.txt").read_text().lower()
-    assert "yfinance==1.2.0" in requirements
-    assert not (ROOT / "backend" / "data_sources" / "yahoo.py").exists()
-    adapter = (ROOT / "backend" / "data_sources" / "yahoo_ratios.py").read_text()
-    assert "income_stmt" not in adapter
-    assert "balance_sheet" not in adapter
-    assert "cashflow" not in adapter
-    assert "get_info()" in adapter
-
-
-def test_frontend_renders_typed_yahoo_ratio_provenance():
+def test_shipped_architecture_and_frontend_describe_the_narrow_yahoo_boundary():
+    architecture = (ROOT / "ARCHITECTURE.md").read_text()
     frontend = (ROOT / "frontend" / "index.html").read_text()
-    assert "input.kind === 'provider_metric'" in frontend
-    assert "input.provider_field" in frontend
-    assert "input.retrieved_at" in frontend
+    prd = (ROOT / "PRD.md").read_text()
+
+    assert "backend/data_sources/yahoo_chart.py" in architecture
+    assert "backend/data_sources/yahoo.py" not in architecture
+    assert "market/earnings/analyst enrichment" not in architecture
+    assert "earnings, and analyst context" not in architecture
+    assert "earnings, and analyst context" not in prd
+    assert "volume, earnings, and analyst estimates" not in prd
+    assert "current price and adjusted price history" in prd
+    assert "owner earnings" not in prd.lower()
+    assert "free cash flow" in prd.lower()
+    assert "EPS — always present (Yahoo)" not in frontend
+    assert "EPS — render only when reported" in frontend
+
+
+def test_runtime_uses_only_the_narrow_yahoo_chart_boundary():
+    assert not (ROOT / "backend" / "data_sources" / "yahoo.py").exists()
+    assert not (ROOT / "backend" / "data_sources" / "yahoo_ratios.py").exists()
+    _assert_removed_ratio_surface_absent(ROOT)
+    with TestClient(main.app) as client:
+        openapi = client.get("/openapi.json").text.lower()
+    assert "normalized_ratios" not in openapi
+    assert "provider_metric" not in openapi
+    for shipped_doc in (ROOT / "README.md", ROOT / "docs" / "agent-data-contracts.md"):
+        content = shipped_doc.read_text().lower()
+        assert "yfinance" not in content
+        assert "provider-normalized" not in content
+
+
+def test_versioned_breaking_change_ships_a_migration_note():
+    note = ROOT / "docs" / "migrations" / "0.2.0-ratio-contract-removal.md"
+    with TestClient(main.app) as client:
+        schema = client.get("/openapi.json").json()
+
+    assert schema["info"]["version"] == "0.2.0"
+    content = note.read_text()
+    assert "data_status.normalized_ratios" in content
+    assert "provider_metric" in content
+    assert "removed" in content.lower()
 
 
 def test_frontend_third_party_scripts_are_integrity_pinned_and_csp_limited():
@@ -255,53 +344,59 @@ def test_public_models_reject_extra_fields_and_numeric_coercion():
         )
 
 
-def test_every_strategy_required_metric_has_one_public_evidence_contract():
+def test_every_consumed_strategy_metric_has_one_central_contract():
     expected = {
-        "buffett": ("roe", "profit_margin", "debt_to_equity", "free_cash_flow"),
-        "lynch": (
-            "pe_ratio",
-            "earnings_growth",
-            "debt_to_equity",
-        ),
-        "graham": (
-            "pe_ratio",
-            "pb_ratio",
-            "current_ratio",
-            "current_price",
-            "current_assets",
-            "total_liabilities",
-            "shares_outstanding",
-            "eps",
-            "book_value_per_share",
-        ),
-        "munger": (
-            "gross_margin",
-            "operating_margin",
-            "revenue_growth_5y",
-            "capex_to_revenue",
-            "debt_to_equity",
-            "margin_trend",
-        ),
-        "dalio": (
-            "beta",
-            "volatility_252d",
-            "debt_to_equity",
-            "correlation_sp500",
-            "realized_total_return_252d",
-        ),
+        "buffett": {
+            "agent": "Warren Buffett",
+            "mandatory": ("roe", "profit_margin", "debt_to_equity", "free_cash_flow"),
+            "optional": (),
+        },
+        "lynch": {
+            "agent": "Peter Lynch",
+            "mandatory": ("pe_ratio", "earnings_growth", "debt_to_equity"),
+            "optional": ("institutional_ownership", "cash_and_equivalents"),
+        },
+        "graham": {
+            "agent": "Benjamin Graham",
+            "mandatory": (
+                "pe_ratio", "pb_ratio", "current_ratio", "current_price",
+                "current_assets", "total_liabilities", "shares_outstanding", "eps",
+                "book_value_per_share",
+            ),
+            "optional": ("dividend_yield", "consecutive_dividend_years"),
+        },
+        "munger": {
+            "agent": "Charlie Munger",
+            "mandatory": (
+                "gross_margin", "operating_margin", "revenue_growth_5y",
+                "capex_to_revenue", "debt_to_equity", "margin_trend",
+            ),
+            "optional": ("roic", "insider_ownership"),
+        },
+        "dalio": {
+            "agent": "Ray Dalio",
+            "mandatory": (
+                "beta", "volatility_252d", "debt_to_equity",
+                "correlation_sp500", "realized_total_return_252d",
+            ),
+            "optional": ("interest_coverage", "debt_growth_3y"),
+        },
     }
 
-    assert main._AGENT_REQUIRED_METRICS == expected
-    required = {metric for metrics in expected.values() for metric in metrics}
-    optional = {
-        "cash_and_equivalents",
-        "dividend_yield",
-        "consecutive_dividend_years",
-        "roic",
-        "debt_growth_3y",
-        "earnings_turnaround",
+    assert main._AGENT_CONSUMPTION_CONTRACTS == expected
+    assert main._AGENT_REQUIRED_METRICS == {
+        agent: contract["mandatory"] for agent, contract in expected.items()
     }
-    assert set(main._METRIC_EVIDENCE_CONTRACTS) == required | optional
+    evidence_backed = {
+        metric
+        for contract in expected.values()
+        for metric in contract["mandatory"] + contract["optional"]
+        if metric not in {"institutional_ownership", "insider_ownership"}
+    }
+    non_agent_public_metrics = {"earnings_turnaround", "market_cap", "ps_ratio"}
+    assert set(main._METRIC_EVIDENCE_CONTRACTS) == (
+        evidence_backed | non_agent_public_metrics
+    )
 
 
 def test_aligned_market_metrics_use_the_aligned_window_end_as_as_of():
