@@ -4,18 +4,18 @@ This document defines the evidence required for a strategy to return a score and
 
 ## Shared rules
 
-- SEC EDGAR Company Facts is authoritative for U.S. filing facts and historical series. Allowlisted Yahoo ratios are provider-normalized analytical values rather than replacements for the underlying filing facts.
-- Yahoo is best-effort enrichment through two isolated adapters: the direct chart endpoint supplies timestamped prices and adjusted price history, while a narrow `yfinance` adapter supplies only allowlisted provider-normalized current ratios. GOATlens does not ingest Yahoo financial statements.
+- SEC EDGAR Company Facts is authoritative for U.S. filing facts and historical series.
+- Yahoo is a narrow, best-effort market boundary: the direct chart endpoint supplies timestamped current prices and adjusted price history. GOATlens does not ingest Yahoo financial statements or normalized ratios.
 - Derived metrics carry their formula version, source timestamps, filing periods, and input provenance.
 - A reported zero is valid only when the source explicitly reports zero. Absence is unavailable.
 - Inputs combined within one derivation period must share the applicable full filing context: duration facts share start, end, accession, form, filing date, and fiscal year; instant facts share end, accession, form, filing date, and fiscal year. Multi-period formulas may compare internally compatible period groups from different annual filings; an unrelated revenue fact may locate fiscal chronology but is not forced into a debt derivation's filing context.
 - Restatements supersede older facts. Equally ranked incompatible contexts fail closed.
 - Industrial-company formulas are not silently applied to banks or insurers.
-- Optional modifiers may improve or reduce a strategy score only when present. Their absence cannot be interpreted favorably.
+- Optional modifiers may improve or reduce a strategy score only when present. Their absence cannot be interpreted favorably. A completed result's `required_metric_values` is the exact set of available numeric metrics the strategy consumed, including optional context used for scoring, branches, insights, or concerns; unavailable optional metrics are omitted, and missing, mismatched, or extra keys invalidate the response.
 
 ## Contract inventory
 
-The primary strategy contract contains **27 required strategy slots across five agents, representing 23 unique metrics** after shared metrics are deduplicated. Lynch's SEC-backed turnaround branch substitutes `earnings_turnaround` for `earnings_growth`, expanding the union of executable required metrics to 24. This replaces the 36-field legacy inventory: institutional ownership, management beneficial ownership, unscaled cash balance, industrial interest coverage, current dividend yield, dividend-history length, approximate ROIC, historical debt growth, and revenue variability are optional context rather than completeness requirements. Fabricated expected return was removed and replaced by required trailing realized return. The executable inventory is `_AGENT_REQUIRED_METRICS`, and every required or optional scored metric must have exactly one typed public metric-evidence contract.
+The primary strategy contract contains **27 mandatory strategy slots across five agents, representing 23 unique metrics** after shared metrics are deduplicated. Lynch's SEC-backed turnaround branch substitutes `earnings_turnaround` for `earnings_growth`, expanding the union of executable mandatory metrics to 24. The centralized executable inventory is `_AGENT_CONSUMPTION_CONTRACTS`; it distinguishes mandatory completion evidence from optional-but-consumed evidence. This replaces the 36-field legacy inventory: institutional ownership, management beneficial ownership, unscaled cash balance, industrial interest coverage, current dividend yield, dividend-history length, approximate ROIC, historical debt growth, and revenue variability are optional context rather than completeness requirements. Fabricated expected return was removed and replaced by required trailing realized return. Every available consumed metric must have exactly one typed public metric-evidence contract.
 
 ## Buffett
 
@@ -32,7 +32,7 @@ The current cash-flow metric is `operating cash flow - capital expenditures` and
 
 Required evidence:
 
-- provider-normalized trailing price-to-earnings ratio when available, otherwise timestamped market price divided by compatible SEC diluted EPS;
+- timestamped market price divided by compatible SEC diluted EPS;
 - positive multi-year earnings growth, or an SEC-backed negative-to-positive earnings-turnaround flag when CAGR is mathematically undefined;
 - debt to equity.
 
@@ -46,10 +46,9 @@ Required evidence:
 - SEC diluted EPS and period-end common shares;
 - SEC common equity, current assets, current liabilities, and total liabilities.
 
-Ratio and derived-value precedence:
+Ratio and derived-value formulas:
 
-- Yahoo provider-normalized P/E, P/B, current ratio, and current dividend yield take precedence when present because their accounting basis is provider-normalized. Their evidence is labeled Yahoo and is not presented as SEC annual-period data.
-- `P/E = price / diluted EPS`, only for positive EPS, is the SEC-plus-price fallback;
+- `P/E = price / diluted EPS`, only for positive EPS;
 - `book value per share = common equity / period-end common shares`;
 - `P/B = price / book value per share`, only for positive book value;
 - `current ratio = current assets / current liabilities`;
@@ -57,7 +56,7 @@ Ratio and derived-value precedence:
 - trailing-FY dividend yield = latest completed-FY common DPS / timestamped price;
 - consecutive dividend years = uninterrupted completed fiscal years with positive common DPS.
 
-The dividend record uses the declared common-dividend-per-share concept first. A provider-reported current yield of zero is a known non-dividend payer and fails the dividend criterion without invalidating the analysis. Current yield and dividend-history length are optional criteria: missing evidence earns no points, is disclosed publicly, and does not invalidate an otherwise supported Graham analysis. When history is available, the defensive-investor threshold is twenty years and must not silently relax to ten. Missing dividend facts remain unavailable, not zero.
+The dividend record uses the declared common-dividend-per-share concept first. A reported SEC dividend per share of zero produces a known zero trailing-FY yield and fails the dividend criterion without invalidating the analysis. Current yield and dividend-history length are optional criteria: missing evidence earns no points, is disclosed publicly, and does not invalidate an otherwise supported Graham analysis. When history is available, the defensive-investor threshold is twenty years and must not silently relax to ten. Missing dividend facts remain unavailable, not zero.
 
 ## Munger
 
@@ -81,7 +80,7 @@ Approximate accounting ROIC is an optional quality signal, not a completeness bl
 
 Operating-margin trend is the ordinary-least-squares slope of five consecutive annual operating margins, expressed as decimal change per fiscal year.
 
-Yahoo provider-normalized gross margin takes precedence when available. If the ratio adapter is unavailable and reported SEC gross profit is absent, gross margin may be derived only from compatible facts in the same filing context as `(revenue - cost of revenue) / revenue`; the evidence exposes both facts and the fallback formula.
+Gross margin uses compatible SEC gross profit and revenue when reported. If reported gross profit is absent, it may be derived only from compatible facts in the same filing context as `(revenue - cost of revenue) / revenue`; the evidence exposes both facts and the versioned formula.
 
 ## Dalio
 
@@ -107,27 +106,25 @@ Debt reduction is not automatically distress. Debt trend is reported with levera
 
 Three-year funded-debt CAGR is optional historical context. When absent, Dalio may assess current leverage and market risk, but the public insight must label debt trajectory unavailable and must not infer a trend.
 
-## Yahoo normalized-ratio contract
-
-The ratio adapter consumes only `trailingPE`, `priceToBook`, `currentRatio`, `trailingAnnualDividendYield`, `returnOnEquity`, `profitMargins`, `grossMargins`, `operatingMargins`, and `debtToEquity`. Yahoo `debtToEquity` is converted from percentage units to a decimal. Missing, boolean, or non-finite values remain unavailable; zero remains a valid reported value. No forward-P/E substitution, beta default, ROCE-to-ROIC mapping, Yahoo statement ingestion, or arbitrary-period growth label is allowed.
-
-Each ratio exposes the provider field, retrieved timestamp, value, availability, and `yahoo_quote_summary_v1` normalization version. Yahoo does not provide a reliable accounting-period end for these fields, so no filing-period `as_of` is invented; the retrieval timestamp and provider basis remain explicit. Ratio retrieval has an eight-second deadline and is cached, bounded, coalesced, and isolated: failure cannot erase SEC facts or Yahoo chart evidence. `data_status.normalized_ratios` distinguishes provider failure from field-level omission.
-
-Yahoo Finance is an undocumented, best-effort source without an application SLA. Cookie/crumb behavior, throttling, schema drift, and field omissions may break retrieval. `yfinance` states that Yahoo data is intended for personal use; public or commercial deployment requires product-owner/legal acceptance or migration to a provider whose license grants the intended use.
-
 ## Yahoo chart contract
+
+Yahoo Finance is an unofficial, best-effort dependency with no SLA. Schema
+drift, throttling, and outages may make market evidence unavailable. Its use in
+a public product carries public-use risk; this temporary MVP dependency still
+requires product-owner and legal acceptance or migration to a licensed source.
 
 Per uncached analysis, request at most:
 
 1. the selected symbol; and
 2. `^GSPC`.
 
-Use `range=2y`, `interval=1d`, `events=div,splits`, and no pre/post-market bars. Do not invoke crumb-authenticated quote-summary endpoints.
+Use `range=2y`, `interval=1d`, `events=div,splits`, and no pre/post-market bars. Do not invoke normalized-fundamentals endpoints.
 
 The normalized response includes:
 
-- provider and fetch timestamp;
+- provider and retrieval timestamp, kept distinct from observation time;
 - quote timestamp and currency;
+- process-local cache age and an explicit fresh/stale/unknown label;
 - current regular-market price;
 - raw and adjusted daily closes;
 - observation counts;

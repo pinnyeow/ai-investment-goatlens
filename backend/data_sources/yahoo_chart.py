@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import math
 import re
@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from curl_cffi import requests as curl_requests
+
+from data_sources.symbols import canonicalize_class_symbol
 
 
 class YahooChartError(Exception):
@@ -57,6 +59,14 @@ class YahooPricePoint:
 
 
 @dataclass(frozen=True)
+class YahooSplitEvent:
+    effective_date: str
+    timestamp: int
+    numerator: float
+    denominator: float
+
+
+@dataclass(frozen=True)
 class YahooChartSnapshot:
     symbol: str
     currency: str
@@ -74,6 +84,9 @@ class YahooChartSnapshot:
     metric_session_end: Optional[str]
     aligned_metric_session_start: Optional[str]
     aligned_metric_session_end: Optional[str]
+    cache_age_seconds: float = 0.0
+    benchmark_history: List[YahooPricePoint] = field(default_factory=list)
+    split_events: List[YahooSplitEvent] = field(default_factory=list)
     status: str = "complete"
     errors: List[str] = field(default_factory=list)
 
@@ -81,8 +94,10 @@ class YahooChartSnapshot:
 _CACHE_TTL_SECONDS = 300.0
 _MAX_CACHE_ENTRIES = 128
 _MAX_INFLIGHT_SNAPSHOTS = 32
+_SNAPSHOT_DEADLINE_SECONDS = 18.0
 _SNAPSHOT_CACHE: OrderedDict[str, Tuple[float, YahooChartSnapshot]] = OrderedDict()
 _INFLIGHT_SNAPSHOTS: Dict[Tuple[int, str], asyncio.Task] = {}
+_INFLIGHT_ASSETS: Dict[Tuple[int, str], Dict[str, Any]] = {}
 _SNAPSHOT_CACHE_LOCK = threading.Lock()
 _CACHE_GENERATION = 0
 
@@ -94,6 +109,7 @@ def clear_chart_cache() -> None:
         _CACHE_GENERATION += 1
         _SNAPSHOT_CACHE.clear()
         _INFLIGHT_SNAPSHOTS.clear()
+        _INFLIGHT_ASSETS.clear()
 
 
 class YahooChartClient:
@@ -112,6 +128,7 @@ class YahooChartClient:
         self._session = session or curl_requests.Session()
         self._owns_session = session is None
         self._now = now or (lambda: datetime.now(timezone.utc))
+        self._snapshot_tasks = set()
 
     async def __aenter__(self):
         return self
@@ -121,13 +138,24 @@ class YahooChartClient:
 
     async def close(self):
         if self._owns_session:
-            await asyncio.to_thread(self._session.close)
+            pending = [task for task in self._snapshot_tasks if not task.done()]
+            if pending:
+                session = self._session
+                self._owns_session = False
+
+                async def close_after_provider_work():
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    await asyncio.to_thread(session.close)
+
+                asyncio.create_task(close_after_provider_work())
+            else:
+                await asyncio.to_thread(self._session.close)
 
     def _normalized_symbol(self, symbol: str) -> str:
         normalized = symbol.strip().upper()
         if not self._SYMBOL.fullmatch(normalized):
             raise YahooChartInvalidSymbol("The market symbol is invalid.")
-        return normalized
+        return canonicalize_class_symbol(normalized)
 
     def _validate_observation_times(
         self, quote_time: datetime, latest_session: datetime
@@ -197,6 +225,7 @@ class YahooChartClient:
             closes = quote_data["close"]
             volumes = quote_data["volume"]
             adjusted = result["indicators"]["adjclose"][0]["adjclose"]
+            raw_splits = result.get("events", {}).get("splits", {})
         except YahooChartError:
             raise
         except (IndexError, KeyError, TypeError, ValueError):
@@ -223,6 +252,51 @@ class YahooChartClient:
         if any(type(timestamp) is not int for timestamp in timestamps) or any(
             later <= earlier for earlier, later in zip(timestamps, timestamps[1:])
         ):
+            raise YahooChartMalformedResponse(
+                "Market data returned an invalid response."
+            )
+
+        if not isinstance(raw_splits, dict):
+            raise YahooChartMalformedResponse(
+                "Market data returned an invalid response."
+            )
+        split_events = []
+        try:
+            for event in raw_splits.values():
+                timestamp = event["date"]
+                numerator = event["numerator"]
+                denominator = event["denominator"]
+                if (
+                    type(timestamp) is not int
+                    or type(numerator) not in (int, float)
+                    or type(denominator) not in (int, float)
+                ):
+                    raise ValueError
+                numerator = float(numerator)
+                denominator = float(denominator)
+                if (
+                    not math.isfinite(numerator)
+                    or not math.isfinite(denominator)
+                    or numerator <= 0
+                    or denominator <= 0
+                ):
+                    raise ValueError
+                split_events.append(
+                    YahooSplitEvent(
+                        effective_date=datetime.fromtimestamp(
+                            timestamp, timezone.utc
+                        ).date().isoformat(),
+                        timestamp=timestamp,
+                        numerator=numerator,
+                        denominator=denominator,
+                    )
+                )
+        except (KeyError, OSError, OverflowError, TypeError, ValueError):
+            raise YahooChartMalformedResponse(
+                "Market data returned an invalid response."
+            ) from None
+        split_events.sort(key=lambda item: item.timestamp)
+        if len({item.timestamp for item in split_events}) != len(split_events):
             raise YahooChartMalformedResponse(
                 "Market data returned an invalid response."
             )
@@ -313,6 +387,7 @@ class YahooChartClient:
                 quote_timestamp, timezone.utc
             ).isoformat(),
             "points": points,
+            "split_events": split_events,
         }
 
     @staticmethod
@@ -390,6 +465,10 @@ class YahooChartClient:
                         "Market data returned an invalid response."
                     ) from None
                 _SNAPSHOT_CACHE.move_to_end(symbol)
+                if isinstance(cached[1], YahooChartSnapshot):
+                    return replace(
+                        cached[1], cache_age_seconds=max(0.0, now - cached[0])
+                    )
                 return cached[1]
             loop = asyncio.get_running_loop()
             inflight_key = (id(loop), symbol)
@@ -401,9 +480,11 @@ class YahooChartClient:
                     )
                 generation = _CACHE_GENERATION
                 task = loop.create_task(self._get_snapshot_uncached(symbol))
+                self._snapshot_tasks.add(task)
                 _INFLIGHT_SNAPSHOTS[inflight_key] = task
 
                 def complete(done_task):
+                    self._snapshot_tasks.discard(done_task)
                     try:
                         result = done_task.result()
                     except (BaseException, asyncio.CancelledError):
@@ -415,6 +496,7 @@ class YahooChartClient:
                         )
                         if is_current:
                             _INFLIGHT_SNAPSHOTS.pop(inflight_key, None)
+                            _INFLIGHT_ASSETS.pop(inflight_key, None)
                         if is_current and result is not None:
                             _SNAPSHOT_CACHE[symbol] = (time.monotonic(), result)
                             _SNAPSHOT_CACHE.move_to_end(symbol)
@@ -424,7 +506,20 @@ class YahooChartClient:
                 task.add_done_callback(complete)
 
         try:
-            return await asyncio.shield(task)
+            return await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=_SNAPSHOT_DEADLINE_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            with _SNAPSHOT_CACHE_LOCK:
+                asset = _INFLIGHT_ASSETS.get(inflight_key)
+            if asset is not None:
+                return self._build_snapshot(
+                    asset, None, ["benchmark_deadline_exceeded"]
+                )
+            raise YahooChartTemporarilyUnavailable(
+                "Market data is temporarily unavailable."
+            ) from None
         except asyncio.CancelledError:
             try:
                 await asyncio.shield(task)
@@ -433,7 +528,46 @@ class YahooChartClient:
             raise
 
     async def _get_snapshot_uncached(self, symbol: str) -> YahooChartSnapshot:
+        started = time.monotonic()
         asset = await asyncio.to_thread(self._fetch_chart, symbol)
+        inflight_key = (id(asyncio.get_running_loop()), symbol)
+        with _SNAPSHOT_CACHE_LOCK:
+            if _INFLIGHT_SNAPSHOTS.get(inflight_key) is asyncio.current_task():
+                _INFLIGHT_ASSETS[inflight_key] = asset
+
+        errors: List[str] = []
+        remaining = _SNAPSHOT_DEADLINE_SECONDS - (time.monotonic() - started)
+        scheduling_reserve = min(0.05, _SNAPSHOT_DEADLINE_SECONDS * 0.2)
+        if remaining <= scheduling_reserve:
+            benchmark = None
+            errors.append("benchmark_deadline_exceeded")
+        else:
+            benchmark_task = asyncio.create_task(
+                asyncio.to_thread(self._fetch_chart, "^GSPC")
+            )
+            self._snapshot_tasks.add(benchmark_task)
+
+            def benchmark_complete(done_task):
+                self._snapshot_tasks.discard(done_task)
+                if not done_task.cancelled():
+                    done_task.exception()
+
+            benchmark_task.add_done_callback(benchmark_complete)
+            done, _ = await asyncio.wait(
+                {benchmark_task}, timeout=remaining - scheduling_reserve
+            )
+            if not done:
+                benchmark = None
+                errors.append("benchmark_deadline_exceeded")
+            else:
+                try:
+                    benchmark = benchmark_task.result()
+                except YahooChartError:
+                    benchmark = None
+                    errors.append("benchmark_temporarily_unavailable")
+        return self._build_snapshot(asset, benchmark, errors)
+
+    def _build_snapshot(self, asset, benchmark, errors) -> YahooChartSnapshot:
         asset_logs, _, _ = self._returns(asset["points"])
         volatility = (
             statistics.stdev(asset_logs) * math.sqrt(252)
@@ -447,13 +581,6 @@ class YahooChartClient:
             if len(asset_logs) == 252
             else None
         )
-
-        errors: List[str] = []
-        try:
-            benchmark = await asyncio.to_thread(self._fetch_chart, "^GSPC")
-        except YahooChartError:
-            benchmark = None
-            errors.append("benchmark_temporarily_unavailable")
 
         if benchmark is None:
             beta = None
@@ -491,6 +618,8 @@ class YahooChartClient:
             ),
             aligned_metric_session_start=aligned_start,
             aligned_metric_session_end=aligned_end,
+            benchmark_history=(benchmark["points"] if benchmark is not None else []),
+            split_events=asset["split_events"],
             status="partial" if errors else "complete",
             errors=errors,
         )

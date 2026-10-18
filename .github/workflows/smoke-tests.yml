@@ -1,11 +1,14 @@
 name: Smoke Tests
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '17 15 * * *' # daily live dependency canary
-  workflow_dispatch: # allow manual trigger
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact deployed commit SHA to verify
+        required: true
+        type: string
 
 concurrency:
   group: smoke-${{ github.ref }}
@@ -16,8 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for the expected Render release
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
-          EXPECTED_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           for ATTEMPT in {1..30}; do
             BODY=$(curl --silent --show-error --max-time 5 \
@@ -70,7 +74,7 @@ jobs:
           echo "$BODY" | grep -q '"revenue":{"value":416161000000' || (echo "FAIL: SEC revenue literal missing" && exit 1)
           echo "$BODY" | grep -q '"accession":"0000320193-25-000079"' || (echo "FAIL: SEC provenance missing" && exit 1)
 
-      - name: AMZN turnaround analysis is complete with sourced ratio evidence
+      - name: AMZN turnaround analysis is complete with SEC formula evidence
         run: |
           BODY=$(curl --fail --silent --show-error \
             --max-time 90 \
@@ -78,7 +82,7 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"ticker":"AMZN","agents":["buffett","lynch","graham","munger","dalio"]}')
           echo "AMZN analysis (truncated): ${BODY:0:500}"
-          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); evidence=body['metric_evidence']; ratios=body['data_status']['normalized_ratios']; assert body['ticker'] == 'AMZN'; assert body['consensus_status'] == 'complete'; assert body['completed_analyses'] == body['requested_analyses'] == 5; assert len(body['agent_results']) == 5; assert all(item['status'] == 'complete' and item['score'] is not None and item['verdict'] is not None and not item['unavailable_metrics'] for item in body['agent_results']); assert body['data_status']['fundamentals']['available'] and body['data_status']['fundamentals']['source'] == 'sec'; assert ratios['source'] == 'yahoo'; assert evidence['gross_margin']['available'] and (evidence['gross_margin']['source'], evidence['gross_margin']['formula']) in {('yahoo', 'provider_normalized_ratio'), ('sec', 'revenue_minus_cost_of_revenue_divided_by_revenue')}; assert (evidence['dividend_yield']['available'] and evidence['dividend_yield']['value'] == 0.0 and evidence['dividend_yield']['formula'] == 'provider_normalized_ratio') or (not evidence['dividend_yield']['available'] and evidence['dividend_yield']['value'] is None); assert ratios['available'] or evidence['gross_margin']['formula'] == 'revenue_minus_cost_of_revenue_divided_by_revenue'; assert evidence['earnings_turnaround']['available'] and evidence['earnings_turnaround']['source'] == 'sec' and evidence['earnings_turnaround']['value'] == 1.0; assert not evidence['earnings_growth']['available'] and evidence['earnings_growth']['value'] is None"
+          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); evidence=body['metric_evidence']; assert body['ticker'] == 'AMZN'; assert body['consensus_status'] == 'complete'; assert body['completed_analyses'] == body['requested_analyses'] == 5; assert len(body['agent_results']) == 5; assert all(item['status'] == 'complete' and item['score'] is not None and item['verdict'] is not None and not item['unavailable_metrics'] for item in body['agent_results']); assert body['data_status']['fundamentals']['available'] and body['data_status']['fundamentals']['source'] == 'sec'; assert evidence['gross_margin']['available'] and evidence['gross_margin']['source'] == 'sec' and evidence['gross_margin']['formula'] == 'revenue_minus_cost_of_revenue_divided_by_revenue'; assert not evidence['dividend_yield']['available'] and evidence['dividend_yield']['value'] is None; assert evidence['earnings_turnaround']['available'] and evidence['earnings_turnaround']['source'] == 'sec' and evidence['earnings_turnaround']['value'] == 1.0; assert not evidence['earnings_growth']['available'] and evidence['earnings_growth']['value'] is None"
 
       - name: Report best-effort Yahoo market-data status once
         run: |

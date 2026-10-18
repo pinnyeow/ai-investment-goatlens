@@ -23,7 +23,7 @@ Conflicting aliases fail closed. Derived liabilities require matching period end
 
 ### Yahoo Finance — best-effort market enrichment
 
-`backend/data_sources/yahoo.py` supplies current/latest price, price history, volume, earnings, and analyst context. Its data is optional for the SEC fundamentals path. Market status includes a source and fetch timestamp.
+`backend/data_sources/yahoo_chart.py` is the only Yahoo boundary. It supplies a timestamped current regular-market price, adjusted daily price history, split events, and price-series risk inputs. It does not supply financial statements, normalized ratios, earnings, or analyst context. Its data is optional for the SEC fundamentals path. Public market status separates observation time from retrieval time and includes quote currency, cache age, and freshness.
 
 When Yahoo is unavailable:
 
@@ -62,7 +62,7 @@ SEC errors stop before Yahoo because market data cannot substitute for authorita
 ```text
 backend/main.py                  API and LangGraph orchestration
 backend/data_sources/sec.py      filing fundamentals and provenance
-backend/data_sources/yahoo.py    market/earnings/analyst enrichment
+backend/data_sources/yahoo_chart.py  narrow price/history market boundary
 backend/agents/                  investor-specific scoring
 backend/temporal/                current-period moat assessment
 backend/tests/fixtures/sec/      reduced Company Facts fixtures

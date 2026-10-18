@@ -1,7 +1,10 @@
 import json
 import asyncio
+import copy
 import importlib
+import os
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -9,6 +12,56 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 import main
+
+
+@lru_cache(maxsize=1)
+def legitimate_five_agent_payload():
+    from tests.test_sec_market_split import (
+        FixtureCompleteMetricsSEC,
+        NoNews,
+        NoRAG,
+        WorkingYahoo,
+    )
+
+    originals = (
+        main.SECFundamentalsClient,
+        main.YahooChartClient,
+        main.NewsClient,
+        main.RAGRetriever,
+        main.goat_workflow,
+    )
+    old_user_agent = os.environ.get("SEC_USER_AGENT")
+    old_openai_key = os.environ.pop("OPENAI_API_KEY", None)
+    os.environ["SEC_USER_AGENT"] = "GOATlens tests tests@example.com"
+    main.SECFundamentalsClient = FixtureCompleteMetricsSEC
+    main.YahooChartClient = WorkingYahoo
+    main.NewsClient = NoNews
+    main.RAGRetriever = NoRAG
+    try:
+        with TestClient(main.app) as client:
+            response = client.post(
+                "/api/analyze",
+                json={
+                    "ticker": "METR",
+                    "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
+                },
+            )
+        assert response.status_code == 200
+        return response.json()
+    finally:
+        (
+            main.SECFundamentalsClient,
+            main.YahooChartClient,
+            main.NewsClient,
+            main.RAGRetriever,
+            main.goat_workflow,
+        ) = originals
+        if old_user_agent is None:
+            os.environ.pop("SEC_USER_AGENT", None)
+        else:
+            os.environ["SEC_USER_AGENT"] = old_user_agent
+        if old_openai_key is not None:
+            os.environ["OPENAI_API_KEY"] = old_openai_key
 
 
 def response_agent(name, *, complete=True, unavailable_metrics=None):
@@ -25,19 +78,8 @@ def response_agent(name, *, complete=True, unavailable_metrics=None):
 
 
 def analysis_payload(**consensus_overrides):
-    payload = {
-        "ticker": "AAPL",
-        "company_name": "Apple Inc.",
-        "sector": "Technology",
-        "data_status": {
-            "fundamentals": {"available": True, "source": "sec", "as_of": "2026-09-30"},
-            "market_data": {"available": True, "source": "yahoo", "as_of": "2026-10-15"},
-            "normalized_ratios": {"available": True, "source": "yahoo", "as_of": "2026-10-15"},
-            "price_dependent_analysis": {"status": "complete", "reason": None},
-        },
-        "fundamentals": {},
-        "fundamentals_history": {},
-        "metric_evidence": {},
+    payload = copy.deepcopy(legitimate_five_agent_payload())
+    payload.update({
         "consensus_status": "complete",
         "consensus_verdict": "buy",
         "agreement_score": 1.0,
@@ -46,22 +88,57 @@ def analysis_payload(**consensus_overrides):
         "consensus_points": ["Shared view"],
         "divergence_points": [],
         "moat_trend": "stable",
-        "comparison_table": {"agents": []},
-    }
+        "partial_indication": None,
+    })
     payload.update(consensus_overrides)
     if "agent_results" not in consensus_overrides:
         completed = payload["completed_analyses"]
         requested = payload["requested_analyses"]
-        payload["agent_results"] = [
-            response_agent(
-                f"Agent {index + 1}",
-                complete=index < completed,
-                unavailable_metrics=(
-                    [] if index < completed else [f"metric_{index + 1}"]
-                ),
-            )
-            for index in range(requested)
+        templates = legitimate_five_agent_payload()["agent_results"]
+        payload["agent_results"] = []
+        for index in range(requested):
+            if index < completed:
+                item = copy.deepcopy(templates[index])
+                item.update(score=30.0, verdict="buy", insights=["Shared view"])
+                payload["agent_results"].append(item)
+            else:
+                payload["agent_results"].append(
+                    response_agent(
+                        templates[index]["agent"],
+                        complete=False,
+                        unavailable_metrics=[f"metric_{index + 1}"],
+                    )
+                )
+    else:
+        templates = legitimate_five_agent_payload()["agent_results"]
+        normalized = []
+        for index, result in enumerate(payload["agent_results"]):
+            if result.get("status", "complete") == "complete":
+                template_index = 0 if result["agent"] == "Duplicate" else index
+                item = copy.deepcopy(templates[template_index])
+                item.update(
+                    style=result.get("style", item["style"]),
+                    verdict=result["verdict"],
+                    score=result["score"],
+                    insights=result.get("insights", []),
+                    concerns=result.get("concerns", []),
+                )
+                normalized.append(item)
+            else:
+                normalized.append(result)
+        payload["agent_results"] = normalized
+    payload["comparison_table"] = {
+        "agents": [
+            {
+                "name": result["agent"],
+                "style": result["style"],
+                "verdict": result["verdict"],
+                "score": result["score"],
+                "key_metric": result["insights"][0] if result["insights"] else "",
+            }
+            for result in payload["agent_results"]
         ]
+    }
     return payload
 
 
@@ -421,7 +498,7 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
                 "requested_analyses": 3,
                 "excluded_agents": [
                     {
-                        "agent": "Unavailable Agent",
+                        "agent": "Benjamin Graham",
                         "unavailable_metrics": ["current_price"],
                     }
                 ],
@@ -430,7 +507,7 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
                 response_agent("Agent 1"),
                 response_agent("Agent 2"),
                 response_agent(
-                    "Unavailable Agent",
+                    "Benjamin Graham",
                     complete=False,
                     unavailable_metrics=["current_price"],
                 ),
@@ -443,7 +520,7 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
     assert response.partial_indication is not None
     assert response.partial_indication.verdict == "buy"
     assert response.partial_indication.supporting_analyses == 2
-    assert response.partial_indication.excluded_agents[0].agent == "Unavailable Agent"
+    assert response.partial_indication.excluded_agents[0].agent == "Benjamin Graham"
 
 
 @pytest.mark.parametrize(
@@ -585,7 +662,9 @@ def test_analysis_response_rejects_wrong_partial_ordinal_verdict(
             "strong_buy": 70.0,
         }[verdict]
     agents.append(
-        response_agent("Missing", complete=False, unavailable_metrics=["price"])
+        response_agent(
+            "Benjamin Graham", complete=False, unavailable_metrics=["price"]
+        )
     )
 
     with pytest.raises(ValidationError, match="ordinal consensus verdict"):
@@ -605,7 +684,10 @@ def test_analysis_response_rejects_wrong_partial_ordinal_verdict(
                     "completed_analyses": 2,
                     "requested_analyses": 3,
                     "excluded_agents": [
-                        {"agent": "Missing", "unavailable_metrics": ["price"]}
+                        {
+                            "agent": "Benjamin Graham",
+                            "unavailable_metrics": ["price"],
+                        }
                     ],
                 },
             )
@@ -695,22 +777,27 @@ def test_api_rejects_cross_field_consensus_contradictions(overrides):
         main.AnalysisResponse.model_validate(analysis_payload(**overrides))
 
 
-AGENT_NAMES = ["Buffett", "Lynch", "Graham", "Munger", "Dalio"]
+AGENT_NAMES = [
+    "Warren Buffett",
+    "Peter Lynch",
+    "Benjamin Graham",
+    "Charlie Munger",
+    "Ray Dalio",
+]
 
 
 def agent_result(index, complete):
     if complete:
-        return {
-            "agent": AGENT_NAMES[index],
-            "style": "Test style",
-            "ticker": "AAPL",
-            "score": 30.0,
-            "verdict": "buy",
-            "insights": ["Shared view"],
-            "concerns": [],
-            "status": "complete",
-            "unavailable_metrics": [],
-        }
+        result = copy.deepcopy(
+            legitimate_five_agent_payload()["agent_results"][index]
+        )
+        result.update(
+            score=30.0,
+            verdict="buy",
+            insights=["Shared view"],
+            concerns=[],
+        )
+        return result
     return {
         "agent": AGENT_NAMES[index],
         "style": "Test style",
@@ -729,14 +816,17 @@ class ConsensusWorkflow:
         self.results = results
 
     async def ainvoke(self, state):
+        baseline = legitimate_five_agent_payload()
+        state["ticker"] = baseline["ticker"]
         state.update(
             {
                 "agent_results": self.results,
                 "normalized_data": {"company_name": "Apple Inc.", "sector": "Technology"},
-                "data_status": analysis_payload()["data_status"],
-                "sec_fundamentals": {},
-                "sec_fundamentals_history": {},
-                "metric_evidence": {},
+                "data_status": baseline["data_status"],
+                "sec_fundamentals": baseline["fundamentals"],
+                "sec_fundamentals_history": baseline["fundamentals_history"],
+                "metric_evidence": baseline["metric_evidence"],
+                "snapshot_series": baseline["snapshot_series"],
                 "earnings_data": [],
                 "earnings_streak": {},
                 "temporal_results": {},

@@ -12,7 +12,7 @@ A user enters a ticker and receives:
 - public annual SEC history with per-fact provenance;
 - five investor-lens results;
 - consensus and divergence;
-- best-effort price history, earnings, and analyst context;
+- best-effort current price and adjusted price history;
 - explicit incomplete states whenever required inputs are unavailable.
 
 ## Data requirements
@@ -25,7 +25,7 @@ The initial product scope is U.S. issuers present in the SEC ticker map.
 
 ### Market enrichment
 
-Yahoo Finance may supply current/latest price, historical prices, volume, earnings, and analyst estimates. This dependency is best effort and cannot gate SEC-backed fundamental analysis. Market observations include source and timestamp.
+Yahoo Finance may supply current price and adjusted price history through the narrow chart boundary only. This dependency is best effort and cannot gate SEC-backed fundamental analysis. Market observations include source and timestamp.
 
 ### Missing data
 
@@ -39,7 +39,7 @@ Yahoo Finance may supply current/latest price, historical prices, volume, earnin
 
 ## Investor agents
 
-- **Buffett:** quality, profitability, leverage, and owner earnings.
+- **Buffett:** quality, profitability, leverage, and free cash flow.
 - **Lynch:** growth at a reasonable price; requires market valuation inputs.
 - **Graham:** margin of safety; requires market valuation inputs.
 - **Munger:** business quality and avoidable risks.

@@ -13,6 +13,7 @@ services:
     name: goatlens
     runtime: docker
     plan: free
+    autoDeploy: false
     # Render auto-detects the Dockerfile at the repo root
     dockerfilePath: ./Dockerfile
     envVars:
