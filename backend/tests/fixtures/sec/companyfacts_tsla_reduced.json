@@ -1,0 +1,250 @@
+{
+  "cik": 1318605,
+  "entityName": "TESLA, INC.",
+  "facts": {
+    "us-gaap": {
+      "Revenues": {
+        "label": "Revenues",
+        "description": "Amount of revenue recognized from goods sold, services rendered, insurance premiums, or other activities that constitute an earning process. Includes, but is not limited to, investment and interest income before deduction of interest expense when recognized as a component of revenue, and sales and trading gain (loss).",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-01-01",
+              "end": "2023-12-31",
+              "val": 96773000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2023"
+            },
+            {
+              "start": "2024-01-01",
+              "end": "2024-12-31",
+              "val": 97690000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2024"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 94827000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2025"
+            }
+          ]
+        }
+      },
+      "NetIncomeLoss": {
+        "label": "Net Income (Loss) Attributable to Parent",
+        "description": "The portion of profit or loss for the period, net of income taxes, which is attributable to the parent.",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-01-01",
+              "end": "2023-12-31",
+              "val": 14997000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29"
+            },
+            {
+              "start": "2024-01-01",
+              "end": "2024-12-31",
+              "val": 7091000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 3794000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29"
+            }
+          ]
+        }
+      },
+      "StockholdersEquity": {
+        "label": "Stockholders' Equity Attributable to Parent",
+        "description": "Total of all stockholders' equity (deficit) items, net of receivables from officers, directors, owners, and affiliates of the entity which are attributable to the parent. The amount of the economic entity's stockholders' equity attributable to the parent excludes the amount of stockholders' equity which is allocable to that ownership interest in subsidiary equity which is not attributable to the parent (noncontrolling interest, minority interest). This excludes temporary equity and is sometimes called permanent equity.",
+        "units": {
+          "USD": [
+            {
+              "end": "2024-12-31",
+              "val": 72913000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2025-12-31",
+              "val": 82137000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29"
+            }
+          ]
+        }
+      },
+      "NetCashProvidedByUsedInOperatingActivities": {
+        "label": "Net Cash Provided by (Used in) Operating Activities",
+        "description": "Amount of cash inflow (outflow) from operating activities, including discontinued operations. Operating activity cash flows include transactions, adjustments, and changes in value not defined as investing or financing activities.",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-01-01",
+              "end": "2023-12-31",
+              "val": 13256000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2023"
+            },
+            {
+              "start": "2024-01-01",
+              "end": "2024-12-31",
+              "val": 14923000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2024"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 14747000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2025"
+            }
+          ]
+        }
+      },
+      "PaymentsToAcquirePropertyPlantAndEquipment": {
+        "label": "Payments to Acquire Property, Plant, and Equipment",
+        "description": "The cash outflow associated with the acquisition of long-lived, physical assets that are used in the normal conduct of business to produce goods and services and not intended for resale; includes cash outflows to pay for construction of self-constructed assets.",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-01-01",
+              "end": "2023-12-31",
+              "val": 8899000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2023"
+            },
+            {
+              "start": "2024-01-01",
+              "end": "2024-12-31",
+              "val": 11342000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2024"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 8527000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2025"
+            }
+          ]
+        }
+      },
+      "DebtCurrent": {
+        "label": "Debt, Current",
+        "description": "Amount of short-term debt and current maturity of long-term debt and capital lease obligations due within one year or the normal operating cycle, if longer.",
+        "units": {
+          "USD": [
+            {
+              "end": "2024-12-31",
+              "val": 2343000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2025-12-31",
+              "val": 1569000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29"
+            }
+          ]
+        }
+      },
+      "LongTermDebt": {
+        "label": "Long-term Debt",
+        "description": "Amount, after unamortized (discount) premium and debt issuance costs, of long-term debt. Includes, but not limited to, notes payable, bonds payable, debentures, mortgage loans and commercial paper. Excludes capital lease obligations.",
+        "units": {
+          "USD": [
+            {
+              "end": "2024-12-31",
+              "val": 5535000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2025-12-31",
+              "val": 6584000000,
+              "accn": "0001628280-26-003952",
+              "fy": 2025,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-01-29"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

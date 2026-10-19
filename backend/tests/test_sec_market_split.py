@@ -14,7 +14,7 @@ import time
 import traceback
 import warnings
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -99,6 +99,91 @@ class FixtureAMZNSEC(SECFundamentalsClient):
         )
 
 
+class FixtureNVDASEC(SECFundamentalsClient):
+    """Public FY2026 NVDA facts with no reported ShortTermBorrowings fact."""
+
+    def __init__(self, user_agent):
+        ticker_map = {
+            "0": {"cik_str": 1045810, "ticker": "NVDA", "title": "NVIDIA CORP"}
+        }
+        companyfacts = json.loads(
+            (FIXTURES / "companyfacts_nvda_debt.json").read_text()
+        )
+
+        async def handler(request):
+            if request.url.path.endswith("/files/company_tickers.json"):
+                return httpx.Response(200, json=ticker_map)
+            if "/api/xbrl/companyfacts/" in request.url.path:
+                return httpx.Response(200, json=companyfacts)
+            return httpx.Response(404, json={})
+
+        super().__init__(
+            user_agent=user_agent,
+            transport=httpx.MockTransport(handler),
+        )
+
+
+class FixtureReducedIssuerSEC(SECFundamentalsClient):
+    ticker = ""
+    cik = 0
+    title = ""
+    fixture = ""
+
+    def __init__(self, user_agent):
+        ticker_map = {
+            "0": {
+                "cik_str": self.cik,
+                "ticker": self.ticker,
+                "title": self.title,
+            }
+        }
+        companyfacts = self.prepare_companyfacts(
+            json.loads((FIXTURES / self.fixture).read_text())
+        )
+
+        async def handler(request):
+            if request.url.path.endswith("/files/company_tickers.json"):
+                return httpx.Response(200, json=ticker_map)
+            if "/api/xbrl/companyfacts/" in request.url.path:
+                return httpx.Response(200, json=companyfacts)
+            return httpx.Response(404, json={})
+
+        super().__init__(user_agent=user_agent, transport=httpx.MockTransport(handler))
+
+    def prepare_companyfacts(self, companyfacts):
+        return companyfacts
+
+
+class FixtureTSLASEC(FixtureReducedIssuerSEC):
+    ticker = "TSLA"
+    cik = 1318605
+    title = "TESLA, INC."
+    fixture = "companyfacts_tsla_reduced.json"
+
+
+class FixtureNFLXSEC(FixtureReducedIssuerSEC):
+    ticker = "NFLX"
+    cik = 1065280
+    title = "NETFLIX INC"
+    fixture = "companyfacts_nflx_reduced.json"
+
+
+class FixtureWMTSEC(FixtureReducedIssuerSEC):
+    ticker = "WMT"
+    cik = 104169
+    title = "WALMART INC."
+    fixture = "companyfacts_wmt_reduced.json"
+
+
+class FixtureWMTConflictingRevenuesSEC(FixtureWMTSEC):
+    def prepare_companyfacts(self, companyfacts):
+        revenues = companyfacts["facts"]["us-gaap"]["Revenues"]["units"]["USD"]
+        conflicting = dict(revenues[-1])
+        conflicting["val"] += 1
+        revenues.append(conflicting)
+        return companyfacts
+
+
 class FixtureCompleteMetricsSEC(SECFundamentalsClient):
     """Six annual periods that exercise genuine SEC normalization end to end."""
 
@@ -160,6 +245,44 @@ class FixtureCompleteMetricsSEC(SECFundamentalsClient):
             return httpx.Response(404, json={})
 
         super().__init__(user_agent=user_agent, transport=httpx.MockTransport(handler))
+
+
+class FixtureRepresentativeUnreportedShortTermSEC(FixtureCompleteMetricsSEC):
+    """Current filing omits a standard fact that exists only in stale history."""
+
+    async def get_fundamentals(self, ticker, as_of=None):
+        result = await super().get_fundamentals("METR", as_of=as_of)
+        historical_short_term = []
+        for item in result.history["short_term_borrowings"]:
+            assert item.provenance is not None
+            historical_short_term.append(
+                replace(
+                    item,
+                    provenance=replace(
+                        item.provenance,
+                        end="2018-06-30",
+                        accession="historical-short-term",
+                        filed=date(2018, 8, 3),
+                        fiscal_year=2018,
+                    ),
+                )
+            )
+        latest = dict(result.latest)
+        latest["short_term_borrowings"] = historical_short_term[0]
+        history = {key: list(items) for key, items in result.history.items()}
+        history["short_term_borrowings"] = historical_short_term
+        return replace(result, ticker=ticker, latest=latest, history=history)
+
+
+class FixtureConflictingShortTermSEC(FixtureRepresentativeUnreportedShortTermSEC):
+    async def get_fundamentals(self, ticker, as_of=None):
+        result = await super().get_fundamentals(ticker, as_of=as_of)
+        latest = dict(result.latest)
+        latest["short_term_borrowings"] = replace(
+            latest["short_term_borrowings"],
+            availability_reason="conflicting_standard_concepts",
+        )
+        return replace(result, latest=latest)
 
 
 class UnavailableYahoo:
@@ -565,6 +688,308 @@ def test_sec_metrics_remain_canonical_when_market_data_is_available(monkeypatch)
     assert "normalized_ratios" not in body["data_status"]
 
 
+def test_nvda_public_evidence_uses_only_reported_compatible_debt_facts(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureNVDASEC)
+    monkeypatch.setattr(main, "YahooChartClient", UnavailableYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze", json={"ticker": "NVDA", "agents": ["buffett"]}
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    assert evidence["available"] is True
+    assert evidence["formula"] == (
+        "long_term_debt_components_plus_optional_short_term_borrowings_"
+        "divided_by_equity"
+    )
+    assert evidence["formula_version"] == "sec_companyfacts_debt_to_equity_v3"
+    assert [item["role"] for item in evidence["inputs"]] == [
+        "debt.current.long_term_current",
+        "debt.current.long_term_noncurrent",
+        "capital.end.equity",
+    ]
+    assert [item["value"] for item in evidence["inputs"]] == [
+        999_000_000.0,
+        7_469_000_000.0,
+        157_293_000_000.0,
+    ]
+    independently_recomputed = (999_000_000 + 7_469_000_000) / 157_293_000_000
+    assert evidence["value"] == pytest.approx(independently_recomputed, rel=1e-12)
+    assert body["fundamentals"]["short_term_borrowings"]["value"] is None
+    assert body["fundamentals"]["short_term_borrowings"][
+        "availability_reason"
+    ] == "issuer_does_not_report_a_standard_entity_wide_annual_fact"
+
+
+@pytest.mark.parametrize("ticker", ["MSFT", "COST"])
+def test_representative_unreported_short_term_debt_preserves_five_agents(
+    monkeypatch, ticker
+):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        main,
+        "SECFundamentalsClient",
+        FixtureRepresentativeUnreportedShortTermSEC,
+    )
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze",
+            json={
+                "ticker": ticker,
+                "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["completed_analyses"] == 5
+    assert all(result["status"] == "complete" for result in body["agent_results"])
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    assert [item["role"] for item in evidence["inputs"]] == [
+        "debt.current.long_term_current",
+        "debt.current.long_term_noncurrent",
+        "capital.end.equity",
+    ]
+    assert evidence["value"] == pytest.approx((5 + 22) / 70)
+
+
+def _reduced_issuer_response(monkeypatch, sec_client, ticker):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", sec_client)
+    monkeypatch.setattr(main, "YahooChartClient", UnavailableYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        return client.post(
+            "/api/analyze", json={"ticker": ticker, "agents": ["buffett"]}
+        )
+
+
+@pytest.mark.parametrize(
+    ("sec_client", "ticker", "formula", "expected_roles", "expected_values"),
+    [
+        (
+            FixtureTSLASEC,
+            "TSLA",
+            "debt_current_plus_long_term_debt_divided_by_equity",
+            (
+                "debt.current.debt_current",
+                "debt.current.long_term_debt",
+                "capital.end.equity",
+            ),
+            (1_569_000_000.0, 6_584_000_000.0, 82_137_000_000.0),
+        ),
+        (
+            FixtureNFLXSEC,
+            "NFLX",
+            "short_term_borrowings_plus_long_term_debt_noncurrent_divided_by_equity",
+            (
+                "debt.current.short_term_borrowings",
+                "debt.current.long_term_noncurrent",
+                "capital.end.equity",
+            ),
+            (998_865_000.0, 13_463_971_000.0, 26_615_488_000.0),
+        ),
+    ],
+    ids=["tsla-debt-current-plus-long-term-debt", "nflx-short-term-plus-noncurrent"],
+)
+def test_public_debt_evidence_selects_one_reviewed_funded_debt_branch(
+    monkeypatch, sec_client, ticker, formula, expected_roles, expected_values
+):
+    response = _reduced_issuer_response(monkeypatch, sec_client, ticker)
+
+    assert response.status_code == 200
+    body = response.json()
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    assert evidence["available"] is True
+    assert evidence["formula"] == formula
+    assert evidence["formula_version"] == "sec_companyfacts_debt_to_equity_v3"
+    assert tuple(item["role"] for item in evidence["inputs"]) == expected_roles
+    assert tuple(item["value"] for item in evidence["inputs"]) == expected_values
+    assert evidence["value"] == pytest.approx(
+        sum(expected_values[:-1]) / expected_values[-1], rel=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    ("sec_client", "ticker", "omitted_role"),
+    [
+        (FixtureTSLASEC, "TSLA", "debt.current.long_term_debt"),
+        (FixtureNFLXSEC, "NFLX", "debt.current.short_term_borrowings"),
+    ],
+)
+def test_public_response_rejects_omitted_compatible_branch_component(
+    monkeypatch, sec_client, ticker, omitted_role
+):
+    response = _reduced_issuer_response(monkeypatch, sec_client, ticker)
+    assert response.status_code == 200
+    body = response.json()
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    evidence["inputs"] = [
+        item for item in evidence["inputs"] if item["role"] != omitted_role
+    ]
+    evidence["value"] = sum(
+        item["value"] for item in evidence["inputs"][:-1]
+    ) / evidence["inputs"][-1]["value"]
+    body["agent_results"][0]["required_metric_values"]["debt_to_equity"] = evidence[
+        "value"
+    ]
+
+    with pytest.raises(ValidationError, match="exact input roles"):
+        main.AnalysisResponse.model_validate(body)
+
+
+def test_wmt_prefers_canonical_total_revenues_over_narrower_contract_revenue(
+    monkeypatch,
+):
+    response = _reduced_issuer_response(monkeypatch, FixtureWMTSEC, "WMT")
+
+    assert response.status_code == 200
+    body = response.json()
+    revenue = body["fundamentals"]["revenue"]
+    assert revenue["value"] == 713_163_000_000.0
+    assert revenue["provenance"]["concept"] == "Revenues"
+    evidence = body["metric_evidence"]["profit_margin"]
+    revenue_input = next(
+        item for item in evidence["inputs"] if item["role"] == "income.current.revenue"
+    )
+    assert revenue_input["value"] == 713_163_000_000.0
+    assert revenue_input["provenance"]["concept"] == "Revenues"
+    debt = body["metric_evidence"]["debt_to_equity"]
+    assert debt["formula"] == (
+        "long_term_debt_components_plus_optional_short_term_borrowings_"
+        "divided_by_equity"
+    )
+    assert [item["role"] for item in debt["inputs"]] == [
+        "debt.current.long_term_current",
+        "debt.current.long_term_noncurrent",
+        "debt.current.short_term_borrowings",
+        "capital.end.equity",
+    ]
+    assert [item["value"] for item in debt["inputs"]] == [
+        3_542_000_000.0,
+        34_624_000_000.0,
+        6_596_000_000.0,
+        99_617_000_000.0,
+    ]
+    assert all(
+        item["provenance"]["concept"] != "LongTermDebt"
+        for item in debt["inputs"]
+    )
+
+
+def test_wmt_selected_revenues_concept_rejects_same_context_conflict(monkeypatch):
+    response = _reduced_issuer_response(
+        monkeypatch, FixtureWMTConflictingRevenuesSEC, "WMT"
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "fundamentals_invalid_response"
+
+
+def test_conflicting_short_term_debt_is_not_treated_as_legitimately_unreported(
+    monkeypatch,
+):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureConflictingShortTermSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        body = client.post(
+            "/api/analyze", json={"ticker": "CONFLICT", "agents": ["buffett"]}
+        ).json()
+
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    assert evidence["available"] is False
+    assert evidence["inputs"] == []
+
+
+def test_public_response_closes_unavailable_debt_evidence_contract(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", FixtureConflictingShortTermSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        body = client.post(
+            "/api/analyze", json={"ticker": "CONFLICT", "agents": ["buffett"]}
+        ).json()
+
+    canonical = body["metric_evidence"]["debt_to_equity"]
+    mutations = {}
+
+    wrong_formula = copy.deepcopy(body)
+    wrong_formula["metric_evidence"]["debt_to_equity"]["formula"] = "fabricated"
+    mutations["formula"] = wrong_formula
+
+    for field, value in {
+        "source": "yahoo",
+        "formula_version": "fabricated",
+        "formula_owner": "yahoo",
+        "availability_reason": "fabricated",
+        "as_of": "2024-12-31",
+        "filed_at": "2025-02-01",
+        "observation_count": 1,
+    }.items():
+        mutated = copy.deepcopy(body)
+        mutated["metric_evidence"]["debt_to_equity"][field] = value
+        mutations[field] = mutated
+
+    fabricated_input = copy.deepcopy(body)
+    input_fact = copy.deepcopy(
+        fabricated_input["metric_evidence"]["roe"]["inputs"][0]
+    )
+    input_fact["role"] = "debt.current.fabricated"
+    debt = fabricated_input["metric_evidence"]["debt_to_equity"]
+    debt["inputs"] = [input_fact]
+    debt["as_of"] = input_fact["provenance"]["end"]
+    debt["filed_at"] = input_fact["provenance"]["filed"]
+    mutations["input"] = fabricated_input
+
+    accepted = []
+    for name, mutated in mutations.items():
+        try:
+            main.AnalysisResponse.model_validate(mutated)
+        except ValidationError:
+            pass
+        else:
+            accepted.append(name)
+
+    assert canonical == {
+        "value": None,
+        "available": False,
+        "source": "sec",
+        "as_of": None,
+        "filed_at": None,
+        "formula": "reviewed_funded_debt_branch_divided_by_equity",
+        "formula_version": "sec_companyfacts_debt_to_equity_v3",
+        "formula_owner": "goatlens",
+        "inputs": [],
+        "observation_count": None,
+        "availability_reason": "required_inputs_unavailable",
+    }
+    assert accepted == []
+
+
 def test_sec_metric_dates_distinguish_period_end_from_filing_date(monkeypatch):
     monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -750,6 +1175,40 @@ def test_public_response_rejects_tampered_formula_version(monkeypatch):
     body["metric_evidence"]["roe"]["formula_version"] = "attacker_v1"
 
     with pytest.raises(ValidationError, match="contract is inconsistent"):
+        main.AnalysisResponse.model_validate(body)
+
+
+def test_public_response_rejects_omitted_compatible_short_term_debt(monkeypatch):
+    body = _complete_metric_response(monkeypatch, ["buffett"])
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    del evidence["inputs"][2]
+    evidence["value"] = (
+        evidence["inputs"][0]["value"] + evidence["inputs"][1]["value"]
+    ) / evidence["inputs"][2]["value"]
+    body["agent_results"][0]["required_metric_values"]["debt_to_equity"] = (
+        evidence["value"]
+    )
+
+    with pytest.raises(ValidationError, match="exact input roles"):
+        main.AnalysisResponse.model_validate(body)
+
+
+def test_public_response_rejects_available_debt_with_nonpositive_equity(monkeypatch):
+    body = _complete_metric_response(monkeypatch, ["buffett"])
+    evidence = body["metric_evidence"]["debt_to_equity"]
+    equity_input = evidence["inputs"][-1]
+    equity_input["value"] = -70.0
+    negative_equity_fact = copy.deepcopy(body["fundamentals"]["equity"])
+    negative_equity_fact["value"] = -70.0
+    body["fundamentals_history"]["equity"].append(negative_equity_fact)
+    evidence["value"] = sum(
+        item["value"] for item in evidence["inputs"][:-1]
+    ) / equity_input["value"]
+    body["agent_results"][0]["required_metric_values"]["debt_to_equity"] = evidence[
+        "value"
+    ]
+
+    with pytest.raises(ValidationError, match="positive equity"):
         main.AnalysisResponse.model_validate(body)
 
 
@@ -1900,6 +2359,30 @@ def test_zero_denominator_keeps_price_analysis_incomplete(monkeypatch):
         "status": "incomplete",
         "reason": "missing_outputs:pe_ratio",
     }
+
+
+def test_nonpositive_equity_publishes_closed_unavailable_debt_evidence(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "GOATlens tests tests@example.com")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(main, "SECFundamentalsClient", NegativeValuationSEC)
+    monkeypatch.setattr(main, "YahooChartClient", WorkingYahoo)
+    monkeypatch.setattr(main, "NewsClient", NoNews)
+    monkeypatch.setattr(main, "RAGRetriever", NoRAG)
+
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/analyze", json={"ticker": "AAPL", "agents": ["buffett"]}
+        )
+
+    assert response.status_code == 200
+    evidence = response.json()["metric_evidence"]["debt_to_equity"]
+    assert evidence["value"] is None
+    assert evidence["available"] is False
+    assert evidence["inputs"] == []
+    assert evidence["as_of"] is None
+    assert evidence["filed_at"] is None
+    assert evidence["observation_count"] is None
+    assert evidence["availability_reason"] == "nonpositive_equity_not_meaningful"
 
 
 def test_negative_eps_and_book_value_do_not_create_scoreable_valuation_ratios(
