@@ -1,0 +1,264 @@
+{
+  "cik": 104169,
+  "entityName": "WALMART INC.",
+  "facts": {
+    "us-gaap": {
+      "Revenues": {
+        "label": "Revenues",
+        "description": "Amount of revenue recognized from goods sold, services rendered, insurance premiums, or other activities that constitute an earning process. Includes, but is not limited to, investment and interest income before deduction of interest expense when recognized as a component of revenue, and sales and trading gain (loss).",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-02-01",
+              "end": "2024-01-31",
+              "val": 648125000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2023"
+            },
+            {
+              "start": "2024-02-01",
+              "end": "2025-01-31",
+              "val": 680985000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024"
+            },
+            {
+              "start": "2025-02-01",
+              "end": "2026-01-31",
+              "val": 713163000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2025"
+            }
+          ]
+        }
+      },
+      "RevenueFromContractWithCustomerExcludingAssessedTax": {
+        "label": "Revenue from Contract with Customer, Excluding Assessed Tax",
+        "description": "Amount, excluding tax collected from customer, of revenue from satisfaction of performance obligation by transferring promised good or service to customer. Tax collected from customer is tax assessed by governmental authority that is both imposed on and concurrent with specific revenue-producing transaction, including, but not limited to, sales, use, value added and excise.",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-02-01",
+              "end": "2024-01-31",
+              "val": 642637000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2023"
+            },
+            {
+              "start": "2024-02-01",
+              "end": "2025-01-31",
+              "val": 674538000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024"
+            },
+            {
+              "start": "2025-02-01",
+              "end": "2026-01-31",
+              "val": 706413000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2025"
+            }
+          ]
+        }
+      },
+      "NetIncomeLoss": {
+        "label": "Net Income (Loss) Attributable to Parent",
+        "description": "The portion of profit or loss for the period, net of income taxes, which is attributable to the parent.",
+        "units": {
+          "USD": [
+            {
+              "start": "2023-02-01",
+              "end": "2024-01-31",
+              "val": 15511000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            },
+            {
+              "start": "2024-02-01",
+              "end": "2025-01-31",
+              "val": 19436000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            },
+            {
+              "start": "2025-02-01",
+              "end": "2026-01-31",
+              "val": 21893000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            }
+          ]
+        }
+      },
+      "StockholdersEquity": {
+        "label": "Stockholders' Equity Attributable to Parent",
+        "description": "Total of all stockholders' equity (deficit) items, net of receivables from officers, directors, owners, and affiliates of the entity which are attributable to the parent. The amount of the economic entity's stockholders' equity attributable to the parent excludes the amount of stockholders' equity which is allocable to that ownership interest in subsidiary equity which is not attributable to the parent (noncontrolling interest, minority interest). This excludes temporary equity and is sometimes called permanent equity.",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-01-31",
+              "val": 91013000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2026-01-31",
+              "val": 99617000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            }
+          ]
+        }
+      },
+      "LongTermDebtCurrent": {
+        "label": "Long-term Debt, Current Maturities",
+        "description": "Amount, after unamortized (discount) premium and debt issuance costs, of long-term debt, classified as current. Includes, but not limited to, notes payable, bonds payable, debentures, mortgage loans and commercial paper. Excludes capital lease obligations.",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-01-31",
+              "val": 2598000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2026-01-31",
+              "val": 3542000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            }
+          ]
+        }
+      },
+      "LongTermDebtNoncurrent": {
+        "label": "Long-term Debt, Excluding Current Maturities",
+        "description": "Amount after unamortized (discount) premium and debt issuance costs of long-term debt classified as noncurrent and excluding amounts to be repaid within one year or the normal operating cycle, if longer. Includes, but not limited to, notes payable, bonds payable, debentures, mortgage loans and commercial paper. Excludes capital lease obligations.",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-01-31",
+              "val": 33401000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2026-01-31",
+              "val": 34624000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            }
+          ]
+        }
+      },
+      "ShortTermBorrowings": {
+        "label": "Short-term Debt",
+        "description": "Reflects the total carrying amount as of the balance sheet date of debt having initial terms less than one year or the normal operating cycle, if longer.",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-01-31",
+              "val": 3068000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2026-01-31",
+              "val": 6596000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13"
+            }
+          ]
+        }
+      },
+      "LongTermDebt": {
+        "label": "Long-term Debt",
+        "description": "Amount, after unamortized (discount) premium and debt issuance costs, of long-term debt. Includes, but not limited to, notes payable, bonds payable, debentures, mortgage loans and commercial paper. Excludes capital lease obligations.",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-01-31",
+              "val": 35999000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2024Q4I"
+            },
+            {
+              "end": "2026-01-31",
+              "val": 38166000000,
+              "accn": "0000104169-26-000055",
+              "fy": 2026,
+              "fp": "FY",
+              "form": "10-K",
+              "filed": "2026-03-13",
+              "frame": "CY2025Q4I"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

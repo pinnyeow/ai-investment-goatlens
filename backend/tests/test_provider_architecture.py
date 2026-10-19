@@ -220,6 +220,29 @@ def test_versioned_breaking_change_ships_a_migration_note():
     assert "removed" in content.lower()
 
 
+def test_debt_to_equity_v3_formula_migration_is_explicit():
+    note = (
+        ROOT
+        / "docs"
+        / "migrations"
+        / "sec-companyfacts-debt-to-equity-v3.md"
+    )
+
+    content = note.read_text()
+    assert "sec_companyfacts_debt_to_equity_v3" in content
+    assert "debt_current_plus_long_term_debt_divided_by_equity" in content
+    assert (
+        "short_term_borrowings_plus_long_term_debt_noncurrent_divided_by_equity"
+        in content
+    )
+    assert "LongTermDebtCurrent + LongTermDebtNoncurrent" in content
+    assert "ShortTermBorrowings" in content
+    assert "not zero" in content
+    assert "sec_companyfacts_v1" in content
+    assert "v1" in content
+    assert "v2" not in content
+
+
 def test_frontend_third_party_scripts_are_integrity_pinned_and_csp_limited():
     frontend = (ROOT / "frontend" / "index.html").read_text()
     assert 'http-equiv="Content-Security-Policy"' in frontend

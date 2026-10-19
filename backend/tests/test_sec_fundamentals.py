@@ -89,7 +89,12 @@ async def test_aapl_fundamentals_match_literal_10k_values_with_provenance():
     assert normalized["debt_to_equity"] == pytest.approx(
         1.3380304612588665, rel=1e-12
     )
-    assert len(result.history["revenue"]) >= 10
+    assert len(result.history["revenue"]) >= 5
+    assert {
+        item.provenance.concept
+        for item in result.history["revenue"]
+        if item.provenance is not None
+    } == {"RevenueFromContractWithCustomerExcludingAssessedTax"}
     assert len(result.history["net_income"]) >= 10
     assert len(result.history["assets"]) >= 10
 
@@ -290,7 +295,7 @@ async def test_broader_short_term_borrowings_supersedes_commercial_paper():
 
 
 @pytest.mark.asyncio
-async def test_disagreeing_revenue_aliases_are_unavailable_not_silently_preferred():
+async def test_total_revenues_is_selected_without_pooling_narrower_contract_revenue():
     annual = {
         "start": "2024-01-01",
         "end": "2024-12-31",
@@ -331,14 +336,18 @@ async def test_disagreeing_revenue_aliases_are_unavailable_not_silently_preferre
         user_agent="GOATlens tests tests@example.com",
         transport=sec_payload_transport(ticker_map, payload),
     ) as client:
-        with pytest.raises(SECInvalidResponseError):
-            await client.get_fundamentals(
-                "CONF", as_of=date.fromisoformat("2026-10-14")
-            )
+        result = await client.get_fundamentals(
+            "CONF", as_of=date.fromisoformat("2026-10-14")
+        )
+
+    revenue = result.latest["revenue"]
+    assert revenue.value == 120
+    assert revenue.provenance is not None
+    assert revenue.provenance.concept == "Revenues"
 
 
 @pytest.mark.asyncio
-async def test_duration_aliases_with_same_end_and_different_starts_conflict():
+async def test_unselected_revenue_concept_context_does_not_conflict_with_total():
     annual = {
         "end": "2024-12-31",
         "accn": "0000000000-25-000001",
@@ -394,8 +403,12 @@ async def test_duration_aliases_with_same_end_and_different_starts_conflict():
         user_agent="GOATlens tests tests@example.com",
         transport=sec_payload_transport(ticker_map, payload),
     ) as client:
-        with pytest.raises(SECInvalidResponseError):
-            await client.get_fundamentals("CONF", as_of=date(2026, 10, 14))
+        result = await client.get_fundamentals("CONF", as_of=date(2026, 10, 14))
+
+    revenue = result.latest["revenue"]
+    assert revenue.value == 120
+    assert revenue.provenance is not None
+    assert revenue.provenance.concept == "Revenues"
 
 
 @pytest.mark.asyncio
@@ -473,7 +486,7 @@ async def test_equal_values_in_different_winning_contexts_are_invalid():
 
 
 @pytest.mark.asyncio
-async def test_newer_alias_filing_supersedes_older_same_period_value():
+async def test_total_revenues_precedence_is_not_overridden_by_narrower_newer_filing():
     base = {
         "start": "2024-01-01", "end": "2024-12-31", "fy": 2024,
         "fp": "FY", "form": "10-K",
@@ -497,8 +510,50 @@ async def test_newer_alias_filing_supersedes_older_same_period_value():
     ) as client:
         result = await client.get_fundamentals("REST", as_of=date(2026, 10, 14))
 
-    assert result.latest["revenue"].value == 100
-    assert result.latest["revenue"].provenance.accession == "new"
+    revenue = result.latest["revenue"]
+    assert revenue.value == 90
+    assert revenue.provenance is not None
+    assert revenue.provenance.concept == "Revenues"
+    assert revenue.provenance.accession == "old"
+
+
+@pytest.mark.asyncio
+async def test_financial_issuer_fails_closed_when_preferred_revenue_definition_is_stale():
+    old = {
+        "start": "2023-01-01",
+        "end": "2023-12-31",
+        "accn": "bank-old",
+        "fy": 2023,
+        "fp": "FY",
+        "form": "10-K",
+        "filed": "2024-02-01",
+        "val": 80,
+    }
+    current = {
+        **old,
+        "start": "2024-01-01",
+        "end": "2024-12-31",
+        "accn": "bank-current",
+        "fy": 2024,
+        "filed": "2025-02-01",
+        "val": 100,
+    }
+    deposit = {**current, "start": None, "val": 500}
+    payload = {"entityName": "Bank Corp", "facts": {"us-gaap": {
+        "RevenuesNetOfInterestExpense": {"units": {"USD": [old]}},
+        "Revenues": {"units": {"USD": [current]}},
+        "Deposits": {"units": {"USD": [deposit]}},
+    }}}
+    ticker_map = {
+        "0": {"cik_str": 1, "ticker": "BANK", "title": "Bank Corp"}
+    }
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(ticker_map, payload),
+    ) as client:
+        with pytest.raises(SECInvalidResponseError):
+            await client.get_fundamentals("BANK", as_of=date(2026, 10, 14))
 
 
 @pytest.mark.asyncio
