@@ -1157,7 +1157,9 @@ def _serialize_sec_fundamentals(fundamentals):
 _METRIC_EVIDENCE_CONTRACTS = {
     "roe": ("sec", "net_income_divided_by_equity"),
     "profit_margin": ("sec", "net_income_divided_by_revenue"),
-    "debt_to_equity": ("sec", "funded_debt_divided_by_equity"),
+    "debt_to_equity": (
+        "sec", "reviewed_funded_debt_branch_divided_by_equity"
+    ),
     "free_cash_flow": ("sec", "operating_cash_flow_minus_capex"),
     "earnings_growth": ("sec", "three_year_net_income_cagr"),
     "earnings_turnaround": (
@@ -1216,9 +1218,12 @@ _FORMULA_EVIDENCE_CONTRACTS = {
             ("income.current.net_income", "capital.end.equity")),
     "profit_margin": ("sec", "net_income_divided_by_revenue", "sec_companyfacts_v1",
                       ("income.current.net_income", "income.current.revenue")),
-    "debt_to_equity": ("sec", "funded_debt_divided_by_equity", "sec_companyfacts_v1", (
-        "debt.current.long_term_current", "debt.current.long_term_noncurrent",
-        "debt.current.short_term_borrowings", "capital.end.equity")),
+    "debt_to_equity": (
+        "sec",
+        None,
+        "sec_companyfacts_debt_to_equity_v3",
+        None,
+    ),
     "free_cash_flow": ("sec", "operating_cash_flow_minus_capex", "sec_companyfacts_v1",
                        ("cashflow.current.operating", "cashflow.current.capex")),
     "earnings_growth": ("sec", "three_year_net_income_cagr", "sec_companyfacts_v1",
@@ -1330,7 +1335,7 @@ def _recompute_formula_value(metric, values, formula):
                   "capex_to_revenue", "interest_coverage"}:
         return values[0] / values[1]
     if metric == "debt_to_equity":
-        return sum(values[:3]) / values[3]
+        return sum(values[:-1]) / values[-1]
     if metric == "free_cash_flow":
         return values[0] - values[1]
     if metric == "earnings_growth":
@@ -1382,6 +1387,8 @@ _SEC_ROLE_FUNDAMENTAL_KEYS = {
     "debt.current.long_term_current": "long_term_debt_current",
     "debt.current.long_term_noncurrent": "long_term_debt_noncurrent",
     "debt.current.short_term_borrowings": "short_term_borrowings",
+    "debt.current.debt_current": "debt_current",
+    "debt.current.long_term_debt": "long_term_debt",
     "cashflow.current.operating": "operating_cash_flow",
     "cashflow.current.capex": "capex_payments",
     "income.begin": "net_income",
@@ -1499,6 +1506,31 @@ def _validate_formula_evidence(response):
             continue
         source, formula, version, expected_roles = contract
         expected_owner = "yahoo" if metric == "current_price" else "goatlens"
+        if metric == "debt_to_equity" and not evidence.available:
+            equity = response.fundamentals.get("equity")
+            expected_reason = (
+                "nonpositive_equity_not_meaningful"
+                if equity is not None
+                and equity.value is not None
+                and equity.value <= 0
+                else "required_inputs_unavailable"
+            )
+            if (
+                evidence.source != "sec"
+                or evidence.formula
+                != "reviewed_funded_debt_branch_divided_by_equity"
+                or evidence.formula_version != version
+                or evidence.formula_owner != "goatlens"
+                or evidence.availability_reason != expected_reason
+                or evidence.inputs
+                or evidence.as_of is not None
+                or evidence.filed_at is not None
+                or evidence.observation_count is not None
+            ):
+                raise ValueError(
+                    "Unavailable debt-to-equity evidence contract is inconsistent"
+                )
+            continue
         if (
             evidence.source != source
             or evidence.formula_version != version
@@ -1510,7 +1542,145 @@ def _validate_formula_evidence(response):
             continue
 
         roles = tuple(item.role for item in evidence.inputs)
-        if metric == "gross_margin":
+        if metric == "debt_to_equity":
+            equity_input = next(
+                (
+                    item
+                    for item in evidence.inputs
+                    if isinstance(item, SECMetricInputResponse)
+                    and item.role == "capital.end.equity"
+                ),
+                None,
+            )
+
+            if equity_input is None or equity_input.value <= 0:
+                raise ValueError(
+                    "Available debt-to-equity evidence requires positive equity"
+                )
+
+            def compatible_public_fact(key):
+                if equity_input is None:
+                    return None
+                return next(
+                    (
+                        fact
+                        for fact in public_facts.get(key, [])
+                        if fact.value is not None
+                        and fact.provenance is not None
+                        and (
+                            fact.provenance.end,
+                            fact.provenance.accession,
+                            fact.provenance.form,
+                            fact.provenance.filed,
+                            fact.provenance.fiscal_year,
+                        )
+                        == (
+                            equity_input.provenance.end,
+                            equity_input.provenance.accession,
+                            equity_input.provenance.form,
+                            equity_input.provenance.filed,
+                            equity_input.provenance.fiscal_year,
+                        )
+                    ),
+                    None,
+                )
+
+            compatible_debt = {
+                key: compatible_public_fact(key)
+                for key in (
+                    "long_term_debt_current",
+                    "long_term_debt_noncurrent",
+                    "short_term_borrowings",
+                    "debt_current",
+                    "long_term_debt",
+                )
+            }
+
+            def publicly_unreported(key):
+                current = current_facts.get(key, [None])[0]
+                return (
+                    compatible_debt[key] is None
+                    and current is not None
+                    and current.availability_reason
+                    != "conflicting_standard_concepts"
+                    and equity_input is not None
+                    and not any(
+                        fact.value is not None
+                        and fact.provenance is not None
+                        and fact.provenance.end == equity_input.provenance.end
+                        for fact in public_facts.get(key, [])
+                    )
+                )
+
+            expected_formula = None
+            if (
+                compatible_debt["long_term_debt_current"] is not None
+                and compatible_debt["long_term_debt_noncurrent"] is not None
+                and (
+                    compatible_debt["short_term_borrowings"] is not None
+                    or publicly_unreported("short_term_borrowings")
+                )
+            ):
+                expected_formula = (
+                    "long_term_debt_components_plus_optional_short_term_"
+                    "borrowings_divided_by_equity"
+                )
+                expected_roles = (
+                    "debt.current.long_term_current",
+                    "debt.current.long_term_noncurrent",
+                    *(
+                        ("debt.current.short_term_borrowings",)
+                        if compatible_debt["short_term_borrowings"] is not None
+                        else ()
+                    ),
+                    "capital.end.equity",
+                )
+            elif (
+                compatible_debt["debt_current"] is not None
+                and compatible_debt["long_term_debt"] is not None
+                and all(
+                    publicly_unreported(key)
+                    for key in (
+                        "long_term_debt_current",
+                        "long_term_debt_noncurrent",
+                        "short_term_borrowings",
+                    )
+                )
+            ):
+                expected_formula = (
+                    "debt_current_plus_long_term_debt_divided_by_equity"
+                )
+                expected_roles = (
+                    "debt.current.debt_current",
+                    "debt.current.long_term_debt",
+                    "capital.end.equity",
+                )
+            elif (
+                compatible_debt["short_term_borrowings"] is not None
+                and compatible_debt["long_term_debt_noncurrent"] is not None
+                and all(
+                    publicly_unreported(key)
+                    for key in (
+                        "long_term_debt_current",
+                        "debt_current",
+                        "long_term_debt",
+                    )
+                )
+            ):
+                expected_formula = (
+                    "short_term_borrowings_plus_long_term_debt_noncurrent_"
+                    "divided_by_equity"
+                )
+                expected_roles = (
+                    "debt.current.short_term_borrowings",
+                    "debt.current.long_term_noncurrent",
+                    "capital.end.equity",
+                )
+            else:
+                expected_roles = ()
+            if evidence.formula != expected_formula:
+                raise ValueError("Metric formula evidence contract is inconsistent")
+        elif metric == "gross_margin":
             gross_contracts = {
                 "gross_profit_divided_by_revenue": (
                     "income.current.gross_profit", "income.current.revenue"),
