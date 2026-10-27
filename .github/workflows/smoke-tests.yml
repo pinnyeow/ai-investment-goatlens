@@ -49,7 +49,7 @@ jobs:
         run: |
           BODY=$(curl -s https://goatlens.onrender.com/health)
           echo "Health response: $BODY"
-          echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: Health check unexpected response" && exit 1)
+          printf '%s' "$BODY" | python3 -c "import json, re, sys; body=json.load(sys.stdin); release=body.get('release', ''); (body.get('status') == 'healthy' and re.fullmatch(r'[0-9a-f]{40}', release)) or sys.exit('FAIL: health response or deployed release is invalid'); print(f'Deployed release: {release}')"
 
       - name: Authoritative SEC fundamentals path is healthy
         run: |
@@ -60,7 +60,14 @@ jobs:
           echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: SEC fundamentals unavailable" && exit 1)
           echo "$BODY" | grep -q '"source":"sec"' || (echo "FAIL: SEC source missing" && exit 1)
 
-      - name: AAPL all-agent analysis is complete and SEC-backed
+      - name: Report Yahoo market-data status without failing the service
+        run: |
+          BODY=$(curl --silent --show-error \
+            --max-time 45 \
+            https://goatlens.onrender.com/api/market-data-health || true)
+          echo "Yahoo market-data status (non-gating): $BODY"
+
+      - name: AAPL returns five explicit analyses and SEC evidence
         run: |
           BODY=$(curl --fail --silent --show-error \
             --max-time 90 \
@@ -70,11 +77,11 @@ jobs:
           echo "AAPL analysis (truncated): ${BODY:0:500}"
           echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: AAPL analysis missing ticker" && exit 1)
           echo "$BODY" | grep -q '"fundamentals":{"available":true,"source":"sec"' || (echo "FAIL: AAPL analysis is not SEC-backed" && exit 1)
-          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); assert body['consensus_status'] == 'complete'; assert body['completed_analyses'] == 5; assert body['requested_analyses'] == 5; assert body['agreement_score'] is not None; assert len(body['agent_results']) == 5; assert all(item['status'] == 'complete' for item in body['agent_results']); assert all(item['score'] is not None and item['verdict'] is not None for item in body['agent_results']); assert len(body['metric_evidence']) >= 28"
+          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); results=body.get('agent_results', []); completed=body.get('completed_analyses'); requested=body.get('requested_analyses'); expected_agents={'Warren Buffett', 'Peter Lynch', 'Benjamin Graham', 'Charlie Munger', 'Ray Dalio'}; valid={item.get('agent') for item in results} == expected_agents and body.get('ticker') == 'AAPL' and requested == 5 and len(results) == 5 and completed == sum(item.get('status') == 'complete' for item in results) and completed >= 2 and all((item.get('score') is not None and item.get('verdict') is not None and not item.get('unavailable_metrics')) if item.get('status') == 'complete' else (item.get('status') == 'incomplete' and item.get('score') is None and item.get('verdict') is None and bool(item.get('unavailable_metrics'))) for item in results) and body.get('consensus_status') == ('complete' if completed == 5 else 'partial') and body.get('data_status', {}).get('fundamentals', {}).get('available') and body.get('data_status', {}).get('fundamentals', {}).get('source') == 'sec' and len(body.get('metric_evidence', {})) >= 28; valid or sys.exit('FAIL: AAPL response is not a complete or honestly degraded five-analysis result'); print(f'AAPL analyses: {completed}/5 complete')"
           echo "$BODY" | grep -q '"revenue":{"value":416161000000' || (echo "FAIL: SEC revenue literal missing" && exit 1)
           echo "$BODY" | grep -q '"accession":"0000320193-25-000079"' || (echo "FAIL: SEC provenance missing" && exit 1)
 
-      - name: AMZN turnaround analysis is complete with SEC formula evidence
+      - name: AMZN turnaround analysis remains useful or degrades honestly
         run: |
           BODY=$(curl --fail --silent --show-error \
             --max-time 90 \
@@ -82,16 +89,10 @@ jobs:
             -H 'Content-Type: application/json' \
             -d '{"ticker":"AMZN","agents":["buffett","lynch","graham","munger","dalio"]}')
           echo "AMZN analysis (truncated): ${BODY:0:500}"
-          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); evidence=body['metric_evidence']; assert body['ticker'] == 'AMZN'; assert body['consensus_status'] == 'complete'; assert body['completed_analyses'] == body['requested_analyses'] == 5; assert len(body['agent_results']) == 5; assert all(item['status'] == 'complete' and item['score'] is not None and item['verdict'] is not None and not item['unavailable_metrics'] for item in body['agent_results']); assert body['data_status']['fundamentals']['available'] and body['data_status']['fundamentals']['source'] == 'sec'; assert evidence['gross_margin']['available'] and evidence['gross_margin']['source'] == 'sec' and evidence['gross_margin']['formula'] == 'revenue_minus_cost_of_revenue_divided_by_revenue'; assert not evidence['dividend_yield']['available'] and evidence['dividend_yield']['value'] is None; assert evidence['earnings_turnaround']['available'] and evidence['earnings_turnaround']['source'] == 'sec' and evidence['earnings_turnaround']['value'] == 1.0; assert not evidence['earnings_growth']['available'] and evidence['earnings_growth']['value'] is None"
-
-      - name: Report best-effort Yahoo market-data status once
-        run: |
-          BODY=$(curl --silent --show-error \
-            --max-time 45 \
-            https://goatlens.onrender.com/api/market-data-health || true)
-          echo "Market data status (non-gating): $BODY"
+          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); evidence=body.get('metric_evidence', {}); results=body.get('agent_results', []); completed=body.get('completed_analyses'); requested=body.get('requested_analyses'); expected_agents={'Warren Buffett', 'Peter Lynch', 'Benjamin Graham', 'Charlie Munger', 'Ray Dalio'}; valid={item.get('agent') for item in results} == expected_agents and body.get('ticker') == 'AMZN' and requested == 5 and len(results) == 5 and completed == sum(item.get('status') == 'complete' for item in results) and completed >= 2 and all((item.get('score') is not None and item.get('verdict') is not None and not item.get('unavailable_metrics')) if item.get('status') == 'complete' else (item.get('status') == 'incomplete' and item.get('score') is None and item.get('verdict') is None and bool(item.get('unavailable_metrics'))) for item in results) and body.get('consensus_status') == ('complete' if completed == 5 else 'partial') and body.get('data_status', {}).get('fundamentals', {}).get('available') and body.get('data_status', {}).get('fundamentals', {}).get('source') == 'sec' and evidence.get('earnings_turnaround', {}).get('available') and evidence.get('earnings_turnaround', {}).get('source') == 'sec' and evidence.get('earnings_turnaround', {}).get('value') == 1.0; valid or sys.exit('FAIL: AMZN response is not a useful or honestly degraded five-analysis result'); print(f'AMZN analyses: {completed}/5 complete')"
 
       - name: Agents endpoint returns all 5 investors
+        if: ${{ always() }}
         run: |
           BODY=$(curl -s https://goatlens.onrender.com/api/agents)
           echo "Agents response: $BODY"

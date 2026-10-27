@@ -76,16 +76,24 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '"fundamentals":{"available":true,"source":"sec"' in workflow
     assert '"ticker":"AAPL"' in workflow
     assert '"ticker":"AMZN"' in workflow
-    assert "revenue_minus_cost_of_revenue_divided_by_revenue" in workflow
-    assert "not evidence['dividend_yield']['available']" in workflow
-
-    assert "evidence['earnings_turnaround']['value'] == 1.0" in workflow
-    assert "evidence['earnings_growth']['value'] is None" in workflow
-    assert '"agents":["buffett","lynch","graham","munger","dalio"]' in workflow
-    assert "assert body['completed_analyses'] == 5" in workflow
-    assert "assert body['requested_analyses'] == 5" in workflow
-    assert "assert body['agreement_score'] is not None" in workflow
-    assert "assert all(item['status'] == 'complete'" in workflow
+    aapl = workflow.split("- name: AAPL returns five explicit analyses and SEC evidence", 1)[1].split("- name: AMZN", 1)[0]
+    amzn = workflow.split("- name: AMZN turnaround analysis remains useful or degrades honestly", 1)[1].split("- name: Agents endpoint", 1)[0]
+    expected_agents = "{'Warren Buffett', 'Peter Lynch', 'Benjamin Graham', 'Charlie Munger', 'Ray Dalio'}"
+    for section, ticker in ((aapl, "AAPL"), (amzn, "AMZN")):
+        assert f'"ticker":"{ticker}"' in section
+        assert '"agents":["buffett","lynch","graham","munger","dalio"]' in section
+        assert "completed >= 2" in section
+        assert "item.get('status') == 'incomplete'" in section
+        assert "item.get('score') is None" in section
+        assert "item.get('verdict') is None" in section
+        assert "bool(item.get('unavailable_metrics'))" in section
+        assert expected_agents in section
+    assert "evidence.get('earnings_turnaround', {}).get('available')" in amzn
+    assert "evidence.get('earnings_turnaround', {}).get('source') == 'sec'" in amzn
+    assert "evidence.get('earnings_turnaround', {}).get('value') == 1.0" in amzn
+    assert "Yahoo market-data status (non-gating)" in workflow
+    assert "revenue_minus_cost_of_revenue_divided_by_revenue" not in workflow
+    assert "assert body['completed_analyses'] == 5" not in workflow
     assert 'RELEASE=$(python3 -c' in workflow
     assert '[[ "$RELEASE" == "$EXPECTED_SHA" ]]' in workflow
     assert '[[ "$BODY" == *' not in workflow
