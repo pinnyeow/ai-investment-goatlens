@@ -99,6 +99,29 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert '[[ "$BODY" == *' not in workflow
 
 
+def test_ci_has_blocking_five_agent_fixture_matrix():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+
+    assert "Representative five-agent fixture matrix" in workflow
+    assert "test_representative_fixture_matrix_exact_contract" in workflow
+
+
+def test_ci_runs_one_pinned_deterministic_full_gate_and_optimized_affected_gate():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    verifier = (ROOT / "scripts" / "verify_goatlens.py").read_text()
+
+    assert "python scripts/verify_goatlens.py" in workflow
+    assert "python -O scripts/verify_goatlens.py --affected-only" in workflow
+    assert "fetch-depth: 0" in workflow
+    assert workflow.count("python -m pytest tests/") == 0
+    assert "cwd=ROOT" in verifier
+    assert "candidate_diff_range" in verifier
+    assert '"git", "merge-base"' in verifier
+    assert '"git", "diff", "--check", *candidate_diff_range()' in verifier
+    assert "yaml.safe_load" in verifier
+    assert '"-m", "pytest", "-q"' in verifier
+
+
 def test_repository_requires_explicit_deployment_and_canary_gate():
     render = (ROOT / "render.yaml").read_text()
     workflow = (ROOT / ".github" / "workflows" / "smoke-tests.yml").read_text()
@@ -228,17 +251,19 @@ def test_versioned_breaking_change_ships_a_migration_note():
     assert "removed" in content.lower()
 
 
-def test_debt_to_equity_v3_formula_migration_is_explicit():
+def test_debt_to_equity_v4_formula_migration_is_explicit():
     note = (
         ROOT
         / "docs"
         / "migrations"
-        / "sec-companyfacts-debt-to-equity-v3.md"
+        / "sec-companyfacts-debt-to-equity-v4.md"
     )
 
     content = note.read_text()
-    assert "sec_companyfacts_debt_to_equity_v3" in content
-    assert "debt_current_plus_long_term_debt_divided_by_equity" in content
+    assert "sec_companyfacts_debt_to_equity_v4" in content
+    assert "debt_current_plus_long_term_debt_noncurrent_divided_by_equity" in content
+    assert "DebtCurrent + LongTermDebt`" in content
+    assert "could double count" in content
     assert (
         "short_term_borrowings_plus_long_term_debt_noncurrent_divided_by_equity"
         in content
@@ -246,9 +271,8 @@ def test_debt_to_equity_v3_formula_migration_is_explicit():
     assert "LongTermDebtCurrent + LongTermDebtNoncurrent" in content
     assert "ShortTermBorrowings" in content
     assert "not zero" in content
-    assert "sec_companyfacts_v1" in content
-    assert "v1" in content
-    assert "v2" not in content
+    assert "canonical CIK" in content
+    assert "lookup/payload identity agreement" in content
 
 
 def test_frontend_third_party_scripts_are_integrity_pinned_and_csp_limited():

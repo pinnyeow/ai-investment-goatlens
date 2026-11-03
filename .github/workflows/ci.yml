@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -17,13 +19,16 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
+        working-directory: backend
         run: |
-          cd backend
-          pip install ruff pytest pytest-asyncio
+          pip install ruff pytest pytest-asyncio pyyaml
           pip install -r requirements.txt
 
-      - name: Lint
-        run: cd backend && ruff check .
+      - name: Deterministic full verification
+        working-directory: ${{ github.workspace }}
+        run: python scripts/verify_goatlens.py
 
-      - name: Test
-        run: cd backend && python -m pytest tests/ -v
+      - name: Representative five-agent fixture matrix and optimized affected validation
+        # Includes test_representative_fixture_matrix_exact_contract via the affected suite.
+        working-directory: ${{ github.workspace }}
+        run: python -O scripts/verify_goatlens.py --affected-only

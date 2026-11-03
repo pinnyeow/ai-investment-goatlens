@@ -135,6 +135,12 @@ Malformed, stale, incomplete, rate-limited, or unavailable responses remain unav
 
 ## Consensus semantics
 
+Final consensus requires every requested analysis to complete and at least three
+completed analyses. A subordinate partial indication is allowed only when at least
+three analyses complete in a larger incomplete request. Zero, one, or two completed
+analyses publish no verdict, support/agreement value, or partial indication; their
+individual results remain available.
+
 Completed investor verdicts are equally weighted ordinal votes from `strong_sell`
 through `strong_buy`; raw strategy scores are not averaged because the five strategy
 rubrics are not calibrated as one common scale. With an odd number of completed

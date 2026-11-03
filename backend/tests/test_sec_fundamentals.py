@@ -122,6 +122,24 @@ async def test_dot_class_ticker_uses_sec_hyphen_symbol_and_preserves_ticker_iden
 
 
 @pytest.mark.asyncio
+async def test_companyfacts_cik_must_match_authoritative_ticker_map():
+    ticker_map = {
+        "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}
+    }
+    substituted = load_json("companyfacts_aapl.json")
+    substituted["cik"] = 1018724
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(ticker_map, substituted),
+    ) as client:
+        with pytest.raises(SECInvalidResponseError, match="issuer identity"):
+            await client.get_fundamentals(
+                "AAPL", as_of=date.fromisoformat("2026-10-14")
+            )
+
+
+@pytest.mark.asyncio
 async def test_sec_derives_multi_year_agent_metrics_without_defaults():
     def duration(year, value):
         return {
@@ -160,7 +178,7 @@ async def test_sec_derives_multi_year_agent_metrics_without_defaults():
         "InterestExpenseNonoperating": {"units": {"USD": [duration(2024, 3)]}},
         "CommonStockDividendsPerShareDeclared": {"units": {"USD/shares": [duration(y, v) for y, v in zip(years, dividends)]}},
     }
-    payload = {"entityName": "Metric Corp", "facts": {"us-gaap": facts}}
+    payload = {"cik": 1, "entityName": "Metric Corp", "facts": {"us-gaap": facts}}
     ticker_map = {"0": {"cik_str": 1, "ticker": "METR", "title": "Metric Corp"}}
 
     async with SECFundamentalsClient(
@@ -270,7 +288,7 @@ async def test_broader_short_term_borrowings_supersedes_commercial_paper():
         "filed": "2025-02-01",
     }
     instant = {**duration, "start": None}
-    payload = {"entityName": "Debt Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Debt Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [duration]}},
         "LongTermDebtCurrent": {"units": {"USD": [{**instant, "val": 10}]}},
         "LongTermDebtNoncurrent": {"units": {"USD": [{**instant, "val": 20}]}},
@@ -423,6 +441,7 @@ async def test_same_concept_same_filing_context_with_two_values_conflicts():
         "filed": "2025-02-01",
     }
     payload = {
+        "cik": 1,
         "entityName": "Conflict Corp",
         "facts": {"us-gaap": {
             "Revenues": {"units": {"USD": [
@@ -460,7 +479,7 @@ async def test_equal_values_in_different_winning_contexts_are_invalid():
         "end": "2024-12-31", "accn": "filing", "fy": 2024, "fp": "FY",
         "form": "10-K", "filed": "2025-02-01", "val": 100,
     }
-    payload = {"entityName": "Ambiguous Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Ambiguous Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [
             {**annual, "start": "2024-01-01"},
             {**annual, "start": "2024-01-02"},
@@ -491,7 +510,7 @@ async def test_total_revenues_precedence_is_not_overridden_by_narrower_newer_fil
         "start": "2024-01-01", "end": "2024-12-31", "fy": 2024,
         "fp": "FY", "form": "10-K",
     }
-    payload = {"entityName": "Restated Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Restated Corp", "facts": {"us-gaap": {
         "RevenueFromContractWithCustomerExcludingAssessedTax": {
             "units": {"USD": [{
                 **base, "accn": "new", "filed": "2025-03-01", "val": 100,
@@ -539,7 +558,7 @@ async def test_financial_issuer_fails_closed_when_preferred_revenue_definition_i
         "val": 100,
     }
     deposit = {**current, "start": None, "val": 500}
-    payload = {"entityName": "Bank Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bank Corp", "facts": {"us-gaap": {
         "RevenuesNetOfInterestExpense": {"units": {"USD": [old]}},
         "Revenues": {"units": {"USD": [current]}},
         "Deposits": {"units": {"USD": [deposit]}},
@@ -640,7 +659,7 @@ async def test_growth_requires_current_and_prior_reference_compatible_contexts()
     incompatible_income_prior = {
         **revenue_current, "val": 100, "accn": "income-prior",
     }
-    payload = {"entityName": "Growth Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Growth Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [revenue_current, revenue_prior]}},
         "NetIncomeLoss": {"units": {"USD": [
             incompatible_income_current, incompatible_income_prior,
@@ -761,7 +780,7 @@ async def test_conflicting_same_context_liability_inputs_are_unavailable():
         "form": "10-K", "filed": "2025-02-01",
     }
     annual_instant = {**annual_duration, "start": None}
-    payload = {"entityName": "Conflict Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Conflict Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [annual_duration]}},
         "LiabilitiesAndStockholdersEquity": {"units": {"USD": [
             {**annual_instant, "val": 500},
@@ -798,7 +817,7 @@ async def test_newer_clean_liability_restatement_supersedes_older_conflict():
         "fp": "FY", "form": "10-K", "filed": "2025-02-01",
     }
     new = {**old, "accn": "new", "filed": "2025-03-01"}
-    payload = {"entityName": "Restated Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Restated Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [duration]}},
         "LiabilitiesAndStockholdersEquity": {"units": {"USD": [
             {**old, "val": 500}, {**old, "val": 550}, {**new, "val": 600},
@@ -1102,7 +1121,7 @@ async def test_empty_facts_object_is_an_invalid_unusable_response():
     ticker_map = {
         "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}
     }
-    payload = {"entityName": "Apple Inc.", "facts": {}}
+    payload = {"cik": 320193, "entityName": "Apple Inc.", "facts": {}}
     async with SECFundamentalsClient(
         user_agent="GOATlens tests tests@example.com",
         transport=sec_payload_transport(ticker_map, payload),
@@ -1121,7 +1140,7 @@ async def test_conflict_only_revenue_payload_is_invalid_without_usable_reference
     ticker_map = {
         "0": {"cik_str": 1, "ticker": "BAD", "title": "Bad Corp"}
     }
-    payload = {"entityName": "Bad Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bad Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [
             {**annual, "val": 100}, {**annual, "val": 120},
         ]}},
@@ -1142,7 +1161,7 @@ async def test_assets_only_payload_is_invalid_without_revenue_reference():
     ticker_map = {
         "0": {"cik_str": 1, "ticker": "BAD", "title": "Bad Corp"}
     }
-    payload = {"entityName": "Bad Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bad Corp", "facts": {"us-gaap": {
         "Assets": {"units": {"USD": [{
             "end": "2024-12-31", "val": 500,
             "accn": "0000000000-25-000001", "fy": 2024, "fp": "FY",
@@ -1162,7 +1181,7 @@ async def test_non_numeric_sec_fact_value_is_invalid():
     ticker_map = {
         "0": {"cik_str": 1, "ticker": "BAD", "title": "Bad Corp"}
     }
-    payload = {"entityName": "Bad Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bad Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [{
             "start": "2024-01-01", "end": "2024-12-31",
             "val": "100", "accn": "0000000000-25-000001",

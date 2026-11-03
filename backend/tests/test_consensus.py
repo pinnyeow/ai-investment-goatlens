@@ -177,7 +177,12 @@ async def test_llm_consensus_preserves_structural_no_majority_warning():
 
 def test_consensus_evals_accept_valid_mixed_contract():
     consensus = {"verdict": "mixed", "agreement_score": None}
-    agents = [{"verdict": "sell"}, {"verdict": "buy"}]
+    agents = [
+        {"verdict": "sell"},
+        {"verdict": "sell"},
+        {"verdict": "buy"},
+        {"verdict": "buy"},
+    ]
 
     checks = [
         *eval_agreement_score_valid(consensus),

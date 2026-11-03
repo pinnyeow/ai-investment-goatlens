@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+import hashlib
+import json
 import math
 import re
 from typing import Any, Dict, List, Optional
@@ -75,6 +77,8 @@ class SECFundamentals:
     latest: Dict[str, FundamentalValue]
     history: Dict[str, List[FundamentalValue]]
     is_financial_institution: bool = False
+    issuer_lookup_record: Optional[str] = None
+    issuer_lookup_digest: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -105,9 +109,12 @@ class NormalizedMetric:
 class SECNormalization(dict):
     """Analysis values plus the exact SEC facts used to derive them."""
 
-    def __init__(self, values: Dict[str, Any], metrics: Dict[str, NormalizedMetric]):
+    def __init__(
+        self, values: Dict[str, Any], metrics: Dict[str, NormalizedMetric], cik: str
+    ):
         super().__init__(values)
         self.metrics = metrics
+        self.cik = cik
 
 
 def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
@@ -521,11 +528,33 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             )
         )
 
+    broader_debt_current_same_period = (
+        reference is not None
+        and any(
+            item.value is not None
+            and item.provenance is not None
+            and item.provenance.end == reference.end
+            for item in data.history["debt_current"]
+        )
+    )
+
     reported_debt_roles: List[tuple[str, FundamentalValue]] = []
     debt_to_equity_formula = "reviewed_funded_debt_branch_divided_by_equity"
     if (
+        debt_facts["debt_current"] is not None
+        and debt_facts["long_term_debt_noncurrent"] is not None
+    ):
+        reported_debt_roles = [
+            ("debt_current", debt_facts["debt_current"]),
+            ("long_term_noncurrent", debt_facts["long_term_debt_noncurrent"]),
+        ]
+        debt_to_equity_formula = (
+            "debt_current_plus_long_term_debt_noncurrent_divided_by_equity"
+        )
+    elif (
         debt_facts["long_term_debt_current"] is not None
         and debt_facts["long_term_debt_noncurrent"] is not None
+        and not broader_debt_current_same_period
         and (
             debt_facts["short_term_borrowings"] is not None
             or legitimately_unreported("short_term_borrowings")
@@ -542,25 +571,6 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
         debt_to_equity_formula = (
             "long_term_debt_components_plus_optional_short_term_borrowings_"
             "divided_by_equity"
-        )
-    elif (
-        debt_facts["debt_current"] is not None
-        and debt_facts["long_term_debt"] is not None
-        and all(
-            legitimately_unreported(metric)
-            for metric in (
-                "long_term_debt_current",
-                "long_term_debt_noncurrent",
-                "short_term_borrowings",
-            )
-        )
-    ):
-        reported_debt_roles = [
-            ("debt_current", debt_facts["debt_current"]),
-            ("long_term_debt", debt_facts["long_term_debt"]),
-        ]
-        debt_to_equity_formula = (
-            "debt_current_plus_long_term_debt_divided_by_equity"
         )
     elif (
         debt_facts["short_term_borrowings"] is not None
@@ -990,7 +1000,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             value=float(value) if value is not None else None,
             formula=formula,
             formula_version=(
-                "sec_companyfacts_debt_to_equity_v3"
+                "sec_companyfacts_debt_to_equity_v4"
                 if name == "debt_to_equity"
                 else "sec_companyfacts_v1"
             ),
@@ -998,7 +1008,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             availability_reason=reason,
         )
 
-    return SECNormalization(values, metrics)
+    return SECNormalization(values, metrics, data.cik)
 
 
 _METRICS = {
@@ -1135,12 +1145,26 @@ class SECFundamentalsClient:
             cik = str(int(company["cik_str"])).zfill(10)
         except (KeyError, TypeError, ValueError):
             raise SECInvalidResponseError("SEC returned an invalid response.") from None
+        issuer_lookup_record = json.dumps(
+            company, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        issuer_lookup_digest = "sha256:" + hashlib.sha256(
+            issuer_lookup_record.encode("utf-8")
+        ).hexdigest()
         facts_response = await self._get_response(
             f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
         )
         self._raise_structured_status(facts_response)
         facts_response.raise_for_status()
         payload = self._json_object(facts_response)
+        try:
+            payload_cik = str(int(payload["cik"])).zfill(10)
+        except (KeyError, TypeError, ValueError):
+            raise SECInvalidResponseError("SEC returned an invalid response.") from None
+        if payload_cik != cik:
+            raise SECInvalidResponseError(
+                "SEC Companyfacts issuer identity does not match the ticker map."
+            )
         if not isinstance(payload.get("facts"), dict):
             raise SECInvalidResponseError("SEC returned an invalid response.")
         us_gaap = payload["facts"].get("us-gaap")
@@ -1255,6 +1279,8 @@ class SECFundamentalsClient:
             latest=latest,
             history=history,
             is_financial_institution=is_financial_institution,
+            issuer_lookup_record=issuer_lookup_record,
+            issuer_lookup_digest=issuer_lookup_digest,
         )
 
     @staticmethod
