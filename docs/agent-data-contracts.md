@@ -155,6 +155,15 @@ It does not measure identical verdict intensity, confidence calibration, model
 independence, track record, or forecast accuracy. Structural mixed/no-majority
 warnings are deterministic and cannot be replaced by generated consensus prose.
 
+Each completed analysis publishes the exact canonical metric values consumed by
+its strategy. The public boundary reconstructs the strategy score from a frozen,
+strategy-specific scoring registry and those bound values. A coordinated change
+to a threshold-consistent score/verdict pair and its comparison projection fails
+when the recommendation does not match the evidence-derived reconstruction.
+Customer-facing insights and concerns are also exact ordered deterministic
+projections of the same consumed values. Generated narrative cannot replace
+them, and the shipping agent and consensus paths do not invoke metered models.
+
 ## Release gate
 
 PR #9 cannot be merge-ready until an exact-SHA Render preview proves:

@@ -537,6 +537,50 @@ async def test_total_revenues_precedence_is_not_overridden_by_narrower_newer_fil
 
 
 @pytest.mark.asyncio
+async def test_general_metric_alias_precedence_beats_newer_fallback_filing():
+    payload = load_json("companyfacts_aapl.json")
+    preferred = {
+        "start": "2024-01-01",
+        "end": "2024-12-31",
+        "accn": "preferred",
+        "fy": 2024,
+        "fp": "FY",
+        "form": "10-K",
+        "filed": "2025-02-01",
+        "val": 3,
+    }
+    fallback = {
+        **preferred,
+        "accn": "fallback",
+        "filed": "2025-03-01",
+        "val": 9,
+    }
+    payload["facts"]["us-gaap"]["InterestExpenseNonoperating"] = {
+        "units": {"USD": [preferred]}
+    }
+    payload["facts"]["us-gaap"]["InterestExpense"] = {
+        "units": {"USD": [fallback]}
+    }
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(load_json("company_tickers.json"), payload),
+    ) as client:
+        result = await client.get_fundamentals(
+            "AAPL", as_of=date.fromisoformat("2026-10-14")
+        )
+
+    interest = next(
+        item for item in result.history["interest_expense"]
+        if item.provenance and item.provenance.end == "2024-12-31"
+    )
+    assert interest.value == 3
+    assert interest.provenance is not None
+    assert interest.provenance.concept == "InterestExpenseNonoperating"
+    assert interest.provenance.accession == "preferred"
+
+
+@pytest.mark.asyncio
 async def test_financial_issuer_fails_closed_when_preferred_revenue_definition_is_stale():
     old = {
         "start": "2023-01-01",

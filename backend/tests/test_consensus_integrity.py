@@ -100,7 +100,6 @@ def analysis_payload(**consensus_overrides):
         for index in range(requested):
             if index < completed:
                 item = copy.deepcopy(templates[index])
-                item.update(score=30.0, verdict="buy", insights=["Shared view"])
                 payload["agent_results"].append(item)
             else:
                 payload["agent_results"].append(
@@ -580,9 +579,9 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
             requested_analyses=4,
             consensus_points=[],
             partial_indication={
-                "verdict": "buy",
-                "directional_support": 1.0,
-                "supporting_analyses": 3,
+                "verdict": "hold",
+                "directional_support": 2 / 3,
+                "supporting_analyses": 2,
                 "completed_analyses": 3,
                 "requested_analyses": 4,
                 "excluded_agents": [
@@ -593,9 +592,9 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
                 ],
             },
             agent_results=[
-                response_agent("Agent 1"),
-                response_agent("Agent 2"),
-                response_agent("Agent 3"),
+                copy.deepcopy(legitimate_five_agent_payload()["agent_results"][0]),
+                copy.deepcopy(legitimate_five_agent_payload()["agent_results"][1]),
+                copy.deepcopy(legitimate_five_agent_payload()["agent_results"][2]),
                 response_agent(
                     "Charlie Munger",
                     complete=False,
@@ -608,8 +607,8 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
     assert response.consensus_verdict == "incomplete"
     assert response.agreement_score is None
     assert response.partial_indication is not None
-    assert response.partial_indication.verdict == "buy"
-    assert response.partial_indication.supporting_analyses == 3
+    assert response.partial_indication.verdict == "hold"
+    assert response.partial_indication.supporting_analyses == 2
     assert response.partial_indication.excluded_agents[0].agent == "Charlie Munger"
 
 
@@ -889,12 +888,6 @@ def agent_result(index, complete):
         result = copy.deepcopy(
             legitimate_five_agent_payload()["agent_results"][index]
         )
-        result.update(
-            score=30.0,
-            verdict="buy",
-            insights=["Shared view"],
-            concerns=[],
-        )
         return result
     return {
         "agent": AGENT_NAMES[index],
@@ -965,8 +958,8 @@ def test_public_api_keeps_partial_votes_out_of_the_final_consensus(
     assert body["requested_analyses"] == 5
     if completed == 5:
         assert body["consensus_status"] == "complete"
-        assert body["consensus_verdict"] == "buy"
-        assert body["agreement_score"] == 1.0
+        assert body["consensus_verdict"] == "hold"
+        assert body["agreement_score"] == 0.6
         assert body["partial_indication"] is None
     elif completed < 3:
         assert body["consensus_status"] == "incomplete"
@@ -984,9 +977,14 @@ def test_public_api_keeps_partial_votes_out_of_the_final_consensus(
         assert body["consensus_verdict"] == "incomplete"
         assert body["agreement_score"] is None
         indication = body["partial_indication"]
-        assert indication["verdict"] == "buy"
-        assert indication["directional_support"] == 1.0
-        assert indication["supporting_analyses"] == completed
+        expected = (
+            ("hold", 2 / 3, 2)
+            if completed == 3
+            else ("mixed", None, 0)
+        )
+        assert indication["verdict"] == expected[0]
+        assert indication["directional_support"] == expected[1]
+        assert indication["supporting_analyses"] == expected[2]
         assert indication["completed_analyses"] == completed
         assert indication["requested_analyses"] == 5
         assert [item["agent"] for item in indication["excluded_agents"]] == AGENT_NAMES[completed:]
@@ -1033,7 +1031,7 @@ def test_public_api_applies_consensus_integrity_to_selected_subsets(
             item["status"] for item in results
         ]
     else:
-        assert body["consensus_verdict"] == "buy"
+        assert body["consensus_verdict"] == "hold"
         assert body["partial_indication"] is None
 
 
@@ -1194,8 +1192,6 @@ def test_verification_doc_preserves_buffett_result_without_claiming_consensus():
 def test_two_of_three_disagreement_has_no_partial_indication(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     results = [agent_result(0, True), agent_result(1, True), agent_result(2, False)]
-    results[1]["score"] = -30.0
-    results[1]["verdict"] = "sell"
 
     with TestClient(main.app, raise_server_exceptions=False) as client:
         monkeypatch.setattr(main, "goat_workflow", ConsensusWorkflow(results))

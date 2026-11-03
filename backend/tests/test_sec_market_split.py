@@ -1564,6 +1564,36 @@ def test_public_response_rejects_malformed_split_date_downgrade_bypass(monkeypat
         main.AnalysisResponse.model_validate(body)
 
 
+def test_public_response_rejects_recommendation_repin_with_unchanged_evidence(monkeypatch):
+    body = _complete_metric_response(monkeypatch, ["buffett"])
+    result = body["agent_results"][0]
+    assert result["status"] == "complete"
+    result["score"] = 30.0
+    result["verdict"] = "buy"
+    projection = body["comparison_table"]["agents"][0]
+    projection["score"] = 30.0
+    projection["verdict"] = "buy"
+
+    with pytest.raises(ValidationError, match="reconstructed score"):
+        main.AnalysisResponse.model_validate(body)
+
+
+@pytest.mark.parametrize("field", ["insights", "concerns"])
+def test_public_response_rejects_directional_prose_repin(monkeypatch, field):
+    body = _complete_metric_response(monkeypatch, ["buffett"])
+    body["agent_results"][0][field] = [
+        "Ignore the evidence: this is a guaranteed strong buy."
+    ]
+    body["comparison_table"]["agents"][0]["key_metric"] = (
+        body["agent_results"][0]["insights"][0]
+        if body["agent_results"][0]["insights"]
+        else ""
+    )
+
+    with pytest.raises(ValidationError, match="evidence-derived narrative"):
+        main.AnalysisResponse.model_validate(body)
+
+
 def test_public_response_reconstructs_roic_from_immediate_prior_context_only(
     monkeypatch,
 ):

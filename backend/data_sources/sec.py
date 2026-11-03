@@ -1323,6 +1323,7 @@ class SECFundamentalsClient:
         as_of: date,
     ) -> tuple[List[FundamentalValue], bool]:
         facts = payload.get("facts", {}).get("us-gaap", {})
+        concept_priority = {concept: index for index, concept in enumerate(aliases)}
         candidates: Dict[str, List[Dict[str, Any]]] = {}
         for concept in aliases:
             concept_rows = facts.get(concept, {}).get("units", {}).get(unit, [])
@@ -1361,9 +1362,20 @@ class SECFundamentalsClient:
             default=None,
         )
         for period, period_candidates in candidates.items():
-            winning_rank = max(candidate["rank"] for candidate in period_candidates)
+            winning_priority = min(
+                concept_priority[candidate["concept"]]
+                for candidate in period_candidates
+            )
+            preferred_candidates = [
+                candidate
+                for candidate in period_candidates
+                if concept_priority[candidate["concept"]] == winning_priority
+            ]
+            winning_rank = max(
+                candidate["rank"] for candidate in preferred_candidates
+            )
             winning_candidates = [
-                candidate for candidate in period_candidates
+                candidate for candidate in preferred_candidates
                 if candidate["rank"] == winning_rank
             ]
             reported_values = {

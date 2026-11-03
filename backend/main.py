@@ -118,7 +118,6 @@ from strategies import (
     calculate_consensus_with_llm,
     calculate_ordinal_consensus,
 )
-from llm import get_llm_client
 from rag import RAGRetriever
 
 
@@ -184,6 +183,300 @@ def _mandatory_consumed_metrics(contract, values):
             "earnings_turnaround",
         )
     return mandatory
+
+
+def _reconstruct_agent_score(agent: str, values: Dict[str, float]) -> float:
+    """Frozen public-boundary reconstruction; independent of agent implementations."""
+    score = 0.0
+    if agent == "Warren Buffett":
+        roe = values["roe"]
+        margin = values["profit_margin"]
+        debt = values["debt_to_equity"]
+        free_cash_flow = values["free_cash_flow"]
+        score += min(25, (roe / 0.15) * 15) if roe >= 0.15 else -15
+        score += min(20, (margin / 0.10) * 10) if margin >= 0.10 else -10
+        score += 20 if debt <= 0.5 else 10 if debt <= 1.0 else -20
+        score += 15 if free_cash_flow > 0 else -20 if free_cash_flow < 0 else 0
+    elif agent == "Peter Lynch":
+        pe = values["pe_ratio"]
+        growth = values.get("earnings_growth")
+        turnaround = values.get("earnings_turnaround") == 1.0
+        institutional = values.get("institutional_ownership")
+        debt = values["debt_to_equity"]
+        peg = pe / (growth * 100) if growth is not None and growth > 0 else None
+        category = (
+            "turnaround" if growth is None
+            else "slow_grower" if growth < 0.05
+            else "stalwart" if growth < 0.15
+            else "fast_grower" if growth >= 0.20
+            else "stalwart"
+        )
+        ten_bagger = 0
+        if peg is not None and peg < 1.0:
+            ten_bagger += 30
+        if growth is not None and growth >= 0.20:
+            ten_bagger += 25
+        if institutional is not None and institutional < 0.50:
+            ten_bagger += 15
+        if debt < 0.5:
+            ten_bagger += 15
+        if peg is not None:
+            score += 35 if peg < 0.5 else 25 if peg < 1.0 else 10 if peg < 1.5 else -10 if peg < 2.0 else -25
+        score += 25 if category == "fast_grower" else 15 if category == "stalwart" else -15 if category == "slow_grower" else 15 if turnaround else 0
+        if institutional is not None:
+            score += 15 if institutional < 0.30 else 10 if institutional < 0.50 else -10 if institutional > 0.80 else 0
+        score += min(100, ten_bagger) * 0.25
+    elif agent == "Benjamin Graham":
+        pe = values["pe_ratio"]
+        current_ratio = values["current_ratio"]
+        price = values["current_price"]
+        assets = values["current_assets"]
+        liabilities = values["total_liabilities"]
+        shares = values["shares_outstanding"]
+        eps = values["eps"]
+        book_value = values["book_value_per_share"]
+        dividend_yield = values.get("dividend_yield")
+        dividend_years = values.get("consecutive_dividend_years")
+        graham_number = math.sqrt(22.5 * eps * book_value) if eps > 0 and book_value > 0 else 0
+        net_net = (assets - liabilities) / shares
+        graham_margin = (graham_number - price) / graham_number if graham_number > 0 else 0
+        net_net_margin = (net_net - price) / net_net if net_net > 0 else 0
+        margin = max(graham_margin, net_net_margin) if price > 0 else 0
+        score += 40 if margin >= 0.33 else 25 if margin >= 0.20 else 10 if margin >= 0.10 else -30 if margin < 0 else 0
+        score += 20 if 0 < pe <= 10 else 15 if pe <= 15 else 5 if pe <= 20 else -15
+        score += 15 if current_ratio >= 2.0 else 5 if current_ratio >= 1.5 else -15
+        if dividend_yield is not None and dividend_yield > 0 and dividend_years is not None:
+            score += 15 if dividend_years >= 20 else 10 if dividend_years >= 10 else 5 if dividend_years >= 5 else 0
+        if net_net > price:
+            score += 20
+    elif agent == "Charlie Munger":
+        gross = values["gross_margin"]
+        operating = values["operating_margin"]
+        growth = values["revenue_growth_5y"]
+        capex = values["capex_to_revenue"]
+        debt = values["debt_to_equity"]
+        margin_trend = values["margin_trend"]
+        roic = values.get("roic")
+        ownership = values.get("insider_ownership")
+        quality = (25 if gross >= 0.40 else 0) + (20 if operating >= 0.15 else 0)
+        quality += 25 if roic is not None and roic >= 0.15 else 0
+        quality += 15 if capex < 0.05 else 0
+        quality += 15 if growth > 0.05 else 0
+        flags = sum((debt > 1.0, margin_trend < -0.02, gross < 0.20, capex > 0.15, roic is not None and roic < 0.08, ownership is not None and ownership < 0.01))
+        score = quality - flags * 20
+        if ownership is not None:
+            score += 15 if ownership >= 0.10 else 10 if ownership >= 0.05 else 0
+    elif agent == "Ray Dalio":
+        beta = values["beta"]
+        volatility = values["volatility_252d"]
+        debt = values["debt_to_equity"]
+        correlation = values["correlation_sp500"]
+        realized_return = values["realized_total_return_252d"]
+        debt_growth = values.get("debt_growth_3y")
+        ratio = realized_return / volatility if volatility > 0 else 0
+        score += 30 if ratio >= 1.0 else 20 if ratio >= 0.5 else 10 if ratio >= 0.25 else -20 if ratio < 0 else 0
+        score += 100 * (1 - abs(correlation)) * 0.2
+        score += 15 if debt < 1.0 else -20
+        if debt_growth is not None:
+            score += 5 if debt_growth > 0.15 else 10 if debt_growth > 0 else 0
+        score += 15 if 0.8 <= beta <= 1.2 else 10 if 0.5 <= beta <= 1.5 else -10
+    else:
+        raise ValueError("Unknown agent score contract")
+    return round(max(-100, min(100, score)), 2)
+
+
+def _reconstruct_agent_narrative(
+    agent: str, values: Dict[str, float]
+) -> tuple[List[str], List[str]]:
+    """Frozen deterministic findings; earnings narratives are not in the shipping path."""
+    insights: List[str] = []
+    concerns: List[str] = []
+    if agent == "Warren Buffett":
+        roe = values["roe"]
+        margin = values["profit_margin"]
+        debt = values["debt_to_equity"]
+        cash_flow = values["free_cash_flow"]
+        if roe >= 0.15:
+            insights.append(
+                f"Strong ROE of {roe:.1%} indicates efficient capital deployment"
+            )
+        if margin >= 0.10:
+            insights.append(
+                f"Healthy profit margin of {margin:.1%} suggests pricing power"
+            )
+        if debt <= 0.5:
+            insights.append("Conservative debt levels provide margin of safety")
+        if cash_flow > 0:
+            insights.append("Positive free cash flow supports financial flexibility")
+        if roe < 0.15:
+            concerns.append(f"ROE of {roe:.1%} below Buffett's 15% threshold")
+        if debt > 1.0:
+            concerns.append(f"High debt-to-equity ratio of {debt:.2f}")
+        if margin < 0.10:
+            concerns.append("Thin profit margins may indicate weak competitive position")
+        if cash_flow < 0:
+            concerns.append("Negative free cash flow weakens financial flexibility")
+    elif agent == "Peter Lynch":
+        pe = values["pe_ratio"]
+        growth = values.get("earnings_growth")
+        turnaround = values.get("earnings_turnaround") == 1.0
+        institutional = values.get("institutional_ownership")
+        cash = values.get("cash_and_equivalents")
+        peg = pe / (growth * 100) if growth is not None and growth > 0 else None
+        category = (
+            "turnaround" if growth is None
+            else "slow_grower" if growth < 0.05
+            else "stalwart" if growth < 0.15
+            else "fast_grower" if growth >= 0.20
+            else "stalwart"
+        )
+        if peg is not None and peg < 1.0:
+            insights.append(
+                f"Attractive PEG ratio of {peg:.2f} - growth at reasonable price"
+            )
+        if category == "turnaround":
+            insights.append(
+                "Negative-to-positive earnings turnaround confirmed at the compared "
+                "SEC endpoints; CAGR and PEG are not applicable"
+            )
+        elif category == "fast_grower" and growth is not None:
+            insights.append(f"Fast grower with {growth:.1%} earnings growth")
+        if institutional is not None and institutional < 0.50:
+            insights.append("Low institutional ownership suggests discovery potential")
+        if cash is not None:
+            insights.append(f"Reported cash and equivalents: {cash:,.0f}")
+        if peg is not None and peg > 2.0:
+            concerns.append(f"High PEG ratio of {peg:.2f} - paying too much for growth")
+        if institutional is not None and institutional > 0.80:
+            concerns.append("Heavy institutional ownership - may be fully discovered")
+        if growth is not None and growth < 0:
+            concerns.append("Negative earnings growth")
+        if turnaround:
+            concerns.append(
+                "The endpoint turnaround does not establish the durability of the "
+                "earnings recovery"
+            )
+    elif agent == "Benjamin Graham":
+        pe = values["pe_ratio"]
+        pb = values["pb_ratio"]
+        current_ratio = values["current_ratio"]
+        price = values["current_price"]
+        assets = values["current_assets"]
+        liabilities = values["total_liabilities"]
+        shares = values["shares_outstanding"]
+        eps = values["eps"]
+        book_value = values["book_value_per_share"]
+        dividend_yield = values.get("dividend_yield")
+        dividend_years = values.get("consecutive_dividend_years")
+        graham_number = math.sqrt(22.5 * eps * book_value) if eps > 0 and book_value > 0 else 0
+        net_net = (assets - liabilities) / shares
+        graham_margin = (graham_number - price) / graham_number if graham_number > 0 else 0
+        net_net_margin = (net_net - price) / net_net if net_net > 0 else 0
+        margin = max(graham_margin, net_net_margin) if price > 0 else 0
+        if margin >= 0.20:
+            insights.append(
+                f"Strong margin of safety at {margin * 100:.0f}% discount to intrinsic value"
+            )
+        if 0 < pe <= 15:
+            insights.append(f"Attractive P/E ratio of {pe:.1f}")
+        if current_ratio >= 2.0:
+            insights.append(
+                f"Strong balance sheet with current ratio of {current_ratio:.1f}"
+            )
+        if dividend_years is not None and dividend_years >= 10:
+            years = int(dividend_years) if dividend_years.is_integer() else dividend_years
+            insights.append(f"Consistent dividend payer for {years} years")
+        if net_net > price:
+            insights.append("Net-Net opportunity - trading below liquidation value!")
+        if pe > 20:
+            concerns.append(f"High P/E of {pe:.1f} exceeds Graham's maximum of 15")
+        if current_ratio < 1.5:
+            concerns.append(
+                f"Weak current ratio of {current_ratio:.1f} indicates liquidity risk"
+            )
+        if pb > 2.0:
+            concerns.append(f"High P/B ratio of {pb:.1f}")
+        if dividend_yield is None:
+            concerns.append("Current dividend yield is unavailable")
+        elif dividend_yield == 0:
+            concerns.append("No current dividend")
+        elif dividend_years is None:
+            concerns.append("Dividend history is unavailable")
+        elif dividend_years < 5:
+            concerns.append("Limited dividend history")
+    elif agent == "Charlie Munger":
+        gross = values["gross_margin"]
+        operating = values["operating_margin"]
+        growth = values["revenue_growth_5y"]
+        capex = values["capex_to_revenue"]
+        debt = values["debt_to_equity"]
+        margin_trend = values["margin_trend"]
+        roic = values.get("roic")
+        ownership = values.get("insider_ownership")
+        quality = (25 if gross >= 0.40 else 0) + (20 if operating >= 0.15 else 0)
+        quality += 25 if roic is not None and roic >= 0.15 else 0
+        quality += 15 if capex < 0.05 else 0
+        quality += 15 if growth > 0.05 else 0
+        level = "Exceptional" if quality >= 80 else "High" if quality >= 60 else "Moderate" if quality >= 40 else "Low"
+        if level in {"Exceptional", "High"}:
+            insights.append(f"{level} quality business")
+        if roic is not None and roic >= 0.20:
+            insights.append(f"Outstanding capital allocation with {roic:.1%} ROIC")
+        if gross >= 0.50:
+            insights.append(f"Strong pricing power evident in {gross:.1%} gross margin")
+        if ownership is not None and ownership >= 0.10:
+            insights.append("Significant management ownership aligns incentives")
+        if roic is None:
+            insights.append(
+                "ROIC is unavailable; the quality score excludes capital-efficiency points"
+            )
+        if debt > 1.0:
+            concerns.append(f"High debt burden (D/E: {debt:.1f})")
+        if margin_trend < -0.02:
+            concerns.append("Declining profit margins - possible moat erosion")
+        if gross < 0.20:
+            concerns.append("Low gross margins - commodity business characteristics")
+        if capex > 0.15:
+            concerns.append("High capital requirements to maintain business")
+        if roic is not None and roic < 0.08:
+            concerns.append("Poor return on invested capital")
+        if ownership is not None and ownership < 0.01:
+            concerns.append("Low management ownership - misaligned incentives")
+    elif agent == "Ray Dalio":
+        beta = values["beta"]
+        debt = values["debt_to_equity"]
+        correlation = values["correlation_sp500"]
+        interest = values.get("interest_coverage")
+        debt_growth = values.get("debt_growth_3y")
+        if debt_growth is None:
+            risk_level = "current_leverage_only"
+        elif debt_growth > 0.15:
+            risk_level = "elevated"
+        else:
+            risk_level = "normal" if debt_growth > -0.10 else "context_required"
+        sustainable = debt < 1.0
+        if sustainable:
+            insights.append("Sustainable debt levels provide flexibility")
+        if correlation < 0.5:
+            insights.append("Low market correlation offers diversification benefit")
+        if 0.8 <= beta <= 1.2:
+            insights.append("Beta near 1.0 indicates market-like risk profile")
+        if debt_growth is None:
+            insights.append(
+                "Historical debt trajectory is unavailable; this assessment uses "
+                "current leverage only"
+            )
+        if not sustainable:
+            concerns.append("High debt levels create vulnerability in downturns")
+        if beta > 1.5:
+            concerns.append(f"High beta ({beta:.1f}) amplifies market risk")
+        if risk_level in {"elevated", "distressed"}:
+            concerns.append(f"Debt cycle risk level: {risk_level}")
+        if interest is not None and interest < 3:
+            concerns.append(f"Low interest coverage ({interest:.1f}x)")
+    else:
+        raise ValueError("Unknown agent narrative contract")
+    return insights, concerns
 
 
 def _normalize_ticker(value: str) -> str:
@@ -1121,6 +1414,27 @@ class AnalysisResponse(StrictAPIModel):
             )
         if not valid:
             raise ValueError("Consensus fields are inconsistent")
+        for result in completed_results:
+            reconstructed_score = _reconstruct_agent_score(
+                result.agent, result.required_metric_values
+            )
+            if result.score is None or not math.isclose(
+                result.score,
+                reconstructed_score,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ):
+                raise ValueError("Agent result must match reconstructed score")
+            expected_insights, expected_concerns = _reconstruct_agent_narrative(
+                result.agent, result.required_metric_values
+            )
+            if (
+                result.insights != expected_insights
+                or result.concerns != expected_concerns
+            ):
+                raise ValueError(
+                    "Agent findings must match the evidence-derived narrative"
+                )
         return self
     
     # Earnings history
@@ -3017,13 +3331,9 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
     
-    # Build agents: single loop handles both LLM and rule-based modes
-    has_llm = bool(os.getenv("OPENAI_API_KEY"))
+    # Shipping analysis is deterministic and must not depend on metered narrative calls.
     all_agents = {
-        name: cls(
-            llm_client=get_llm_client(getattr(cls, "model_preference", "gpt-4o-mini"))
-            if has_llm else None
-        )
+        name: cls(llm_client=None)
         for name, cls in AGENT_REGISTRY
     }
     
@@ -3210,7 +3520,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
             score=result.get("score", 0),
         ))
     
-    llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
+    llm = None
 
     if completed_analyses < 3:
         state["consensus"] = {

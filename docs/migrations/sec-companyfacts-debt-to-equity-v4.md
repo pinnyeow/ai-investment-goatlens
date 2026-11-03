@@ -54,3 +54,9 @@ and comparison projections must all carry the ticker-map CIK. The SEC adapter
 validates that the Companyfacts payload CIK exactly matches that authoritative
 lookup before normalization. This proves lookup/payload identity agreement, not
 provider authenticity beyond the HTTPS SEC retrieval boundary.
+
+Within every non-debt SEC alias family, declared concept order is semantic
+precedence per compatible annual period. GOATlens first selects the earliest
+available concept in that order, then applies filing/amendment/accession ranking
+only among rows for that concept. A newer lower-priority alias cannot replace a
+preferred definition or create a cross-definition conflict.
