@@ -82,7 +82,10 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     for section, ticker in ((aapl, "AAPL"), (amzn, "AMZN")):
         assert f'"ticker":"{ticker}"' in section
         assert '"agents":["buffett","lynch","graham","munger","dalio"]' in section
-        assert "completed >= 2" in section
+        assert "completed >= 1" in section
+        assert "completed >= 2" not in section
+        assert "'complete' if completed == 5 else 'partial' if completed >= 3 else 'incomplete'" in section
+        assert "(completed < 3 and partial is None) or (3 <= completed < 5 and partial is not None) or (completed == 5 and partial is None)" in section
         assert "item.get('status') == 'incomplete'" in section
         assert "item.get('score') is None" in section
         assert "item.get('verdict') is None" in section
