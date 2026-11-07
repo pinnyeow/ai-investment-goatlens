@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-3mMjJooNr/i21sq1ZM9hwrLZ/+wQWro9H60VSJDDSuA=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-W4bN8Haue+s7AAhILoiF1GKqA9hjwEfszDT3JWxNFUU=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
     <title>GOATlens - Multi-Agent Investment Analysis</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -3602,7 +3602,7 @@
             } else if (data.consensus_status === 'incomplete') {
                 status = completed === 0
                     ? 'Incomplete — no requested analysis is complete.'
-                    : `Incomplete — ${completed} of ${requested} requested analyses complete; at least 2 are required for consensus.`;
+                    : `Incomplete — ${completed} of ${requested} requested analyses complete; at least 3 are required for consensus.`;
             } else {
                 status = 'Complete consensus — all requested analyses are complete.';
             }

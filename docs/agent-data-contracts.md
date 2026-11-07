@@ -135,6 +135,12 @@ Malformed, stale, incomplete, rate-limited, or unavailable responses remain unav
 
 ## Consensus semantics
 
+Final consensus requires every requested analysis to complete and at least three
+completed analyses. A subordinate partial indication is allowed only when at least
+three analyses complete in a larger incomplete request. Zero, one, or two completed
+analyses publish no verdict, support/agreement value, or partial indication; their
+individual results remain available.
+
 Completed investor verdicts are equally weighted ordinal votes from `strong_sell`
 through `strong_buy`; raw strategy scores are not averaged because the five strategy
 rubrics are not calibrated as one common scale. With an odd number of completed
@@ -148,6 +154,15 @@ The legacy API field `agreement_score` is retained for compatibility but means
 It does not measure identical verdict intensity, confidence calibration, model
 independence, track record, or forecast accuracy. Structural mixed/no-majority
 warnings are deterministic and cannot be replaced by generated consensus prose.
+
+Each completed analysis publishes the exact canonical metric values consumed by
+its strategy. The public boundary reconstructs the strategy score from a frozen,
+strategy-specific scoring registry and those bound values. A coordinated change
+to a threshold-consistent score/verdict pair and its comparison projection fails
+when the recommendation does not match the evidence-derived reconstruction.
+Customer-facing insights and concerns are also exact ordered deterministic
+projections of the same consumed values. Generated narrative cannot replace
+them, and the shipping agent and consensus paths do not invoke metered models.
 
 ## Release gate
 

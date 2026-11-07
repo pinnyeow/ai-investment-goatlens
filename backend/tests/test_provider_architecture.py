@@ -82,7 +82,10 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     for section, ticker in ((aapl, "AAPL"), (amzn, "AMZN")):
         assert f'"ticker":"{ticker}"' in section
         assert '"agents":["buffett","lynch","graham","munger","dalio"]' in section
-        assert "completed >= 2" in section
+        assert "completed >= 1" in section
+        assert "completed >= 2" not in section
+        assert "'complete' if completed == 5 else 'partial' if completed >= 3 else 'incomplete'" in section
+        assert "(completed < 3 and partial is None) or (3 <= completed < 5 and partial is not None) or (completed == 5 and partial is None)" in section
         assert "item.get('status') == 'incomplete'" in section
         assert "item.get('score') is None" in section
         assert "item.get('verdict') is None" in section
@@ -91,12 +94,41 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert "evidence.get('earnings_turnaround', {}).get('available')" in amzn
     assert "evidence.get('earnings_turnaround', {}).get('source') == 'sec'" in amzn
     assert "evidence.get('earnings_turnaround', {}).get('value') == 1.0" in amzn
+    assert '416161000000' not in aapl
+    assert '0000320193-25-000079' not in aapl
+    assert "revenue.get('value') > 0" in aapl
+    assert "provenance.get('namespace') == 'us-gaap'" in aapl
+    assert "re.fullmatch(r'[0-9]{10}-[0-9]{2}-[0-9]{6}', provenance.get('accession', ''))" in aapl
+    assert "provenance.get('form') in {'10-K', '10-K/A'}" in aapl
     assert "Yahoo market-data status (non-gating)" in workflow
     assert "revenue_minus_cost_of_revenue_divided_by_revenue" not in workflow
     assert "assert body['completed_analyses'] == 5" not in workflow
     assert 'RELEASE=$(python3 -c' in workflow
     assert '[[ "$RELEASE" == "$EXPECTED_SHA" ]]' in workflow
     assert '[[ "$BODY" == *' not in workflow
+
+
+def test_ci_has_blocking_five_agent_fixture_matrix():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+
+    assert "Representative five-agent fixture matrix" in workflow
+    assert "test_representative_fixture_matrix_exact_contract" in workflow
+
+
+def test_ci_runs_one_pinned_deterministic_full_gate_and_optimized_affected_gate():
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    verifier = (ROOT / "scripts" / "verify_goatlens.py").read_text()
+
+    assert "python scripts/verify_goatlens.py" in workflow
+    assert "python -O scripts/verify_goatlens.py --affected-only" in workflow
+    assert "fetch-depth: 0" in workflow
+    assert workflow.count("python -m pytest tests/") == 0
+    assert "cwd=ROOT" in verifier
+    assert "candidate_diff_range" in verifier
+    assert '"git", "merge-base"' in verifier
+    assert '"git", "diff", "--check", *candidate_diff_range()' in verifier
+    assert "yaml.safe_load" in verifier
+    assert '"-m", "pytest", "-q"' in verifier
 
 
 def test_repository_requires_explicit_deployment_and_canary_gate():
@@ -226,6 +258,30 @@ def test_versioned_breaking_change_ships_a_migration_note():
     assert "data_status.normalized_ratios" in content
     assert "provider_metric" in content
     assert "removed" in content.lower()
+
+
+def test_debt_to_equity_v4_formula_migration_is_explicit():
+    note = (
+        ROOT
+        / "docs"
+        / "migrations"
+        / "sec-companyfacts-debt-to-equity-v4.md"
+    )
+
+    content = note.read_text()
+    assert "sec_companyfacts_debt_to_equity_v4" in content
+    assert "debt_current_plus_long_term_debt_noncurrent_divided_by_equity" in content
+    assert "DebtCurrent + LongTermDebt`" in content
+    assert "could double count" in content
+    assert (
+        "short_term_borrowings_plus_long_term_debt_noncurrent_divided_by_equity"
+        in content
+    )
+    assert "LongTermDebtCurrent + LongTermDebtNoncurrent" in content
+    assert "ShortTermBorrowings" in content
+    assert "not zero" in content
+    assert "canonical CIK" in content
+    assert "lookup/payload identity agreement" in content
 
 
 def test_frontend_third_party_scripts_are_integrity_pinned_and_csp_limited():

@@ -67,6 +67,7 @@ def legitimate_five_agent_payload():
 def response_agent(name, *, complete=True, unavailable_metrics=None):
     return {
         "agent": name,
+        "cik": "0000000001",
         "style": "Test style",
         "verdict": "buy" if complete else None,
         "score": 30.0 if complete else None,
@@ -99,7 +100,6 @@ def analysis_payload(**consensus_overrides):
         for index in range(requested):
             if index < completed:
                 item = copy.deepcopy(templates[index])
-                item.update(score=30.0, verdict="buy", insights=["Shared view"])
                 payload["agent_results"].append(item)
             else:
                 payload["agent_results"].append(
@@ -130,6 +130,7 @@ def analysis_payload(**consensus_overrides):
     payload["comparison_table"] = {
         "agents": [
             {
+                "cik": result["cik"],
                 "name": result["agent"],
                 "style": result["style"],
                 "verdict": result["verdict"],
@@ -140,6 +141,55 @@ def analysis_payload(**consensus_overrides):
         ]
     }
     return payload
+
+
+@pytest.mark.parametrize(("completed", "requested"), [(2, 2), (2, 3)])
+def test_shipping_schema_withholds_consensus_below_three_full_analyses(
+    completed, requested
+):
+    response = main.AnalysisResponse.model_validate(
+        analysis_payload(
+            consensus_status="incomplete",
+            consensus_verdict="incomplete",
+            agreement_score=None,
+            completed_analyses=completed,
+            requested_analyses=requested,
+            partial_indication=None,
+            consensus_points=[],
+        )
+    )
+
+    assert response.consensus_status == "incomplete"
+    assert response.consensus_verdict == "incomplete"
+    assert response.agreement_score is None
+    assert response.partial_indication is None
+
+
+def test_shipping_schema_rejects_two_of_three_partial_indication():
+    with pytest.raises(ValidationError, match="completed_analyses"):
+        main.AnalysisResponse.model_validate(
+            analysis_payload(
+                consensus_status="partial",
+                consensus_verdict="incomplete",
+                agreement_score=None,
+                completed_analyses=2,
+                requested_analyses=3,
+                partial_indication={
+                    "verdict": "buy",
+                    "directional_support": 1.0,
+                    "supporting_analyses": 2,
+                    "completed_analyses": 2,
+                    "requested_analyses": 3,
+                    "excluded_agents": [
+                        {
+                            "agent": "Benjamin Graham",
+                            "unavailable_metrics": ["metric_3"],
+                        }
+                    ],
+                },
+                consensus_points=[],
+            )
+        )
 
 
 def test_api_rejects_partial_verdict_in_final_consensus_field():
@@ -169,11 +219,12 @@ def test_consensus_evaluators_check_the_subordinate_partial_indication():
         "partial_indication": {
             "verdict": "buy",
             "directional_support": 1.0,
-            "supporting_analyses": 2,
+            "supporting_analyses": 3,
         },
     }
     agents = [
         {"status": "complete", "verdict": "strong_buy"},
+        {"status": "complete", "verdict": "buy"},
         {"status": "complete", "verdict": "buy"},
         {"status": "incomplete", "verdict": None},
     ]
@@ -210,6 +261,7 @@ def test_remaining_evaluators_use_partial_indication_and_completed_agents():
     agents = [
         {"agent": "Completed A", "status": "complete", "verdict": "sell"},
         {"agent": "Completed B", "status": "complete", "verdict": "strong_sell"},
+        {"agent": "Completed C", "status": "complete", "verdict": "sell"},
         {"agent": "Missing", "status": "incomplete", "verdict": None},
     ]
 
@@ -237,7 +289,7 @@ def test_remaining_evaluators_use_partial_indication_and_completed_agents():
     assert "Missing" not in llm.prompt
 
 
-def test_all_consensus_evaluators_abstain_when_fewer_than_two_complete():
+def test_all_consensus_evaluators_abstain_when_fewer_than_three_complete():
     from evals.consensus_evals import run_consensus_evals
 
     class RejectingLlm:
@@ -252,11 +304,11 @@ def test_all_consensus_evaluators_abstain_when_fewer_than_two_complete():
                 "agreement_score": None,
                 "partial_indication": None,
                 "consensus_points": [],
-                "divergence_points": ["Fewer than two analyses completed."],
-                "completed_analyses": 1,
-                "requested_analyses": 1,
+                "divergence_points": ["Fewer than three analyses completed."],
+                "completed_analyses": 2,
+                "requested_analyses": 2,
             },
-            agent_outputs=[response_agent("Only completed agent")],
+            agent_outputs=[response_agent("Completed A"), response_agent("Completed B")],
             ticker="AAPL",
             llm_client=RejectingLlm(),
         )
@@ -266,6 +318,40 @@ def test_all_consensus_evaluators_abstain_when_fewer_than_two_complete():
     assert all(result.passed for result in layer.results)
     assert layer.results[0].name == "consensus_structural_integrity"
     assert all("abstain" in result.name for result in layer.results[1:])
+
+
+def test_consensus_evaluator_rejects_two_of_three_partial_indication():
+    from evals.consensus_evals import eval_consensus_structural_integrity
+
+    agents = [
+        response_agent("Completed A"),
+        response_agent("Completed B"),
+        response_agent("Missing", complete=False, unavailable_metrics=["price"]),
+    ]
+    result = eval_consensus_structural_integrity(
+        {
+            "status": "partial",
+            "verdict": "incomplete",
+            "agreement_score": None,
+            "completed_analyses": 2,
+            "requested_analyses": 3,
+            "consensus_points": [],
+            "partial_indication": {
+                "verdict": "buy",
+                "directional_support": 1.0,
+                "supporting_analyses": 2,
+                "completed_analyses": 2,
+                "requested_analyses": 3,
+                "excluded_agents": [
+                    {"agent": "Missing", "unavailable_metrics": ["price"]}
+                ],
+            },
+        },
+        agents,
+    )[0]
+
+    assert not result.passed
+    assert "at least three" in result.details
 
 
 def test_all_consensus_evaluators_reject_a_single_vote_published_as_consensus():
@@ -338,6 +424,7 @@ def test_consensus_evaluator_rejects_malformed_partial_metadata():
     agents = [
         response_agent("Completed A"),
         response_agent("Completed B"),
+        response_agent("Completed C"),
         response_agent("Missing", complete=False, unavailable_metrics=["price"]),
     ]
     layer = asyncio.run(
@@ -349,9 +436,9 @@ def test_consensus_evaluator_rejects_malformed_partial_metadata():
                 "partial_indication": {
                     "verdict": "buy",
                     "directional_support": 1.0,
-                    "supporting_analyses": 2,
-                    "completed_analyses": 2,
-                    "requested_analyses": 3,
+                    "supporting_analyses": 3,
+                    "completed_analyses": 3,
+                    "requested_analyses": 4,
                     "excluded_agents": [
                         {"agent": "Invented", "unavailable_metrics": ["price"]}
                     ],
@@ -360,8 +447,8 @@ def test_consensus_evaluator_rejects_malformed_partial_metadata():
                 },
                 "consensus_points": [],
                 "divergence_points": ["Final consensus unavailable."],
-                "completed_analyses": 2,
-                "requested_analyses": 3,
+                "completed_analyses": 3,
+                "requested_analyses": 4,
             },
             agent_outputs=agents,
             ticker="AAPL",
@@ -392,6 +479,7 @@ def test_consensus_evaluator_rejects_incorrect_partial_support_numerator(
     agents = [
         response_agent("Completed A"),
         response_agent("Completed B"),
+        response_agent("Completed C"),
         response_agent("Missing", complete=False, unavailable_metrics=["price"]),
     ]
     if verdict == "mixed":
@@ -407,8 +495,8 @@ def test_consensus_evaluator_rejects_incorrect_partial_support_numerator(
                     "verdict": verdict,
                     "directional_support": directional_support,
                     "supporting_analyses": supporting_analyses,
-                    "completed_analyses": 2,
-                    "requested_analyses": 3,
+                    "completed_analyses": 3,
+                    "requested_analyses": 4,
                     "excluded_agents": [
                         {"agent": "Missing", "unavailable_metrics": ["price"]}
                     ],
@@ -417,8 +505,8 @@ def test_consensus_evaluator_rejects_incorrect_partial_support_numerator(
                 },
                 "consensus_points": [],
                 "divergence_points": ["Final consensus unavailable."],
-                "completed_analyses": 2,
-                "requested_analyses": 3,
+                "completed_analyses": 3,
+                "requested_analyses": 4,
             },
             agent_outputs=agents,
             ticker="AAPL",
@@ -487,27 +575,28 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
             consensus_status="partial",
             consensus_verdict="incomplete",
             agreement_score=None,
-            completed_analyses=2,
-            requested_analyses=3,
+            completed_analyses=3,
+            requested_analyses=4,
             consensus_points=[],
             partial_indication={
-                "verdict": "buy",
-                "directional_support": 1.0,
+                "verdict": "hold",
+                "directional_support": 2 / 3,
                 "supporting_analyses": 2,
-                "completed_analyses": 2,
-                "requested_analyses": 3,
+                "completed_analyses": 3,
+                "requested_analyses": 4,
                 "excluded_agents": [
                     {
-                        "agent": "Benjamin Graham",
+                        "agent": "Charlie Munger",
                         "unavailable_metrics": ["current_price"],
                     }
                 ],
             },
             agent_results=[
-                response_agent("Agent 1"),
-                response_agent("Agent 2"),
+                copy.deepcopy(legitimate_five_agent_payload()["agent_results"][0]),
+                copy.deepcopy(legitimate_five_agent_payload()["agent_results"][1]),
+                copy.deepcopy(legitimate_five_agent_payload()["agent_results"][2]),
                 response_agent(
-                    "Benjamin Graham",
+                    "Charlie Munger",
                     complete=False,
                     unavailable_metrics=["current_price"],
                 ),
@@ -518,9 +607,9 @@ def test_api_exposes_completed_votes_only_as_a_subordinate_partial_indication():
     assert response.consensus_verdict == "incomplete"
     assert response.agreement_score is None
     assert response.partial_indication is not None
-    assert response.partial_indication.verdict == "buy"
+    assert response.partial_indication.verdict == "hold"
     assert response.partial_indication.supporting_analyses == 2
-    assert response.partial_indication.excluded_agents[0].agent == "Benjamin Graham"
+    assert response.partial_indication.excluded_agents[0].agent == "Charlie Munger"
 
 
 @pytest.mark.parametrize(
@@ -615,15 +704,18 @@ def test_complete_directional_consensus_requires_exact_agent_support(agreement_s
 @pytest.mark.parametrize(
     ("agent_verdicts", "published_verdict", "agreement_score"),
     [
-        (["buy", "strong_buy"], "mixed", None),
-        (["buy", "strong_buy"], "strong_buy", 1.0),
-        (["sell", "buy"], "buy", 0.5),
+        (["buy", "strong_buy", "buy"], "mixed", None),
+        (["buy", "strong_buy", "buy"], "strong_buy", 1.0),
+        (["sell", "buy", "buy"], "sell", 0.5),
     ],
 )
 def test_analysis_response_rejects_wrong_complete_ordinal_verdict(
     agent_verdicts, published_verdict, agreement_score
 ):
-    agents = [response_agent(f"Agent {index + 1}") for index in range(2)]
+    agents = [
+        response_agent(f"Agent {index + 1}")
+        for index in range(len(agent_verdicts))
+    ]
     for agent, verdict in zip(agents, agent_verdicts):
         agent["verdict"] = verdict
         agent["score"] = {
@@ -635,6 +727,8 @@ def test_analysis_response_rejects_wrong_complete_ordinal_verdict(
     with pytest.raises(ValidationError, match="ordinal consensus verdict"):
         main.AnalysisResponse.model_validate(
             analysis_payload(
+                completed_analyses=3,
+                requested_analyses=3,
                 consensus_verdict=published_verdict,
                 agreement_score=agreement_score,
                 agent_results=agents,
@@ -645,15 +739,18 @@ def test_analysis_response_rejects_wrong_complete_ordinal_verdict(
 @pytest.mark.parametrize(
     ("agent_verdicts", "published_verdict", "directional_support", "supporting"),
     [
-        (["buy", "strong_buy"], "mixed", None, 0),
-        (["buy", "strong_buy"], "strong_buy", 1.0, 2),
-        (["sell", "buy"], "buy", 0.5, 1),
+        (["buy", "strong_buy", "buy"], "mixed", None, 0),
+        (["buy", "strong_buy", "buy"], "strong_buy", 1.0, 3),
+        (["sell", "buy", "buy"], "sell", 1 / 3, 1),
     ],
 )
 def test_analysis_response_rejects_wrong_partial_ordinal_verdict(
     agent_verdicts, published_verdict, directional_support, supporting
 ):
-    agents = [response_agent(f"Agent {index + 1}") for index in range(2)]
+    agents = [
+        response_agent(f"Agent {index + 1}")
+        for index in range(len(agent_verdicts))
+    ]
     for agent, verdict in zip(agents, agent_verdicts):
         agent["verdict"] = verdict
         agent["score"] = {
@@ -663,7 +760,7 @@ def test_analysis_response_rejects_wrong_partial_ordinal_verdict(
         }[verdict]
     agents.append(
         response_agent(
-            "Benjamin Graham", complete=False, unavailable_metrics=["price"]
+            "Charlie Munger", complete=False, unavailable_metrics=["price"]
         )
     )
 
@@ -673,19 +770,19 @@ def test_analysis_response_rejects_wrong_partial_ordinal_verdict(
                 consensus_status="partial",
                 consensus_verdict="incomplete",
                 agreement_score=None,
-                completed_analyses=2,
-                requested_analyses=3,
+                completed_analyses=3,
+                requested_analyses=4,
                 consensus_points=[],
                 agent_results=agents,
                 partial_indication={
                     "verdict": published_verdict,
                     "directional_support": directional_support,
                     "supporting_analyses": supporting,
-                    "completed_analyses": 2,
-                    "requested_analyses": 3,
+                    "completed_analyses": 3,
+                    "requested_analyses": 4,
                     "excluded_agents": [
                         {
-                            "agent": "Benjamin Graham",
+                            "agent": "Charlie Munger",
                             "unavailable_metrics": ["price"],
                         }
                     ],
@@ -791,17 +888,11 @@ def agent_result(index, complete):
         result = copy.deepcopy(
             legitimate_five_agent_payload()["agent_results"][index]
         )
-        result.update(
-            score=30.0,
-            verdict="buy",
-            insights=["Shared view"],
-            concerns=[],
-        )
         return result
     return {
         "agent": AGENT_NAMES[index],
         "style": "Test style",
-        "ticker": "AAPL",
+        "ticker": "METR",
         "score": None,
         "verdict": None,
         "insights": [],
@@ -818,9 +909,18 @@ class ConsensusWorkflow:
     async def ainvoke(self, state):
         baseline = legitimate_five_agent_payload()
         state["ticker"] = baseline["ticker"]
+        trusted_record = json.dumps(
+            {"cik_str": 1, "ticker": baseline["ticker"], "title": "Metric Corp"},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         state.update(
             {
                 "agent_results": self.results,
+                "sec_cik": baseline["cik"],
+                "issuer_lookup_record": trusted_record,
+                "issuer_lookup_digest": "sha256:"
+                + __import__("hashlib").sha256(trusted_record.encode()).hexdigest(),
                 "normalized_data": {"company_name": "Apple Inc.", "sector": "Technology"},
                 "data_status": baseline["data_status"],
                 "sec_fundamentals": baseline["fundamentals"],
@@ -847,7 +947,7 @@ def test_public_api_keeps_partial_votes_out_of_the_final_consensus(
         response = client.post(
             "/api/analyze",
             json={
-                "ticker": "AAPL",
+                "ticker": "METR",
                 "agents": ["buffett", "lynch", "graham", "munger", "dalio"],
             },
         )
@@ -858,10 +958,10 @@ def test_public_api_keeps_partial_votes_out_of_the_final_consensus(
     assert body["requested_analyses"] == 5
     if completed == 5:
         assert body["consensus_status"] == "complete"
-        assert body["consensus_verdict"] == "buy"
-        assert body["agreement_score"] == 1.0
+        assert body["consensus_verdict"] == "hold"
+        assert body["agreement_score"] == 0.6
         assert body["partial_indication"] is None
-    elif completed < 2:
+    elif completed < 3:
         assert body["consensus_status"] == "incomplete"
         assert body["consensus_verdict"] == "incomplete"
         assert body["agreement_score"] is None
@@ -877,9 +977,14 @@ def test_public_api_keeps_partial_votes_out_of_the_final_consensus(
         assert body["consensus_verdict"] == "incomplete"
         assert body["agreement_score"] is None
         indication = body["partial_indication"]
-        assert indication["verdict"] == "buy"
-        assert indication["directional_support"] == 1.0
-        assert indication["supporting_analyses"] == completed
+        expected = (
+            ("hold", 2 / 3, 2)
+            if completed == 3
+            else ("mixed", None, 0)
+        )
+        assert indication["verdict"] == expected[0]
+        assert indication["directional_support"] == expected[1]
+        assert indication["supporting_analyses"] == expected[2]
         assert indication["completed_analyses"] == completed
         assert indication["requested_analyses"] == 5
         assert [item["agent"] for item in indication["excluded_agents"]] == AGENT_NAMES[completed:]
@@ -890,7 +995,8 @@ def test_public_api_keeps_partial_votes_out_of_the_final_consensus(
     [
         (["buffett"], 1, "incomplete"),
         (["buffett", "lynch"], 1, "incomplete"),
-        (["buffett", "lynch"], 2, "complete"),
+        (["buffett", "lynch"], 2, "incomplete"),
+        (["buffett", "lynch", "graham"], 3, "complete"),
     ],
 )
 def test_public_api_applies_consensus_integrity_to_selected_subsets(
@@ -906,7 +1012,7 @@ def test_public_api_applies_consensus_integrity_to_selected_subsets(
         monkeypatch.setattr(main, "goat_workflow", ConsensusWorkflow(results))
         response = client.post(
             "/api/analyze",
-            json={"ticker": "AAPL", "agents": selected_agents},
+            json={"ticker": "METR", "agents": selected_agents},
         )
 
     assert response.status_code == 200
@@ -925,7 +1031,7 @@ def test_public_api_applies_consensus_integrity_to_selected_subsets(
             item["status"] for item in results
         ]
     else:
-        assert body["consensus_verdict"] == "buy"
+        assert body["consensus_verdict"] == "hold"
         assert body["partial_indication"] is None
 
 
@@ -937,17 +1043,20 @@ def test_api_rejects_directional_support_for_mixed_partial_indication():
                 consensus_status="partial",
                 consensus_verdict="incomplete",
                 agreement_score=None,
-                completed_analyses=2,
-                requested_analyses=3,
+                completed_analyses=3,
+                requested_analyses=4,
                 consensus_points=[],
                 partial_indication={
                     "verdict": "mixed",
                     "directional_support": 0.5,
                     "supporting_analyses": 0,
-                    "completed_analyses": 2,
-                    "requested_analyses": 3,
+                    "completed_analyses": 3,
+                    "requested_analyses": 4,
                     "excluded_agents": [
-                        {"agent": "Excluded", "unavailable_metrics": ["price"]}
+                        {
+                            "agent": "Charlie Munger",
+                            "unavailable_metrics": ["metric_4"],
+                        }
                     ],
                     "divergence_points": [
                         "Mixed investor verdicts span opposing directions."
@@ -998,14 +1107,14 @@ assert.strictEqual(ui.showPartialIndication, true);
 const mixedUi = getConsensusUiState({{
   consensus_status: 'partial',
   consensus_verdict: 'incomplete',
-  completed_analyses: 2,
-  requested_analyses: 3,
+  completed_analyses: 3,
+  requested_analyses: 4,
   partial_indication: {{
     verdict: 'mixed',
     directional_support: null,
     supporting_analyses: 0,
-    completed_analyses: 2,
-    requested_analyses: 3,
+    completed_analyses: 3,
+    requested_analyses: 4,
     excluded_agents: [{{agent: 'Dalio', unavailable_metrics: ['beta']}}]
   }}
 }});
@@ -1053,7 +1162,7 @@ const ui = getConsensusUiState({{
 assert.strictEqual(ui.headline, 'Incomplete');
 assert.strictEqual(
   ui.status,
-  'Incomplete — 1 of 3 requested analyses complete; at least 2 are required for consensus.'
+  'Incomplete — 1 of 3 requested analyses complete; at least 3 are required for consensus.'
 );
 assert.strictEqual(ui.partialIndication, '');
 assert.strictEqual(ui.showPartialIndication, false);
@@ -1080,52 +1189,21 @@ def test_verification_doc_preserves_buffett_result_without_claiming_consensus():
     assert "complete Buffett-only consensus" not in verification
 
 
-def test_partial_disagreement_warning_remains_subordinate_in_api_and_browser(monkeypatch):
+def test_two_of_three_disagreement_has_no_partial_indication(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     results = [agent_result(0, True), agent_result(1, True), agent_result(2, False)]
-    results[1]["score"] = -30.0
-    results[1]["verdict"] = "sell"
 
     with TestClient(main.app, raise_server_exceptions=False) as client:
         monkeypatch.setattr(main, "goat_workflow", ConsensusWorkflow(results))
         response = client.post(
             "/api/analyze",
-            json={"ticker": "AAPL", "agents": ["buffett", "lynch", "graham"]},
+            json={"ticker": "METR", "agents": ["buffett", "lynch", "graham"]},
         )
 
     assert response.status_code == 200
     body = response.json()
+    assert body["consensus_status"] == "incomplete"
     assert body["consensus_verdict"] == "incomplete"
-    assert body["divergence_points"] == [
-        "Final consensus unavailable because 2 of 3 requested analyses completed."
-    ]
-    indication = body["partial_indication"]
-    assert indication["verdict"] == "mixed"
-    assert indication["directional_support"] is None
-    assert indication["supporting_analyses"] == 0
-    assert indication["divergence_points"][0].startswith("Mixed investor verdicts")
-
-    html = (Path(__file__).parents[2] / "frontend" / "index.html").read_text()
-    marker = "function getConsensusUiState(data)"
-    helper_source = marker + html.split(marker, 1)[1].split(
-        "\n        function displayResults", 1
-    )[0]
-    verdict_source = "function formatVerdict(verdict)" + html.split(
-        "function formatVerdict(verdict)", 1
-    )[1].split("\n        function formatMoatTrend", 1)[0]
-    script = f"""
-const assert = require('assert');
-{verdict_source}
-{helper_source}
-const ui = getConsensusUiState({json.dumps(body)});
-assert.match(ui.partialIndication, /Mixed investor verdicts/);
-"""
-    result = subprocess.run(
-        ["node", "-e", script],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, json.dumps(
-        {"stdout": result.stdout, "stderr": result.stderr}
-    )
+    assert body["agreement_score"] is None
+    assert body["partial_indication"] is None
+    assert body["consensus_points"] == []

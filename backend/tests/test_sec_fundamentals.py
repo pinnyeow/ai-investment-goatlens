@@ -89,7 +89,12 @@ async def test_aapl_fundamentals_match_literal_10k_values_with_provenance():
     assert normalized["debt_to_equity"] == pytest.approx(
         1.3380304612588665, rel=1e-12
     )
-    assert len(result.history["revenue"]) >= 10
+    assert len(result.history["revenue"]) >= 5
+    assert {
+        item.provenance.concept
+        for item in result.history["revenue"]
+        if item.provenance is not None
+    } == {"RevenueFromContractWithCustomerExcludingAssessedTax"}
     assert len(result.history["net_income"]) >= 10
     assert len(result.history["assets"]) >= 10
 
@@ -114,6 +119,24 @@ async def test_dot_class_ticker_uses_sec_hyphen_symbol_and_preserves_ticker_iden
 
     assert result.ticker == "BRK.B"
     assert result.cik == "0000320193"
+
+
+@pytest.mark.asyncio
+async def test_companyfacts_cik_must_match_authoritative_ticker_map():
+    ticker_map = {
+        "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}
+    }
+    substituted = load_json("companyfacts_aapl.json")
+    substituted["cik"] = 1018724
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(ticker_map, substituted),
+    ) as client:
+        with pytest.raises(SECInvalidResponseError, match="issuer identity"):
+            await client.get_fundamentals(
+                "AAPL", as_of=date.fromisoformat("2026-10-14")
+            )
 
 
 @pytest.mark.asyncio
@@ -155,7 +178,7 @@ async def test_sec_derives_multi_year_agent_metrics_without_defaults():
         "InterestExpenseNonoperating": {"units": {"USD": [duration(2024, 3)]}},
         "CommonStockDividendsPerShareDeclared": {"units": {"USD/shares": [duration(y, v) for y, v in zip(years, dividends)]}},
     }
-    payload = {"entityName": "Metric Corp", "facts": {"us-gaap": facts}}
+    payload = {"cik": 1, "entityName": "Metric Corp", "facts": {"us-gaap": facts}}
     ticker_map = {"0": {"cik_str": 1, "ticker": "METR", "title": "Metric Corp"}}
 
     async with SECFundamentalsClient(
@@ -265,7 +288,7 @@ async def test_broader_short_term_borrowings_supersedes_commercial_paper():
         "filed": "2025-02-01",
     }
     instant = {**duration, "start": None}
-    payload = {"entityName": "Debt Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Debt Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [duration]}},
         "LongTermDebtCurrent": {"units": {"USD": [{**instant, "val": 10}]}},
         "LongTermDebtNoncurrent": {"units": {"USD": [{**instant, "val": 20}]}},
@@ -290,7 +313,7 @@ async def test_broader_short_term_borrowings_supersedes_commercial_paper():
 
 
 @pytest.mark.asyncio
-async def test_disagreeing_revenue_aliases_are_unavailable_not_silently_preferred():
+async def test_total_revenues_is_selected_without_pooling_narrower_contract_revenue():
     annual = {
         "start": "2024-01-01",
         "end": "2024-12-31",
@@ -331,14 +354,18 @@ async def test_disagreeing_revenue_aliases_are_unavailable_not_silently_preferre
         user_agent="GOATlens tests tests@example.com",
         transport=sec_payload_transport(ticker_map, payload),
     ) as client:
-        with pytest.raises(SECInvalidResponseError):
-            await client.get_fundamentals(
-                "CONF", as_of=date.fromisoformat("2026-10-14")
-            )
+        result = await client.get_fundamentals(
+            "CONF", as_of=date.fromisoformat("2026-10-14")
+        )
+
+    revenue = result.latest["revenue"]
+    assert revenue.value == 120
+    assert revenue.provenance is not None
+    assert revenue.provenance.concept == "Revenues"
 
 
 @pytest.mark.asyncio
-async def test_duration_aliases_with_same_end_and_different_starts_conflict():
+async def test_unselected_revenue_concept_context_does_not_conflict_with_total():
     annual = {
         "end": "2024-12-31",
         "accn": "0000000000-25-000001",
@@ -394,8 +421,12 @@ async def test_duration_aliases_with_same_end_and_different_starts_conflict():
         user_agent="GOATlens tests tests@example.com",
         transport=sec_payload_transport(ticker_map, payload),
     ) as client:
-        with pytest.raises(SECInvalidResponseError):
-            await client.get_fundamentals("CONF", as_of=date(2026, 10, 14))
+        result = await client.get_fundamentals("CONF", as_of=date(2026, 10, 14))
+
+    revenue = result.latest["revenue"]
+    assert revenue.value == 120
+    assert revenue.provenance is not None
+    assert revenue.provenance.concept == "Revenues"
 
 
 @pytest.mark.asyncio
@@ -410,6 +441,7 @@ async def test_same_concept_same_filing_context_with_two_values_conflicts():
         "filed": "2025-02-01",
     }
     payload = {
+        "cik": 1,
         "entityName": "Conflict Corp",
         "facts": {"us-gaap": {
             "Revenues": {"units": {"USD": [
@@ -447,7 +479,7 @@ async def test_equal_values_in_different_winning_contexts_are_invalid():
         "end": "2024-12-31", "accn": "filing", "fy": 2024, "fp": "FY",
         "form": "10-K", "filed": "2025-02-01", "val": 100,
     }
-    payload = {"entityName": "Ambiguous Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Ambiguous Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [
             {**annual, "start": "2024-01-01"},
             {**annual, "start": "2024-01-02"},
@@ -473,12 +505,12 @@ async def test_equal_values_in_different_winning_contexts_are_invalid():
 
 
 @pytest.mark.asyncio
-async def test_newer_alias_filing_supersedes_older_same_period_value():
+async def test_total_revenues_precedence_is_not_overridden_by_narrower_newer_filing():
     base = {
         "start": "2024-01-01", "end": "2024-12-31", "fy": 2024,
         "fp": "FY", "form": "10-K",
     }
-    payload = {"entityName": "Restated Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Restated Corp", "facts": {"us-gaap": {
         "RevenueFromContractWithCustomerExcludingAssessedTax": {
             "units": {"USD": [{
                 **base, "accn": "new", "filed": "2025-03-01", "val": 100,
@@ -497,8 +529,94 @@ async def test_newer_alias_filing_supersedes_older_same_period_value():
     ) as client:
         result = await client.get_fundamentals("REST", as_of=date(2026, 10, 14))
 
-    assert result.latest["revenue"].value == 100
-    assert result.latest["revenue"].provenance.accession == "new"
+    revenue = result.latest["revenue"]
+    assert revenue.value == 90
+    assert revenue.provenance is not None
+    assert revenue.provenance.concept == "Revenues"
+    assert revenue.provenance.accession == "old"
+
+
+@pytest.mark.asyncio
+async def test_general_metric_alias_precedence_beats_newer_fallback_filing():
+    payload = load_json("companyfacts_aapl.json")
+    preferred = {
+        "start": "2024-01-01",
+        "end": "2024-12-31",
+        "accn": "preferred",
+        "fy": 2024,
+        "fp": "FY",
+        "form": "10-K",
+        "filed": "2025-02-01",
+        "val": 3,
+    }
+    fallback = {
+        **preferred,
+        "accn": "fallback",
+        "filed": "2025-03-01",
+        "val": 9,
+    }
+    payload["facts"]["us-gaap"]["InterestExpenseNonoperating"] = {
+        "units": {"USD": [preferred]}
+    }
+    payload["facts"]["us-gaap"]["InterestExpense"] = {
+        "units": {"USD": [fallback]}
+    }
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(load_json("company_tickers.json"), payload),
+    ) as client:
+        result = await client.get_fundamentals(
+            "AAPL", as_of=date.fromisoformat("2026-10-14")
+        )
+
+    interest = next(
+        item for item in result.history["interest_expense"]
+        if item.provenance and item.provenance.end == "2024-12-31"
+    )
+    assert interest.value == 3
+    assert interest.provenance is not None
+    assert interest.provenance.concept == "InterestExpenseNonoperating"
+    assert interest.provenance.accession == "preferred"
+
+
+@pytest.mark.asyncio
+async def test_financial_issuer_fails_closed_when_preferred_revenue_definition_is_stale():
+    old = {
+        "start": "2023-01-01",
+        "end": "2023-12-31",
+        "accn": "bank-old",
+        "fy": 2023,
+        "fp": "FY",
+        "form": "10-K",
+        "filed": "2024-02-01",
+        "val": 80,
+    }
+    current = {
+        **old,
+        "start": "2024-01-01",
+        "end": "2024-12-31",
+        "accn": "bank-current",
+        "fy": 2024,
+        "filed": "2025-02-01",
+        "val": 100,
+    }
+    deposit = {**current, "start": None, "val": 500}
+    payload = {"cik": 1, "entityName": "Bank Corp", "facts": {"us-gaap": {
+        "RevenuesNetOfInterestExpense": {"units": {"USD": [old]}},
+        "Revenues": {"units": {"USD": [current]}},
+        "Deposits": {"units": {"USD": [deposit]}},
+    }}}
+    ticker_map = {
+        "0": {"cik_str": 1, "ticker": "BANK", "title": "Bank Corp"}
+    }
+
+    async with SECFundamentalsClient(
+        user_agent="GOATlens tests tests@example.com",
+        transport=sec_payload_transport(ticker_map, payload),
+    ) as client:
+        with pytest.raises(SECInvalidResponseError):
+            await client.get_fundamentals("BANK", as_of=date(2026, 10, 14))
 
 
 @pytest.mark.asyncio
@@ -585,7 +703,7 @@ async def test_growth_requires_current_and_prior_reference_compatible_contexts()
     incompatible_income_prior = {
         **revenue_current, "val": 100, "accn": "income-prior",
     }
-    payload = {"entityName": "Growth Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Growth Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [revenue_current, revenue_prior]}},
         "NetIncomeLoss": {"units": {"USD": [
             incompatible_income_current, incompatible_income_prior,
@@ -706,7 +824,7 @@ async def test_conflicting_same_context_liability_inputs_are_unavailable():
         "form": "10-K", "filed": "2025-02-01",
     }
     annual_instant = {**annual_duration, "start": None}
-    payload = {"entityName": "Conflict Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Conflict Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [annual_duration]}},
         "LiabilitiesAndStockholdersEquity": {"units": {"USD": [
             {**annual_instant, "val": 500},
@@ -743,7 +861,7 @@ async def test_newer_clean_liability_restatement_supersedes_older_conflict():
         "fp": "FY", "form": "10-K", "filed": "2025-02-01",
     }
     new = {**old, "accn": "new", "filed": "2025-03-01"}
-    payload = {"entityName": "Restated Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Restated Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [duration]}},
         "LiabilitiesAndStockholdersEquity": {"units": {"USD": [
             {**old, "val": 500}, {**old, "val": 550}, {**new, "val": 600},
@@ -1047,7 +1165,7 @@ async def test_empty_facts_object_is_an_invalid_unusable_response():
     ticker_map = {
         "0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}
     }
-    payload = {"entityName": "Apple Inc.", "facts": {}}
+    payload = {"cik": 320193, "entityName": "Apple Inc.", "facts": {}}
     async with SECFundamentalsClient(
         user_agent="GOATlens tests tests@example.com",
         transport=sec_payload_transport(ticker_map, payload),
@@ -1066,7 +1184,7 @@ async def test_conflict_only_revenue_payload_is_invalid_without_usable_reference
     ticker_map = {
         "0": {"cik_str": 1, "ticker": "BAD", "title": "Bad Corp"}
     }
-    payload = {"entityName": "Bad Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bad Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [
             {**annual, "val": 100}, {**annual, "val": 120},
         ]}},
@@ -1087,7 +1205,7 @@ async def test_assets_only_payload_is_invalid_without_revenue_reference():
     ticker_map = {
         "0": {"cik_str": 1, "ticker": "BAD", "title": "Bad Corp"}
     }
-    payload = {"entityName": "Bad Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bad Corp", "facts": {"us-gaap": {
         "Assets": {"units": {"USD": [{
             "end": "2024-12-31", "val": 500,
             "accn": "0000000000-25-000001", "fy": 2024, "fp": "FY",
@@ -1107,7 +1225,7 @@ async def test_non_numeric_sec_fact_value_is_invalid():
     ticker_map = {
         "0": {"cik_str": 1, "ticker": "BAD", "title": "Bad Corp"}
     }
-    payload = {"entityName": "Bad Corp", "facts": {"us-gaap": {
+    payload = {"cik": 1, "entityName": "Bad Corp", "facts": {"us-gaap": {
         "Revenues": {"units": {"USD": [{
             "start": "2024-01-01", "end": "2024-12-31",
             "val": "100", "accn": "0000000000-25-000001",

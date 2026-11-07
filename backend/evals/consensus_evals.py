@@ -80,16 +80,19 @@ def eval_consensus_structural_integrity(
             f"actual {actual_completed}/{actual_requested}"
         )
     elif status == "complete":
-        if actual_completed < 2 or actual_completed != actual_requested:
+        if actual_completed < 3 or actual_completed != actual_requested:
             error = (
                 "A final consensus requires every requested agent to complete "
-                "and at least two completed analyses"
+                "and at least three completed analyses"
             )
         elif indication is not None:
             error = "A final consensus cannot include a partial indication"
     elif status == "partial":
-        if not (2 <= actual_completed < actual_requested):
-            error = "A partial response requires 2 <= completed < requested"
+        if not (3 <= actual_completed < actual_requested):
+            error = (
+                "A partial response requires at least three completed analyses "
+                "and completed < requested"
+            )
         elif not isinstance(indication, dict):
             error = "A partial response requires a subordinate indication"
         elif (
@@ -143,8 +146,8 @@ def eval_consensus_structural_integrity(
                         "completed votes on the indicated direction"
                     )
     elif status == "incomplete":
-        if actual_completed >= 2:
-            error = "An incomplete response requires fewer than two completions"
+        if actual_completed >= 3:
+            error = "An incomplete response requires fewer than three completions"
         elif (
             consensus.get("verdict") != "incomplete"
             or consensus.get("agreement_score") is not None
@@ -165,13 +168,13 @@ def eval_consensus_structural_integrity(
     )]
 
 
-def _fewer_than_two_contract_result(
+def _fewer_than_three_contract_result(
     check_name: str,
     consensus: Dict[str, Any],
     agent_outputs: List[Dict[str, Any]],
 ) -> Optional[EvalResult]:
     """Abstain only when an unavailable consensus obeys the integrity contract."""
-    if len(_completed_agent_outputs(agent_outputs)) >= 2:
+    if len(_completed_agent_outputs(agent_outputs)) >= 3:
         return None
     valid_abstention = (
         consensus.get("status") == "incomplete"
@@ -181,9 +184,9 @@ def _fewer_than_two_contract_result(
         and not consensus.get("consensus_points")
     )
     suffix = (
-        "abstain_fewer_than_two"
+        "abstain_fewer_than_three"
         if valid_abstention
-        else "integrity_fewer_than_two"
+        else "integrity_fewer_than_three"
     )
     return EvalResult(
         name=f"{check_name}_{suffix}",
@@ -191,7 +194,7 @@ def _fewer_than_two_contract_result(
         details=(
             ""
             if valid_abstention
-            else "Fewer than two completed analyses must not publish consensus"
+            else "Fewer than three completed analyses must not publish consensus"
         ),
     )
 
@@ -207,7 +210,7 @@ def eval_agreement_score_valid(
     Other verdicts require a finite numeric share between 0.0 and 1.0.
     """
     if agent_outputs is not None:
-        abstention = _fewer_than_two_contract_result(
+        abstention = _fewer_than_three_contract_result(
             "agreement_score", consensus, agent_outputs
         )
         if abstention is not None:
@@ -247,7 +250,7 @@ def eval_directional_support_matches_agents(
     agent_outputs: List[Dict[str, Any]],
 ) -> List[EvalResult]:
     """Independently verify directional support against completed verdicts."""
-    abstention = _fewer_than_two_contract_result(
+    abstention = _fewer_than_three_contract_result(
         "directional_support", consensus, agent_outputs
     )
     if abstention is not None:
@@ -311,7 +314,7 @@ def eval_consensus_matches_majority(
     """
     Check the consensus against the independent ordinal-median contract.
     """
-    abstention = _fewer_than_two_contract_result(
+    abstention = _fewer_than_three_contract_result(
         "consensus_majority", consensus, agent_outputs
     )
     if abstention is not None:
@@ -368,7 +371,7 @@ def eval_no_extreme_contradiction(
     Example: All agents say sell/strong_sell, consensus says buy/strong_buy.
     This is a critical bug in the synthesis logic.
     """
-    abstention = _fewer_than_two_contract_result(
+    abstention = _fewer_than_three_contract_result(
         "no_extreme_contradiction", consensus, agent_outputs
     )
     if abstention is not None:
@@ -414,7 +417,7 @@ def eval_consensus_points_exist(
     The LLM should always find something agents agree or disagree on.
     """
     if agent_outputs is not None:
-        abstention = _fewer_than_two_contract_result(
+        abstention = _fewer_than_three_contract_result(
             "consensus_points", consensus, agent_outputs
         )
         if abstention is not None:
@@ -476,7 +479,7 @@ async def eval_consensus_coherence(
     The judge reads all agent outputs and the consensus, then decides
     if the consensus actually makes sense given the agent results.
     """
-    abstention = _fewer_than_two_contract_result(
+    abstention = _fewer_than_three_contract_result(
         "consensus_coherence", consensus, agent_outputs
     )
     if abstention is not None:

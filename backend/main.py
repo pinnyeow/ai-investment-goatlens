@@ -108,6 +108,7 @@ from data_sources.sec import (
     SECUnavailableError,
     normalize_sec_fundamentals,
 )
+from data_sources.symbols import canonicalize_class_symbol
 from data_sources.news import NewsClient
 from temporal import TemporalAnalyzer
 from strategies import (
@@ -117,7 +118,6 @@ from strategies import (
     calculate_consensus_with_llm,
     calculate_ordinal_consensus,
 )
-from llm import get_llm_client
 from rag import RAGRetriever
 
 
@@ -185,6 +185,300 @@ def _mandatory_consumed_metrics(contract, values):
     return mandatory
 
 
+def _reconstruct_agent_score(agent: str, values: Dict[str, float]) -> float:
+    """Frozen public-boundary reconstruction; independent of agent implementations."""
+    score = 0.0
+    if agent == "Warren Buffett":
+        roe = values["roe"]
+        margin = values["profit_margin"]
+        debt = values["debt_to_equity"]
+        free_cash_flow = values["free_cash_flow"]
+        score += min(25, (roe / 0.15) * 15) if roe >= 0.15 else -15
+        score += min(20, (margin / 0.10) * 10) if margin >= 0.10 else -10
+        score += 20 if debt <= 0.5 else 10 if debt <= 1.0 else -20
+        score += 15 if free_cash_flow > 0 else -20 if free_cash_flow < 0 else 0
+    elif agent == "Peter Lynch":
+        pe = values["pe_ratio"]
+        growth = values.get("earnings_growth")
+        turnaround = values.get("earnings_turnaround") == 1.0
+        institutional = values.get("institutional_ownership")
+        debt = values["debt_to_equity"]
+        peg = pe / (growth * 100) if growth is not None and growth > 0 else None
+        category = (
+            "turnaround" if growth is None
+            else "slow_grower" if growth < 0.05
+            else "stalwart" if growth < 0.15
+            else "fast_grower" if growth >= 0.20
+            else "stalwart"
+        )
+        ten_bagger = 0
+        if peg is not None and peg < 1.0:
+            ten_bagger += 30
+        if growth is not None and growth >= 0.20:
+            ten_bagger += 25
+        if institutional is not None and institutional < 0.50:
+            ten_bagger += 15
+        if debt < 0.5:
+            ten_bagger += 15
+        if peg is not None:
+            score += 35 if peg < 0.5 else 25 if peg < 1.0 else 10 if peg < 1.5 else -10 if peg < 2.0 else -25
+        score += 25 if category == "fast_grower" else 15 if category == "stalwart" else -15 if category == "slow_grower" else 15 if turnaround else 0
+        if institutional is not None:
+            score += 15 if institutional < 0.30 else 10 if institutional < 0.50 else -10 if institutional > 0.80 else 0
+        score += min(100, ten_bagger) * 0.25
+    elif agent == "Benjamin Graham":
+        pe = values["pe_ratio"]
+        current_ratio = values["current_ratio"]
+        price = values["current_price"]
+        assets = values["current_assets"]
+        liabilities = values["total_liabilities"]
+        shares = values["shares_outstanding"]
+        eps = values["eps"]
+        book_value = values["book_value_per_share"]
+        dividend_yield = values.get("dividend_yield")
+        dividend_years = values.get("consecutive_dividend_years")
+        graham_number = math.sqrt(22.5 * eps * book_value) if eps > 0 and book_value > 0 else 0
+        net_net = (assets - liabilities) / shares
+        graham_margin = (graham_number - price) / graham_number if graham_number > 0 else 0
+        net_net_margin = (net_net - price) / net_net if net_net > 0 else 0
+        margin = max(graham_margin, net_net_margin) if price > 0 else 0
+        score += 40 if margin >= 0.33 else 25 if margin >= 0.20 else 10 if margin >= 0.10 else -30 if margin < 0 else 0
+        score += 20 if 0 < pe <= 10 else 15 if pe <= 15 else 5 if pe <= 20 else -15
+        score += 15 if current_ratio >= 2.0 else 5 if current_ratio >= 1.5 else -15
+        if dividend_yield is not None and dividend_yield > 0 and dividend_years is not None:
+            score += 15 if dividend_years >= 20 else 10 if dividend_years >= 10 else 5 if dividend_years >= 5 else 0
+        if net_net > price:
+            score += 20
+    elif agent == "Charlie Munger":
+        gross = values["gross_margin"]
+        operating = values["operating_margin"]
+        growth = values["revenue_growth_5y"]
+        capex = values["capex_to_revenue"]
+        debt = values["debt_to_equity"]
+        margin_trend = values["margin_trend"]
+        roic = values.get("roic")
+        ownership = values.get("insider_ownership")
+        quality = (25 if gross >= 0.40 else 0) + (20 if operating >= 0.15 else 0)
+        quality += 25 if roic is not None and roic >= 0.15 else 0
+        quality += 15 if capex < 0.05 else 0
+        quality += 15 if growth > 0.05 else 0
+        flags = sum((debt > 1.0, margin_trend < -0.02, gross < 0.20, capex > 0.15, roic is not None and roic < 0.08, ownership is not None and ownership < 0.01))
+        score = quality - flags * 20
+        if ownership is not None:
+            score += 15 if ownership >= 0.10 else 10 if ownership >= 0.05 else 0
+    elif agent == "Ray Dalio":
+        beta = values["beta"]
+        volatility = values["volatility_252d"]
+        debt = values["debt_to_equity"]
+        correlation = values["correlation_sp500"]
+        realized_return = values["realized_total_return_252d"]
+        debt_growth = values.get("debt_growth_3y")
+        ratio = realized_return / volatility if volatility > 0 else 0
+        score += 30 if ratio >= 1.0 else 20 if ratio >= 0.5 else 10 if ratio >= 0.25 else -20 if ratio < 0 else 0
+        score += 100 * (1 - abs(correlation)) * 0.2
+        score += 15 if debt < 1.0 else -20
+        if debt_growth is not None:
+            score += 5 if debt_growth > 0.15 else 10 if debt_growth > 0 else 0
+        score += 15 if 0.8 <= beta <= 1.2 else 10 if 0.5 <= beta <= 1.5 else -10
+    else:
+        raise ValueError("Unknown agent score contract")
+    return round(max(-100, min(100, score)), 2)
+
+
+def _reconstruct_agent_narrative(
+    agent: str, values: Dict[str, float]
+) -> tuple[List[str], List[str]]:
+    """Frozen deterministic findings; earnings narratives are not in the shipping path."""
+    insights: List[str] = []
+    concerns: List[str] = []
+    if agent == "Warren Buffett":
+        roe = values["roe"]
+        margin = values["profit_margin"]
+        debt = values["debt_to_equity"]
+        cash_flow = values["free_cash_flow"]
+        if roe >= 0.15:
+            insights.append(
+                f"Strong ROE of {roe:.1%} indicates efficient capital deployment"
+            )
+        if margin >= 0.10:
+            insights.append(
+                f"Healthy profit margin of {margin:.1%} suggests pricing power"
+            )
+        if debt <= 0.5:
+            insights.append("Conservative debt levels provide margin of safety")
+        if cash_flow > 0:
+            insights.append("Positive free cash flow supports financial flexibility")
+        if roe < 0.15:
+            concerns.append(f"ROE of {roe:.1%} below Buffett's 15% threshold")
+        if debt > 1.0:
+            concerns.append(f"High debt-to-equity ratio of {debt:.2f}")
+        if margin < 0.10:
+            concerns.append("Thin profit margins may indicate weak competitive position")
+        if cash_flow < 0:
+            concerns.append("Negative free cash flow weakens financial flexibility")
+    elif agent == "Peter Lynch":
+        pe = values["pe_ratio"]
+        growth = values.get("earnings_growth")
+        turnaround = values.get("earnings_turnaround") == 1.0
+        institutional = values.get("institutional_ownership")
+        cash = values.get("cash_and_equivalents")
+        peg = pe / (growth * 100) if growth is not None and growth > 0 else None
+        category = (
+            "turnaround" if growth is None
+            else "slow_grower" if growth < 0.05
+            else "stalwart" if growth < 0.15
+            else "fast_grower" if growth >= 0.20
+            else "stalwart"
+        )
+        if peg is not None and peg < 1.0:
+            insights.append(
+                f"Attractive PEG ratio of {peg:.2f} - growth at reasonable price"
+            )
+        if category == "turnaround":
+            insights.append(
+                "Negative-to-positive earnings turnaround confirmed at the compared "
+                "SEC endpoints; CAGR and PEG are not applicable"
+            )
+        elif category == "fast_grower" and growth is not None:
+            insights.append(f"Fast grower with {growth:.1%} earnings growth")
+        if institutional is not None and institutional < 0.50:
+            insights.append("Low institutional ownership suggests discovery potential")
+        if cash is not None:
+            insights.append(f"Reported cash and equivalents: {cash:,.0f}")
+        if peg is not None and peg > 2.0:
+            concerns.append(f"High PEG ratio of {peg:.2f} - paying too much for growth")
+        if institutional is not None and institutional > 0.80:
+            concerns.append("Heavy institutional ownership - may be fully discovered")
+        if growth is not None and growth < 0:
+            concerns.append("Negative earnings growth")
+        if turnaround:
+            concerns.append(
+                "The endpoint turnaround does not establish the durability of the "
+                "earnings recovery"
+            )
+    elif agent == "Benjamin Graham":
+        pe = values["pe_ratio"]
+        pb = values["pb_ratio"]
+        current_ratio = values["current_ratio"]
+        price = values["current_price"]
+        assets = values["current_assets"]
+        liabilities = values["total_liabilities"]
+        shares = values["shares_outstanding"]
+        eps = values["eps"]
+        book_value = values["book_value_per_share"]
+        dividend_yield = values.get("dividend_yield")
+        dividend_years = values.get("consecutive_dividend_years")
+        graham_number = math.sqrt(22.5 * eps * book_value) if eps > 0 and book_value > 0 else 0
+        net_net = (assets - liabilities) / shares
+        graham_margin = (graham_number - price) / graham_number if graham_number > 0 else 0
+        net_net_margin = (net_net - price) / net_net if net_net > 0 else 0
+        margin = max(graham_margin, net_net_margin) if price > 0 else 0
+        if margin >= 0.20:
+            insights.append(
+                f"Strong margin of safety at {margin * 100:.0f}% discount to intrinsic value"
+            )
+        if 0 < pe <= 15:
+            insights.append(f"Attractive P/E ratio of {pe:.1f}")
+        if current_ratio >= 2.0:
+            insights.append(
+                f"Strong balance sheet with current ratio of {current_ratio:.1f}"
+            )
+        if dividend_years is not None and dividend_years >= 10:
+            years = int(dividend_years) if dividend_years.is_integer() else dividend_years
+            insights.append(f"Consistent dividend payer for {years} years")
+        if net_net > price:
+            insights.append("Net-Net opportunity - trading below liquidation value!")
+        if pe > 20:
+            concerns.append(f"High P/E of {pe:.1f} exceeds Graham's maximum of 15")
+        if current_ratio < 1.5:
+            concerns.append(
+                f"Weak current ratio of {current_ratio:.1f} indicates liquidity risk"
+            )
+        if pb > 2.0:
+            concerns.append(f"High P/B ratio of {pb:.1f}")
+        if dividend_yield is None:
+            concerns.append("Current dividend yield is unavailable")
+        elif dividend_yield == 0:
+            concerns.append("No current dividend")
+        elif dividend_years is None:
+            concerns.append("Dividend history is unavailable")
+        elif dividend_years < 5:
+            concerns.append("Limited dividend history")
+    elif agent == "Charlie Munger":
+        gross = values["gross_margin"]
+        operating = values["operating_margin"]
+        growth = values["revenue_growth_5y"]
+        capex = values["capex_to_revenue"]
+        debt = values["debt_to_equity"]
+        margin_trend = values["margin_trend"]
+        roic = values.get("roic")
+        ownership = values.get("insider_ownership")
+        quality = (25 if gross >= 0.40 else 0) + (20 if operating >= 0.15 else 0)
+        quality += 25 if roic is not None and roic >= 0.15 else 0
+        quality += 15 if capex < 0.05 else 0
+        quality += 15 if growth > 0.05 else 0
+        level = "Exceptional" if quality >= 80 else "High" if quality >= 60 else "Moderate" if quality >= 40 else "Low"
+        if level in {"Exceptional", "High"}:
+            insights.append(f"{level} quality business")
+        if roic is not None and roic >= 0.20:
+            insights.append(f"Outstanding capital allocation with {roic:.1%} ROIC")
+        if gross >= 0.50:
+            insights.append(f"Strong pricing power evident in {gross:.1%} gross margin")
+        if ownership is not None and ownership >= 0.10:
+            insights.append("Significant management ownership aligns incentives")
+        if roic is None:
+            insights.append(
+                "ROIC is unavailable; the quality score excludes capital-efficiency points"
+            )
+        if debt > 1.0:
+            concerns.append(f"High debt burden (D/E: {debt:.1f})")
+        if margin_trend < -0.02:
+            concerns.append("Declining profit margins - possible moat erosion")
+        if gross < 0.20:
+            concerns.append("Low gross margins - commodity business characteristics")
+        if capex > 0.15:
+            concerns.append("High capital requirements to maintain business")
+        if roic is not None and roic < 0.08:
+            concerns.append("Poor return on invested capital")
+        if ownership is not None and ownership < 0.01:
+            concerns.append("Low management ownership - misaligned incentives")
+    elif agent == "Ray Dalio":
+        beta = values["beta"]
+        debt = values["debt_to_equity"]
+        correlation = values["correlation_sp500"]
+        interest = values.get("interest_coverage")
+        debt_growth = values.get("debt_growth_3y")
+        if debt_growth is None:
+            risk_level = "current_leverage_only"
+        elif debt_growth > 0.15:
+            risk_level = "elevated"
+        else:
+            risk_level = "normal" if debt_growth > -0.10 else "context_required"
+        sustainable = debt < 1.0
+        if sustainable:
+            insights.append("Sustainable debt levels provide flexibility")
+        if correlation < 0.5:
+            insights.append("Low market correlation offers diversification benefit")
+        if 0.8 <= beta <= 1.2:
+            insights.append("Beta near 1.0 indicates market-like risk profile")
+        if debt_growth is None:
+            insights.append(
+                "Historical debt trajectory is unavailable; this assessment uses "
+                "current leverage only"
+            )
+        if not sustainable:
+            concerns.append("High debt levels create vulnerability in downturns")
+        if beta > 1.5:
+            concerns.append(f"High beta ({beta:.1f}) amplifies market risk")
+        if risk_level in {"elevated", "distressed"}:
+            concerns.append(f"Debt cycle risk level: {risk_level}")
+        if interest is not None and interest < 3:
+            concerns.append(f"Low interest coverage ({interest:.1f}x)")
+    else:
+        raise ValueError("Unknown agent narrative contract")
+    return insights, concerns
+
+
 def _normalize_ticker(value: str) -> str:
     """Normalize and validate a common-stock ticker symbol."""
     ticker = value.strip().upper()
@@ -238,6 +532,7 @@ class AnalysisRequest(StrictAPIModel):
 class AgentResult(StrictAPIModel):
     """Result from a single GOAT agent."""
     agent: str = Field(min_length=1)
+    cik: str = Field(pattern=r"^\d{10}$")
     style: str = Field(min_length=1)
     verdict: Optional[
         Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
@@ -439,6 +734,7 @@ class FactProvenanceResponse(StrictAPIModel):
 
 
 class FundamentalFactResponse(StrictAPIModel):
+    cik: str = Field(pattern=r"^\d{10}$")
     value: Optional[float]
     availability_reason: Optional[str]
     provenance: Optional[FactProvenanceResponse]
@@ -446,6 +742,7 @@ class FundamentalFactResponse(StrictAPIModel):
 
 class SECMetricInputResponse(StrictAPIModel):
     kind: Literal["sec_fact"]
+    cik: str = Field(pattern=r"^\d{10}$")
     role: str = Field(min_length=1)
     value: float
     provenance: FactProvenanceResponse
@@ -518,6 +815,7 @@ MetricInputResponse = Annotated[
 
 
 class MetricEvidenceResponse(StrictAPIModel):
+    cik: str = Field(pattern=r"^\d{10}$")
     value: Optional[float]
     available: bool
     source: Literal["sec", "yahoo", "sec+yahoo"]
@@ -553,6 +851,27 @@ class FundamentalsAvailabilityStatus(StrictAPIModel):
     as_of: Optional[str]
 
 
+class MarketSplitEventResponse(StrictAPIModel):
+    effective_date: date
+    numerator: float = Field(gt=0)
+    denominator: float = Field(gt=0)
+
+    @field_validator("effective_date", mode="before")
+    @classmethod
+    def parse_effective_date(cls, value):
+        if isinstance(value, date):
+            return value
+        if not isinstance(value, str):
+            raise ValueError("effective_date must be an ISO date")
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("effective_date must be an ISO date") from exc
+        if parsed.isoformat() != value:
+            raise ValueError("effective_date must use YYYY-MM-DD")
+        return parsed
+
+
 class MarketAvailabilityStatus(StrictAPIModel):
     available: bool
     source: Literal["yahoo"]
@@ -574,7 +893,18 @@ class MarketAvailabilityStatus(StrictAPIModel):
         default="unknown",
         description="Fresh when the returned snapshot is inside the local cache TTL."
     )
+    split_events: List[MarketSplitEventResponse]
     reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_split_events(self):
+        identities = [
+            (event.effective_date, event.numerator, event.denominator)
+            for event in self.split_events
+        ]
+        if identities != sorted(identities) or len(identities) != len(set(identities)):
+            raise ValueError("Market split events must be unique and chronologically ordered")
+        return self
 
 
 class AnalysisCompletenessStatus(StrictAPIModel):
@@ -589,6 +919,7 @@ class AnalysisDataStatus(StrictAPIModel):
 
 
 class ComparisonAgentResponse(StrictAPIModel):
+    cik: str = Field(pattern=r"^\d{10}$")
     name: str
     style: str
     verdict: Optional[
@@ -613,8 +944,11 @@ class PartialIndicationResponse(StrictAPIModel):
     ]
     directional_support: Optional[float] = Field(default=None, ge=0, le=1)
     supporting_analyses: int = Field(ge=0)
-    completed_analyses: int = Field(ge=2)
-    requested_analyses: int = Field(ge=2)
+    completed_analyses: int = Field(
+        ge=3,
+        description="At least three Full analyses are required for a partial indication.",
+    )
+    requested_analyses: int = Field(ge=3)
     excluded_agents: List[ExcludedAgentResponse]
     consensus_points: List[str] = Field(default_factory=list)
     divergence_points: List[str] = Field(default_factory=list)
@@ -643,6 +977,7 @@ class PartialIndicationResponse(StrictAPIModel):
 class AnalysisResponse(StrictAPIModel):
     """Complete analysis response."""
     ticker: str
+    cik: str = Field(pattern=r"^\d{10}$")
     company_name: str
     sector: str
     data_status: AnalysisDataStatus
@@ -682,6 +1017,26 @@ class AnalysisResponse(StrictAPIModel):
 
     @model_validator(mode="after")
     def validate_analysis_counts(self):
+        issuer_ciks = {
+            fact.cik for fact in self.fundamentals.values()
+        } | {
+            fact.cik
+            for history in self.fundamentals_history.values()
+            for fact in history
+        } | {
+            evidence.cik for evidence in self.metric_evidence.values()
+        } | {
+            item.cik
+            for evidence in self.metric_evidence.values()
+            for item in evidence.inputs
+            if isinstance(item, SECMetricInputResponse)
+        } | {
+            result.cik for result in self.agent_results
+        } | {
+            result.cik for result in self.comparison_table.agents
+        }
+        if issuer_ciks != {self.cik}:
+            raise ValueError("Every SEC and card projection must bind to the canonical CIK")
         if set(self.metric_evidence) != set(_METRIC_EVIDENCE_CONTRACTS):
             raise ValueError("Metric evidence keys must match the exact shipped registry")
         _validate_formula_evidence(self)
@@ -889,6 +1244,7 @@ class AnalysisResponse(StrictAPIModel):
             raise ValueError("Agent results require a known identity")
         expected_comparison = [
             ComparisonAgentResponse(
+                cik=result.cik,
                 name=result.agent,
                 style=result.style,
                 verdict=result.verdict,
@@ -958,7 +1314,7 @@ class AnalysisResponse(StrictAPIModel):
             )
 
         expected_verdict = None
-        if actual_completed >= 2:
+        if actual_completed >= 3:
             _, expected_consensus = calculate_ordinal_consensus(
                 [Verdict(result.verdict) for result in completed_results]
             )
@@ -1001,7 +1357,7 @@ class AnalysisResponse(StrictAPIModel):
                     )
                 )
             valid = (
-                self.completed_analyses >= 2
+                self.completed_analyses >= 3
                 and self.completed_analyses == self.requested_analyses
                 and self.consensus_verdict != "incomplete"
                 and indication is None
@@ -1035,7 +1391,7 @@ class AnalysisResponse(StrictAPIModel):
                     )
                 )
             valid = (
-                2 <= self.completed_analyses < self.requested_analyses
+                3 <= self.completed_analyses < self.requested_analyses
                 and self.consensus_verdict == "incomplete"
                 and self.agreement_score is None
                 and not self.consensus_points
@@ -1050,7 +1406,7 @@ class AnalysisResponse(StrictAPIModel):
             )
         else:
             valid = (
-                self.completed_analyses < 2
+                self.completed_analyses < 3
                 and self.consensus_verdict == "incomplete"
                 and self.agreement_score is None
                 and indication is None
@@ -1058,6 +1414,27 @@ class AnalysisResponse(StrictAPIModel):
             )
         if not valid:
             raise ValueError("Consensus fields are inconsistent")
+        for result in completed_results:
+            reconstructed_score = _reconstruct_agent_score(
+                result.agent, result.required_metric_values
+            )
+            if result.score is None or not math.isclose(
+                result.score,
+                reconstructed_score,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ):
+                raise ValueError("Agent result must match reconstructed score")
+            expected_insights, expected_concerns = _reconstruct_agent_narrative(
+                result.agent, result.required_metric_values
+            )
+            if (
+                result.insights != expected_insights
+                or result.concerns != expected_concerns
+            ):
+                raise ValueError(
+                    "Agent findings must match the evidence-derived narrative"
+                )
         return self
     
     # Earnings history
@@ -1066,6 +1443,60 @@ class AnalysisResponse(StrictAPIModel):
     
     # Next earnings date
     next_earnings_date: Optional[str] = None
+
+
+def _validate_trusted_issuer_association(
+    *,
+    expected_ticker: str,
+    expected_cik: str,
+    issuer_lookup_record: Optional[str],
+    issuer_lookup_digest: Optional[str] = None,
+) -> None:
+    """Replay SEC ticker-map identity; the unkeyed digest is content integrity only."""
+    try:
+        if issuer_lookup_record is None:
+            raise ValueError
+        record = json.loads(issuer_lookup_record)
+        canonical = json.dumps(
+            record, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        record_ticker = str(record["ticker"]).upper()
+        record_cik = str(int(record["cik_str"])).zfill(10)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError("Invalid trusted ticker-to-CIK association") from None
+    expected_digest = "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if (
+        canonical != issuer_lookup_record
+        or record_ticker != canonicalize_class_symbol(expected_ticker)
+        or record_cik != expected_cik
+        or (issuer_lookup_digest is not None and issuer_lookup_digest != expected_digest)
+    ):
+        raise ValueError("Invalid trusted ticker-to-CIK association")
+
+
+def validate_trusted_analysis_response(
+    payload,
+    *,
+    expected_ticker: str,
+    expected_cik: str,
+    issuer_lookup_record: Optional[str],
+    issuer_lookup_digest: Optional[str] = None,
+) -> AnalysisResponse:
+    """Shipping boundary: schema self-consistency plus trusted issuer association."""
+    _validate_trusted_issuer_association(
+        expected_ticker=expected_ticker,
+        expected_cik=expected_cik,
+        issuer_lookup_record=issuer_lookup_record,
+        issuer_lookup_digest=issuer_lookup_digest,
+    )
+    response = (
+        payload
+        if isinstance(payload, AnalysisResponse)
+        else AnalysisResponse.model_validate(payload)
+    )
+    if response.ticker != expected_ticker or response.cik != expected_cik:
+        raise ValueError("Response violates the trusted ticker-to-CIK association")
+    return response
 
 
 # ============================================================================
@@ -1083,6 +1514,9 @@ class GOATState(TypedDict):
     normalized_data: Optional[Dict[str, Any]]
     data_source: Optional[str]
     data_status: Optional[Dict[str, Any]]
+    sec_cik: NotRequired[str]
+    issuer_lookup_record: NotRequired[Optional[str]]
+    issuer_lookup_digest: NotRequired[Optional[str]]
     sec_fundamentals: Optional[Dict[str, Any]]
     sec_fundamentals_history: Optional[Dict[str, List[Dict[str, Any]]]]
     metric_evidence: NotRequired[Optional[Dict[str, Dict[str, Any]]]]
@@ -1140,6 +1574,7 @@ def _serialize_sec_fundamentals(fundamentals):
 
     def value_payload(item):
         return {
+            "cik": fundamentals.cik,
             "value": item.value,
             "availability_reason": item.availability_reason,
             "provenance": _provenance_payload(item.provenance),
@@ -1157,7 +1592,9 @@ def _serialize_sec_fundamentals(fundamentals):
 _METRIC_EVIDENCE_CONTRACTS = {
     "roe": ("sec", "net_income_divided_by_equity"),
     "profit_margin": ("sec", "net_income_divided_by_revenue"),
-    "debt_to_equity": ("sec", "funded_debt_divided_by_equity"),
+    "debt_to_equity": (
+        "sec", "reviewed_funded_debt_branch_divided_by_equity"
+    ),
     "free_cash_flow": ("sec", "operating_cash_flow_minus_capex"),
     "earnings_growth": ("sec", "three_year_net_income_cagr"),
     "earnings_turnaround": (
@@ -1216,9 +1653,12 @@ _FORMULA_EVIDENCE_CONTRACTS = {
             ("income.current.net_income", "capital.end.equity")),
     "profit_margin": ("sec", "net_income_divided_by_revenue", "sec_companyfacts_v1",
                       ("income.current.net_income", "income.current.revenue")),
-    "debt_to_equity": ("sec", "funded_debt_divided_by_equity", "sec_companyfacts_v1", (
-        "debt.current.long_term_current", "debt.current.long_term_noncurrent",
-        "debt.current.short_term_borrowings", "capital.end.equity")),
+    "debt_to_equity": (
+        "sec",
+        None,
+        "sec_companyfacts_debt_to_equity_v4",
+        None,
+    ),
     "free_cash_flow": ("sec", "operating_cash_flow_minus_capex", "sec_companyfacts_v1",
                        ("cashflow.current.operating", "cashflow.current.capex")),
     "earnings_growth": ("sec", "three_year_net_income_cagr", "sec_companyfacts_v1",
@@ -1330,7 +1770,7 @@ def _recompute_formula_value(metric, values, formula):
                   "capex_to_revenue", "interest_coverage"}:
         return values[0] / values[1]
     if metric == "debt_to_equity":
-        return sum(values[:3]) / values[3]
+        return sum(values[:-1]) / values[-1]
     if metric == "free_cash_flow":
         return values[0] - values[1]
     if metric == "earnings_growth":
@@ -1382,6 +1822,8 @@ _SEC_ROLE_FUNDAMENTAL_KEYS = {
     "debt.current.long_term_current": "long_term_debt_current",
     "debt.current.long_term_noncurrent": "long_term_debt_noncurrent",
     "debt.current.short_term_borrowings": "short_term_borrowings",
+    "debt.current.debt_current": "debt_current",
+    "debt.current.long_term_debt": "long_term_debt",
     "cashflow.current.operating": "operating_cash_flow",
     "cashflow.current.capex": "capex_payments",
     "income.begin": "net_income",
@@ -1422,6 +1864,352 @@ def _fundamental_key_for_role(role):
     if role.startswith("streak."):
         return "dividend_per_share"
     return _SEC_ROLE_FUNDAMENTAL_KEYS.get(role)
+
+
+def _unavailable_fixed_formula_is_reconstructable(response, metric, roles, formula):
+    """Frozen verifier-side reconstruction for unavailable fixed-role SEC formulas."""
+    if roles is None:
+        return False
+    reference = response.fundamentals.get("revenue")
+    reference_provenance = reference.provenance if reference is not None else None
+    if reference_provenance is None:
+        return False
+    is_financial = reference_provenance.concept == "RevenuesNetOfInterestExpense"
+    if metric in {"free_cash_flow", "roic"} and is_financial:
+        return False
+    if metric in {"pe_ratio", "pb_ratio", "dividend_yield", "market_cap", "ps_ratio"}:
+        if response.data_status.market_data.currency != "USD":
+            return False
+        if "." in response.ticker or "-" in response.ticker:
+            return False
+        shares = response.fundamentals.get("shares_outstanding")
+        shares_provenance = shares.provenance if shares is not None else None
+        if (
+            shares is None
+            or shares.value is None
+            or shares_provenance is None
+            or shares_provenance.namespace != "us-gaap"
+            or shares_provenance.form not in {"10-K", "10-K/A"}
+            or shares_provenance.concept != "CommonStockSharesOutstanding"
+            or shares_provenance.unit != "shares"
+        ):
+            return False
+        if any(
+            event.effective_date > date.fromisoformat(shares_provenance.end)
+            for event in response.data_status.market_data.split_events
+        ):
+            return False
+    facts_by_key = {
+        key: [current, *response.fundamentals_history.get(key, [])]
+        for key, current in response.fundamentals.items()
+    }
+
+    def same_context(provenance, target=reference_provenance):
+        return provenance is not None and target is not None and (
+            provenance.end,
+            provenance.accession,
+            provenance.form,
+            provenance.filed,
+            provenance.fiscal_year,
+        ) == (
+            target.end,
+            target.accession,
+            target.form,
+            target.filed,
+            target.fiscal_year,
+        ) and (provenance.start is None or provenance.start == target.start)
+
+    begin_years = {
+        "roic": 1,
+        "earnings_growth": 3,
+        "earnings_turnaround": 3,
+        "revenue_growth_5y": 5,
+        "debt_growth_3y": 3,
+    }
+    prior_reference = None
+    if any(".begin" in role or role.endswith(".begin") for role in roles):
+        years = begin_years.get(metric)
+        if years is None:
+            return False
+        chronology_key = (
+            "long_term_debt_current" if metric == "debt_growth_3y" else "revenue"
+        )
+        references = sorted(
+            (
+                fact.provenance
+                for fact in response.fundamentals_history.get(chronology_key, [])
+                if fact.provenance is not None
+            ),
+            key=lambda item: item.end,
+        )
+        current_indexes = [
+            index
+            for index, candidate in enumerate(references)
+            if (
+                candidate.end == reference_provenance.end
+                if metric == "debt_growth_3y"
+                else same_context(candidate, reference_provenance)
+            )
+        ]
+        if not current_indexes or current_indexes[-1] < years:
+            return False
+        current_index = current_indexes[-1]
+        span = references[current_index - years : current_index + 1]
+        end_dates = [date.fromisoformat(item.end) for item in span]
+        if any(
+            not 300 <= (later - earlier).days <= 430
+            for earlier, later in zip(end_dates, end_dates[1:])
+        ):
+            return False
+        prior_reference = span[0]
+
+    values = []
+    for role in roles:
+        if role == "price.current":
+            price = response.metric_evidence.get("current_price")
+            if price is None or not price.available or price.value is None:
+                return False
+            values.append(price.value)
+            continue
+        key = _fundamental_key_for_role(role)
+        if key is None:
+            return False
+        candidates = [
+            fact
+            for fact in facts_by_key.get(key, [])
+            if fact.value is not None and fact.provenance is not None
+        ]
+        if ".begin" in role or role.endswith(".begin"):
+            selected = next(
+                (
+                    fact
+                    for fact in candidates
+                    if same_context(fact.provenance, prior_reference)
+                ),
+                None,
+            )
+            if selected is None:
+                return False
+        else:
+            selected = next(
+                (fact for fact in candidates if same_context(fact.provenance)),
+                None,
+            )
+            if selected is None:
+                return False
+        values.append(float(selected.value))
+    if metric in {"roe", "book_value_per_share"} and values[-1] <= 0:
+        return False
+    if metric in {"profit_margin", "operating_margin", "capex_to_revenue"} and values[1] == 0:
+        return False
+    if metric == "current_ratio" and values[1] <= 0:
+        return False
+    if metric in {"earnings_growth", "revenue_growth_5y"} and (
+        values[0] <= 0 or values[1] <= 0
+    ):
+        return False
+    if metric == "debt_growth_3y" and (
+        sum(values[:3]) <= 0 or sum(values[3:]) <= 0
+    ):
+        return False
+    if metric == "interest_coverage" and values[1] <= 0:
+        return False
+    if metric == "roic":
+        if values[2] <= 0 or not 0 <= values[1] / values[2] <= 1:
+            return False
+        begin_capital = values[3] + sum(values[7:10]) - values[5]
+        end_capital = values[4] + sum(values[10:13]) - values[6]
+        if (begin_capital + end_capital) / 2 <= 0:
+            return False
+    if metric == "pe_ratio" and values[0] <= 0:
+        return False
+    if metric == "pb_ratio" and (values[0] <= 0 or values[1] <= 0):
+        return False
+    if metric == "dividend_yield" and (values[0] < 0 or values[1] <= 0):
+        return False
+    if metric == "market_cap" and (values[0] <= 0 or values[1] <= 0):
+        return False
+    if metric == "ps_ratio" and any(value <= 0 for value in values):
+        return False
+    try:
+        reconstructed = _recompute_formula_value(metric, values, formula)
+    except (ArithmeticError, ValueError, TypeError):
+        return False
+    return isinstance(reconstructed, (int, float)) and math.isfinite(reconstructed)
+
+
+def _unavailable_dynamic_formula_is_reconstructable(response, metric):
+    """Frozen verifier-side reconstruction for shipped multi-branch/group SEC formulas."""
+    def facts(key):
+        current = response.fundamentals.get(key)
+        return ([current] if current is not None else []) + list(
+            response.fundamentals_history.get(key, [])
+        )
+
+    def compatible(left, right):
+        if left is None or right is None:
+            return False
+        return (
+            left.end, left.accession, left.form, left.filed, left.fiscal_year
+        ) == (right.end, right.accession, right.form, right.filed, right.fiscal_year)
+
+    revenue_current = response.fundamentals.get("revenue")
+    reference = revenue_current.provenance if revenue_current is not None else None
+    if reference is None:
+        return False
+    if metric == "gross_margin":
+        revenue = next(
+            (fact for fact in facts("revenue") if fact.value is not None and compatible(fact.provenance, reference)),
+            None,
+        )
+        if revenue is None or revenue.value <= 0:
+            return False
+        gross = next(
+            (fact for fact in facts("gross_profit") if fact.value is not None and compatible(fact.provenance, reference)),
+            None,
+        )
+        if gross is not None:
+            return True
+        cost = next(
+            (fact for fact in facts("cost_of_revenue") if fact.value is not None and compatible(fact.provenance, reference)),
+            None,
+        )
+        return cost is not None and 0 <= cost.value <= revenue.value
+    if metric == "margin_trend":
+        references = [
+            fact.provenance
+            for fact in response.fundamentals_history.get("revenue", [])
+            if fact.provenance is not None
+        ][:5]
+        if len(references) != 5:
+            return False
+        references.sort(key=lambda item: item.end)
+        years = [date.fromisoformat(item.end).year for item in references]
+        if any(later - earlier != 1 for earlier, later in zip(years, years[1:])):
+            return False
+        for period in references:
+            revenue = next(
+                (fact for fact in facts("revenue") if fact.value is not None and fact.value > 0 and compatible(fact.provenance, period)),
+                None,
+            )
+            operating = next(
+                (fact for fact in facts("operating_income") if fact.value is not None and compatible(fact.provenance, period)),
+                None,
+            )
+            if revenue is None or operating is None:
+                return False
+        return True
+    if metric == "consecutive_dividend_years":
+        observations = [
+            fact
+            for fact in response.fundamentals_history.get("dividend_per_share", [])
+            if fact.value is not None and fact.provenance is not None
+        ]
+        observations.sort(key=lambda fact: fact.provenance.end, reverse=True)
+        current = [fact for fact in observations if fact.provenance.end == reference.end]
+        if len(current) != 1 or not compatible(current[0].provenance, reference):
+            return False
+        previous_end = None
+        for fact in observations[observations.index(current[0]) :]:
+            provenance = fact.provenance
+            if provenance.start is None:
+                return False
+            start = date.fromisoformat(provenance.start)
+            end = date.fromisoformat(provenance.end)
+            if not 300 <= (end - start).days <= 400:
+                return False
+            if previous_end is not None and not 300 <= (previous_end - end).days <= 430:
+                return False
+            if fact.value <= 0:
+                return True
+            previous_end = end
+        return False
+    return False
+
+
+def _reconstruct_public_debt_branch(response):
+    equity = response.fundamentals.get("equity")
+    if (
+        equity is None
+        or equity.value is None
+        or equity.value <= 0
+        or equity.provenance is None
+    ):
+        return None
+    public_facts = {
+        key: [item] + response.fundamentals_history.get(key, [])
+        for key, item in response.fundamentals.items()
+    }
+
+    def compatible(key):
+        return next(
+            (
+                fact
+                for fact in public_facts.get(key, [])
+                if fact.value is not None
+                and fact.provenance is not None
+                and (
+                    fact.provenance.end,
+                    fact.provenance.accession,
+                    fact.provenance.form,
+                    fact.provenance.filed,
+                    fact.provenance.fiscal_year,
+                )
+                == (
+                    equity.provenance.end,
+                    equity.provenance.accession,
+                    equity.provenance.form,
+                    equity.provenance.filed,
+                    equity.provenance.fiscal_year,
+                )
+            ),
+            None,
+        )
+
+    debt = {
+        key: compatible(key)
+        for key in (
+            "long_term_debt_current",
+            "long_term_debt_noncurrent",
+            "short_term_borrowings",
+            "debt_current",
+            "long_term_debt",
+        )
+    }
+
+    def unreported(key):
+        current = response.fundamentals.get(key)
+        return (
+            debt[key] is None
+            and current is not None
+            and current.availability_reason != "conflicting_standard_concepts"
+            and not any(
+                fact.value is not None
+                and fact.provenance is not None
+                and fact.provenance.end == equity.provenance.end
+                for fact in public_facts.get(key, [])
+            )
+        )
+
+    if debt["debt_current"] is not None and debt["long_term_debt_noncurrent"] is not None:
+        return "debt_current_plus_noncurrent"
+    if (
+        debt["long_term_debt_current"] is not None
+        and debt["long_term_debt_noncurrent"] is not None
+        and unreported("debt_current")
+        and (debt["short_term_borrowings"] is not None or unreported("short_term_borrowings"))
+    ):
+        return "long_term_components"
+    if (
+        debt["short_term_borrowings"] is not None
+        and debt["long_term_debt_noncurrent"] is not None
+        and all(
+            unreported(key)
+            for key in ("long_term_debt_current", "debt_current", "long_term_debt")
+        )
+    ):
+        return "short_term_plus_noncurrent"
+    return None
 
 
 def _validate_formula_evidence(response):
@@ -1478,6 +2266,11 @@ def _validate_formula_evidence(response):
             raise ValueError("Metric evidence metadata must derive from typed inputs")
 
     current_price = response.metric_evidence.get("current_price")
+    if (
+        response.data_status.market_data.available
+        and (current_price is None or not current_price.available)
+    ):
+        raise ValueError("Available market data requires available current price evidence")
     canonical_price_input = None
     if current_price is not None and current_price.available:
         price_inputs = [
@@ -1499,6 +2292,33 @@ def _validate_formula_evidence(response):
             continue
         source, formula, version, expected_roles = contract
         expected_owner = "yahoo" if metric == "current_price" else "goatlens"
+        if metric == "debt_to_equity" and not evidence.available:
+            equity = response.fundamentals.get("equity")
+            expected_reason = (
+                "nonpositive_equity_not_meaningful"
+                if equity is not None
+                and equity.value is not None
+                and equity.value <= 0
+                else "required_inputs_unavailable"
+            )
+            if (
+                _reconstruct_public_debt_branch(response) is not None
+                or
+                evidence.source != "sec"
+                or evidence.formula
+                != "reviewed_funded_debt_branch_divided_by_equity"
+                or evidence.formula_version != version
+                or evidence.formula_owner != "goatlens"
+                or evidence.availability_reason != expected_reason
+                or evidence.inputs
+                or evidence.as_of is not None
+                or evidence.filed_at is not None
+                or evidence.observation_count is not None
+            ):
+                raise ValueError(
+                    "Unavailable debt-to-equity is inconsistent with a reconstructable reviewed branch"
+                )
+            continue
         if (
             evidence.source != source
             or evidence.formula_version != version
@@ -1507,10 +2327,169 @@ def _validate_formula_evidence(response):
         ):
             raise ValueError("Metric formula evidence contract is inconsistent")
         if not evidence.available:
+            if (
+                source in {"sec", "sec+yahoo"}
+                and metric != "debt_to_equity"
+                and (
+                    _unavailable_fixed_formula_is_reconstructable(
+                        response, metric, expected_roles, formula
+                    )
+                    or _unavailable_dynamic_formula_is_reconstructable(response, metric)
+                )
+            ):
+                raise ValueError(
+                    f"Metric {metric!r} unavailable downgrade is reconstructable from retained canonical leaves"
+                )
             continue
 
         roles = tuple(item.role for item in evidence.inputs)
-        if metric == "gross_margin":
+        if metric == "debt_to_equity":
+            equity_input = next(
+                (
+                    item
+                    for item in evidence.inputs
+                    if isinstance(item, SECMetricInputResponse)
+                    and item.role == "capital.end.equity"
+                ),
+                None,
+            )
+
+            if equity_input is None or equity_input.value <= 0:
+                raise ValueError(
+                    "Available debt-to-equity evidence requires positive equity"
+                )
+
+            def compatible_public_fact(key):
+                if equity_input is None:
+                    return None
+                return next(
+                    (
+                        fact
+                        for fact in public_facts.get(key, [])
+                        if fact.value is not None
+                        and fact.provenance is not None
+                        and (
+                            fact.provenance.end,
+                            fact.provenance.accession,
+                            fact.provenance.form,
+                            fact.provenance.filed,
+                            fact.provenance.fiscal_year,
+                        )
+                        == (
+                            equity_input.provenance.end,
+                            equity_input.provenance.accession,
+                            equity_input.provenance.form,
+                            equity_input.provenance.filed,
+                            equity_input.provenance.fiscal_year,
+                        )
+                    ),
+                    None,
+                )
+
+            compatible_debt = {
+                key: compatible_public_fact(key)
+                for key in (
+                    "long_term_debt_current",
+                    "long_term_debt_noncurrent",
+                    "short_term_borrowings",
+                    "debt_current",
+                    "long_term_debt",
+                )
+            }
+
+            def publicly_unreported(key):
+                current = current_facts.get(key, [None])[0]
+                return (
+                    compatible_debt[key] is None
+                    and current is not None
+                    and current.availability_reason
+                    != "conflicting_standard_concepts"
+                    and equity_input is not None
+                    and not any(
+                        fact.value is not None
+                        and fact.provenance is not None
+                        and fact.provenance.end == equity_input.provenance.end
+                        for fact in public_facts.get(key, [])
+                    )
+                )
+
+            broader_same_period = (
+                compatible_debt["debt_current"] is None
+                and equity_input is not None
+                and any(
+                    fact.value is not None
+                    and fact.provenance is not None
+                    and fact.provenance.end == equity_input.provenance.end
+                    for fact in public_facts.get("debt_current", [])
+                )
+            )
+            if broader_same_period:
+                raise ValueError(
+                    "A narrower debt branch cannot bypass a retained broader same-period DebtCurrent fact"
+                )
+
+            expected_formula = None
+            if (
+                compatible_debt["debt_current"] is not None
+                and compatible_debt["long_term_debt_noncurrent"] is not None
+            ):
+                expected_formula = (
+                    "debt_current_plus_long_term_debt_noncurrent_divided_by_equity"
+                )
+                expected_roles = (
+                    "debt.current.debt_current",
+                    "debt.current.long_term_noncurrent",
+                    "capital.end.equity",
+                )
+            elif (
+                compatible_debt["long_term_debt_current"] is not None
+                and compatible_debt["long_term_debt_noncurrent"] is not None
+                and publicly_unreported("debt_current")
+                and (
+                    compatible_debt["short_term_borrowings"] is not None
+                    or publicly_unreported("short_term_borrowings")
+                )
+            ):
+                expected_formula = (
+                    "long_term_debt_components_plus_optional_short_term_"
+                    "borrowings_divided_by_equity"
+                )
+                expected_roles = (
+                    "debt.current.long_term_current",
+                    "debt.current.long_term_noncurrent",
+                    *(
+                        ("debt.current.short_term_borrowings",)
+                        if compatible_debt["short_term_borrowings"] is not None
+                        else ()
+                    ),
+                    "capital.end.equity",
+                )
+            elif (
+                compatible_debt["short_term_borrowings"] is not None
+                and compatible_debt["long_term_debt_noncurrent"] is not None
+                and all(
+                    publicly_unreported(key)
+                    for key in (
+                        "long_term_debt_current",
+                        "debt_current",
+                        "long_term_debt",
+                    )
+                )
+            ):
+                expected_formula = (
+                    "short_term_borrowings_plus_long_term_debt_noncurrent_"
+                    "divided_by_equity"
+                )
+                expected_roles = (
+                    "debt.current.short_term_borrowings",
+                    "debt.current.long_term_noncurrent",
+                    "capital.end.equity",
+                )
+            else:
+                expected_roles = ()
+            if evidence.formula != expected_formula:
+                raise ValueError("Metric formula evidence contract is inconsistent")
+        elif metric == "gross_margin":
             gross_contracts = {
                 "gross_profit_divided_by_revenue": (
                     "income.current.gross_profit", "income.current.revenue"),
@@ -1756,6 +2735,7 @@ def _build_snapshot_series(snapshot, ticker):
 
 def _build_metric_evidence(normalized, snapshot=None, series_references=None):
     evidence = {}
+    issuer_cik = getattr(normalized, "cik", normalized.get("cik", "0000000000"))
     series_references = series_references or {}
     market_as_of = (
         getattr(snapshot, "current_price_as_of", None) if snapshot is not None else None
@@ -1771,6 +2751,7 @@ def _build_metric_evidence(normalized, snapshot=None, series_references=None):
         return [
             {
                 "kind": "sec_fact",
+                "cik": issuer_cik,
                 "role": item.role,
                 "value": float(item.value),
                 "provenance": _provenance_payload(item.provenance),
@@ -1945,6 +2926,7 @@ def _build_metric_evidence(normalized, snapshot=None, series_references=None):
         reason = normalized.get(f"{metric}_availability_reason") or reason
 
         evidence[metric] = {
+            "cik": issuer_cik,
             "value": float(value) if available else None,
             "available": available,
             "source": source,
@@ -2081,12 +3063,17 @@ async def fetch_data_node(state: GOATState) -> GOATState:
         state["error"] = "Fundamental data request failed."
         state["error_code"] = "fundamentals_failure"
         return state
-    except Exception:
-        state["error"] = "Fundamental data request failed."
-        state["error_code"] = "fundamentals_failure"
-        return state
 
+    _validate_trusted_issuer_association(
+        expected_ticker=ticker,
+        expected_cik=fundamentals.cik,
+        issuer_lookup_record=fundamentals.issuer_lookup_record,
+        issuer_lookup_digest=fundamentals.issuer_lookup_digest,
+    )
+    state["issuer_lookup_record"] = fundamentals.issuer_lookup_record
+    state["issuer_lookup_digest"] = fundamentals.issuer_lookup_digest
     normalized = normalize_sec_fundamentals(fundamentals)
+    state["sec_cik"] = fundamentals.cik
     (
         state["sec_fundamentals"],
         state["sec_fundamentals_history"],
@@ -2111,6 +3098,7 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "currency": None,
             "cache_age_seconds": None,
             "freshness": "unknown",
+            "split_events": [],
             "reason": "market_data_unavailable",
         },
         "price_dependent_analysis": {
@@ -2205,6 +3193,21 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             "currency": snapshot.currency or None,
             "cache_age_seconds": snapshot.cache_age_seconds,
             "freshness": "fresh",
+            "split_events": [
+                {
+                    "effective_date": event.effective_date,
+                    "numerator": event.numerator,
+                    "denominator": event.denominator,
+                }
+                for event in sorted(
+                    snapshot.split_events,
+                    key=lambda item: (
+                        item.effective_date,
+                        item.numerator,
+                        item.denominator,
+                    ),
+                )
+            ],
             "reason": None if current_price is not None else "current_market_price_unavailable",
         }
         state["data_status"]["price_dependent_analysis"] = (
@@ -2219,8 +3222,6 @@ async def fetch_data_node(state: GOATState) -> GOATState:
             else "market_data_failure"
         )
         state["data_status"]["market_data"]["reason"] = error_code
-    except Exception:
-        state["data_status"]["market_data"]["reason"] = "market_data_failure"
 
     if snapshot is not None:
         state["data_status"]["price_dependent_analysis"] = (
@@ -2330,13 +3331,9 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
     
-    # Build agents: single loop handles both LLM and rule-based modes
-    has_llm = bool(os.getenv("OPENAI_API_KEY"))
+    # Shipping analysis is deterministic and must not depend on metered narrative calls.
     all_agents = {
-        name: cls(
-            llm_client=get_llm_client(getattr(cls, "model_preference", "gpt-4o-mini"))
-            if has_llm else None
-        )
+        name: cls(llm_client=None)
         for name, cls in AGENT_REGISTRY
     }
     
@@ -2455,6 +3452,7 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
                     for field in AgentResult.model_fields
                     if field in result
                 }
+                public_result["cik"] = state.get("sec_cik", "0000000000")
                 validated_result = AgentResult.model_validate(public_result)
                 if (
                     validated_result.agent != agent.name
@@ -2522,9 +3520,9 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
             score=result.get("score", 0),
         ))
     
-    llm = get_llm_client() if os.getenv("OPENAI_API_KEY") else None
+    llm = None
 
-    if completed_analyses < 2:
+    if completed_analyses < 3:
         state["consensus"] = {
             "status": "incomplete",
             "verdict": "incomplete",
@@ -2532,7 +3530,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
             "partial_indication": None,
             "consensus_points": [],
             "divergence_points": [
-                "Consensus unavailable because fewer than two selected analyses "
+                "Consensus unavailable because fewer than three selected analyses "
                 "are complete."
             ],
             "completed_analyses": completed_analyses,
@@ -2630,6 +3628,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
     }
     for result in agent_results:
         comparison_table["agents"].append({
+            "cik": state.get("sec_cik"),
             "name": result["agent"],
             "style": result.get("style", ""),
             "verdict": result["verdict"],
@@ -2643,6 +3642,7 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
     # next_earnings_date already fetched in fetch_data_node — no extra call needed
     state["final_report"] = {
         "ticker": state["ticker"],
+        "cik": state.get("sec_cik"),
         "company_name": normalized.get("company_name") or state["ticker"],
         "sector": normalized.get("sector") or "Unknown",
         "data_status": state.get("data_status") or {},
@@ -2726,7 +3726,7 @@ app = FastAPI(
 
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'sha256-3mMjJooNr/i21sq1ZM9hwrLZ/+wQWro9H60VSJDDSuA=' "
+    "script-src 'self' 'sha256-W4bN8Haue+s7AAhILoiF1GKqA9hjwEfszDT3JWxNFUU=' "
     "https://unpkg.com https://cdn.jsdelivr.net; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src https://fonts.gstatic.com; img-src 'self' data:; "
@@ -2749,7 +3749,7 @@ async def add_security_headers(request: Request, call_next):
 async def root():
     """Serve the frontend (no-cache so changes appear immediately)."""
     return FileResponse(
-        "../frontend/index.html",
+        Path(__file__).resolve().parents[1] / "frontend" / "index.html",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
@@ -3181,8 +4181,9 @@ async def analyze_company(request: AnalysisRequest):
     # The current consensus contract has no investment-score field, so there is
     # intentionally no MemoryStore write here.
     
-    return AnalysisResponse(
+    response = AnalysisResponse(
         ticker=report["ticker"],
+        cik=report["cik"],
         company_name=report["company_name"],
         sector=report["sector"],
         data_status=report["data_status"],
@@ -3201,6 +4202,7 @@ async def analyze_company(request: AnalysisRequest):
         agent_results=[
             AgentResult(
                 agent=r["agent"],
+                cik=report["cik"],
                 style=r.get("style", ""),
                 verdict=r["verdict"],
                 score=r.get("score", 0),
@@ -3217,6 +4219,13 @@ async def analyze_company(request: AnalysisRequest):
         earnings_history=earnings_history,
         earnings_streak=earnings_streak_obj,
         next_earnings_date=report.get("next_earnings_date"),
+    )
+    return validate_trusted_analysis_response(
+        response,
+        expected_ticker=initial_state["ticker"],
+        expected_cik=final_state["sec_cik"],
+        issuer_lookup_record=final_state.get("issuer_lookup_record"),
+        issuer_lookup_digest=final_state.get("issuer_lookup_digest"),
     )
 
 
