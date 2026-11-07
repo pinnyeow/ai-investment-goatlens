@@ -94,6 +94,12 @@ def test_release_smoke_checks_aapl_amzn_and_reports_market_status_once():
     assert "evidence.get('earnings_turnaround', {}).get('available')" in amzn
     assert "evidence.get('earnings_turnaround', {}).get('source') == 'sec'" in amzn
     assert "evidence.get('earnings_turnaround', {}).get('value') == 1.0" in amzn
+    assert '416161000000' not in aapl
+    assert '0000320193-25-000079' not in aapl
+    assert "revenue.get('value') > 0" in aapl
+    assert "provenance.get('namespace') == 'us-gaap'" in aapl
+    assert "re.fullmatch(r'[0-9]{10}-[0-9]{2}-[0-9]{6}', provenance.get('accession', ''))" in aapl
+    assert "provenance.get('form') in {'10-K', '10-K/A'}" in aapl
     assert "Yahoo market-data status (non-gating)" in workflow
     assert "revenue_minus_cost_of_revenue_divided_by_revenue" not in workflow
     assert "assert body['completed_analyses'] == 5" not in workflow
