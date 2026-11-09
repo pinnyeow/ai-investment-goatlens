@@ -41,8 +41,8 @@ def test_no_data_at_all_is_reported_honestly():
 
 
 def test_banks_explain_not_meaningful_checks():
-    na = ["free_cash_flow", "debt_to_equity"]
-    metrics = {**QUALITY_COMPANY, "free_cash_flow": None, "debt_to_equity": None}
+    na = {"free_cash_flow": "Not meaningful for banks and insurers", "debt_to_equity": "Not meaningful for banks and insurers"}
+    metrics = {**QUALITY_COMPANY, "free_cash_flow": None, "debt_to_equity": None, "net_debt_to_ebitda": None}
     snapshot = analyze(company(metrics, not_applicable=na, is_financial=True))
     buffett = next(r for r in snapshot["agent_results"] if r["id"] == "buffett")
     details = [c["detail"] for c in buffett["criteria"] if c["status"] == "no_data"]
@@ -88,3 +88,37 @@ def test_loss_makers_are_judged_by_lynch_not_skipped():
     assert lynch["status"] == "complete"
     category = next(c for c in lynch["criteria"] if c["key"] == "growth_category")
     assert category["status"] == "fail" and "loss" in category["detail"]
+
+
+def test_partial_checklist_never_claims_a_strong_verdict():
+    # Two of Buffett's four checks with perfect numbers would score +100.
+    metrics = {**QUALITY_COMPANY, "debt_to_equity": None, "net_debt_to_ebitda": None, "free_cash_flow": None}
+    buffett = evaluate_investor("buffett", metrics)
+    assert buffett["score"] > 60 and buffett["verdict"] == "buy"
+
+
+def test_split_views_are_flagged():
+    results = [
+        {"agent": "A", "score": 90.0, "verdict": "strong_buy"},
+        {"agent": "B", "score": -70.0, "verdict": "strong_sell"},
+    ]
+    assert consensus(results)["split"] is True
+
+
+def test_low_beta_is_not_penalised():
+    dalio = evaluate_investor("dalio", {**QUALITY_COMPANY, "beta": 0.4})
+    beta = next(c for c in dalio["criteria"] if c["key"] == "beta")
+    assert beta["status"] == "pass"
+
+
+def test_lynch_caps_extreme_growth_in_peg():
+    lynch = evaluate_investor("lynch", {**QUALITY_COMPANY, "pe_ratio": 40.0, "earnings_growth": 2.0})
+    peg = next(c for c in lynch["criteria"] if c["key"] == "peg_ratio")
+    assert "capped at 50%" in peg["detail"] and "0.80" in peg["detail"]
+
+
+def test_foreign_currency_reason_is_shown():
+    na = {"book_value_per_share": "Reported in TWD, so it can't be compared with the US share price"}
+    graham = evaluate_investor("graham", {**QUALITY_COMPANY, "book_value_per_share": None, "pb_ratio": None}, na)
+    reasons = [c["detail"] for c in graham["criteria"] if c["status"] == "no_data"]
+    assert any("TWD" in r for r in reasons)

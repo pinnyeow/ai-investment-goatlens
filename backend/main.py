@@ -75,19 +75,31 @@ async def load(path: str) -> Optional[Any]:
     return data
 
 
+COMMON_FUNDS = {"SPY", "QQQ", "VOO", "VTI", "IVV", "DIA", "IWM", "ARKK", "SCHD", "VGT", "GLD", "TLT",
+                "BTC", "ETH", "BTC-USD", "ETH-USD", "IBIT", "SOXL", "TQQQ"}
+
+
 def normalize_ticker(raw: str) -> str:
     ticker = raw.strip().upper().replace(".", "-")
     if not TICKER_PATTERN.fullmatch(ticker):
-        raise HTTPException(422, "Ticker must be 1-10 letters or digits with one optional . or -")
+        raise HTTPException(422, "Enter a stock ticker like AAPL or BRK.B (1-10 letters or digits).")
     return ticker
 
 
 async def snapshot_for(ticker: str) -> Dict[str, Any]:
     snapshot = await load(f"snapshots/{ticker}.json")
     if snapshot is None:
+        if ticker in COMMON_FUNDS:
+            raise HTTPException(404, (
+                f"{ticker} is a fund or crypto asset. GOATlens rates individual companies, because "
+                "these investors judged businesses (profits, debt, moats), not baskets of stocks."
+            ))
         index = await load("index.json") or []
-        suggestions = [item["ticker"] for item in index if item["ticker"].startswith(ticker[:2])][:6]
-        hint = f" Try: {', '.join(suggestions)}." if suggestions else ""
+        word = ticker.replace("-", " ").lower()
+        by_name = [item["ticker"] for item in index if word and word in item.get("name", "").lower()]
+        by_ticker = [item["ticker"] for item in index if item["ticker"].startswith(ticker[:2])]
+        suggestions = list(dict.fromkeys(by_name + by_ticker))[:6]
+        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
         raise HTTPException(404, (
             f"{ticker} isn't covered yet. GOATlens covers {len(index)} companies "
             f"(the S&P 500 plus popular names), refreshed nightly.{hint}"
@@ -125,7 +137,7 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     return FileResponse(FRONTEND, headers={"Cache-Control": "no-cache"})
 
@@ -204,16 +216,24 @@ def _price_points(rows: List[list], period: str) -> List[Dict[str, Any]]:
 
 
 def _reaction(rows: List[list], day: str, sessions: int) -> Optional[float]:
+    """Close-to-close move from the session before an announcement. Only uses the
+    daily part of the history; older rows are weekly and would overstate it."""
     dates = [r[0] for r in rows]
     before = [i for i, d in enumerate(dates) if d < day]
     if not before or before[-1] + sessions >= len(rows):
         return None
-    base = rows[before[-1]][4]
-    return round((rows[before[-1] + sessions][4] / base - 1) * 100, 2) if base else None
+    start, end = before[-1], before[-1] + sessions
+    span = (date.fromisoformat(dates[end]) - date.fromisoformat(dates[start])).days
+    if span > sessions * 2 + 4:  # weekly rows
+        return None
+    base = rows[start][4]
+    return round((rows[end][4] / base - 1) * 100, 2) if base else None
 
 
 @app.get("/api/price-history/{ticker}")
 async def price_history(ticker: str, period: str = "1y"):
+    if period != "ytd" and period not in PERIOD_DAYS:
+        raise HTTPException(422, f"period must be one of: ytd, {', '.join(PERIOD_DAYS)}")
     snapshot = await snapshot_for(normalize_ticker(ticker))
     rows = snapshot.get("prices", [])
     prices = _price_points(rows, period)

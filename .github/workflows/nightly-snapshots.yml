@@ -5,11 +5,11 @@ name: Nightly snapshots
 # GitHub's servers because Yahoo throttles Render's shared IP addresses.
 on:
   schedule:
-    - cron: '30 10 * * 1-6' # 10:30 UTC, Tue-Sat after each US trading day (Mon covers Fri)
+    - cron: '30 10 * * 2-6' # 10:30 UTC Tue-Sat, after each US trading day
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read  # only the publish job can write
 
 concurrency:
   group: nightly-snapshots
@@ -17,10 +17,14 @@ concurrency:
 
 jobs:
   build:
+    # Third-party code (yfinance, pandas) runs here, so this job gets a
+    # read-only token and never keeps credentials on disk.
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -32,8 +36,8 @@ jobs:
 
       - name: Start from last night's snapshots (kept if a ticker fails tonight)
         run: |
-          if git ls-remote --exit-code --heads origin data >/dev/null; then
-            git clone --depth 1 --branch data "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" site
+          if git ls-remote --exit-code --heads "https://github.com/${{ github.repository }}.git" data >/dev/null; then
+            git clone --depth 1 --branch data "https://github.com/${{ github.repository }}.git" site
             rm -rf site/.git
           else
             mkdir site
@@ -43,7 +47,25 @@ jobs:
         working-directory: backend
         run: python -m lens.build --out ../site
 
-      - name: Publish to the data branch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site
+          retention-days: 3
+
+  publish:
+    # Only main publishes; a branch can't overwrite the live data.
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: site
+      - name: Publish to the data branch (one commit, no history growth)
         working-directory: site
         run: |
           git init -q -b data

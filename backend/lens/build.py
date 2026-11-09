@@ -56,7 +56,7 @@ def earnings_streak(history: List[Dict]) -> Dict:
 def analyze(company: Dict) -> Dict:
     """Turn fetched company data into the snapshot the website serves."""
     metrics = company["metrics"]
-    not_applicable = set(company.get("not_applicable", []))
+    not_applicable = dict(company.get("not_applicable", {}))
     results = [evaluate_investor(investor_id, metrics, not_applicable) for investor_id in INVESTORS]
     complete = sum(r["status"] == "complete" for r in results)
     return {
@@ -67,7 +67,9 @@ def analyze(company: Dict) -> Dict:
         "industry": company["industry"],
         "currency": company["currency"],
         "is_financial": company["is_financial"],
-        "not_applicable": sorted(not_applicable),
+        "not_applicable": not_applicable,
+        "financial_currency": company.get("financial_currency", company["currency"]),
+        "fx_rate_used": company.get("fx_rate_used"),
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "stale": False,
         "data_status": {
@@ -89,7 +91,7 @@ def analyze(company: Dict) -> Dict:
     }
 
 
-def build(tickers: List[str], out: Path, pause: float) -> Dict:
+def build(tickers: List[str], out: Path, pause: float, prune: bool = False) -> Dict:
     from lens.data import fetch_company, fetch_market_returns
 
     out.mkdir(parents=True, exist_ok=True)
@@ -124,6 +126,12 @@ def build(tickers: List[str], out: Path, pause: float) -> Dict:
             print(f"[{i}/{len(tickers)}] {len(fresh)} fresh, {len(stale)} stale, {len(missing)} missing")
         time.sleep(pause)
 
+    if prune:
+        keep = {f"{t}.json" for t in tickers}
+        for path in (out / "snapshots").glob("*.json"):
+            if path.name not in keep:
+                path.unlink()
+
     covered = len(index)
     full = sum(1 for item in index if item["complete"] == len(INVESTORS))
     industrial = [item for item in index if not item["financial"]]
@@ -157,7 +165,8 @@ def main() -> int:
                         help="exit non-zero (so nothing is published) if fewer succeed tonight")
     args = parser.parse_args()
     tickers = args.tickers.upper().split(",") if args.tickers else load_universe()
-    report = build(tickers, args.out, args.pause)
+    # A full build owns the snapshot folder, so it removes tickers dropped from universe.txt.
+    report = build(tickers, args.out, args.pause, prune=not args.tickers)
     print(json.dumps(report, indent=2))
     if report["fresh"] < args.min_fresh_rate * report["universe"]:
         print("Too many failures tonight; not publishing.", file=sys.stderr)

@@ -61,3 +61,18 @@ def test_agents_and_coverage(client):
     assert len(client.get("/api/agents").json()["agents"]) == 5
     assert client.get("/api/coverage").json()["covered"] == 1
     assert client.get("/api/tickers").json()[0]["ticker"] == "BRK-B"
+
+
+def test_funds_get_a_clear_message(client):
+    response = client.post("/api/analyze", json={"ticker": "SPY"})
+    assert response.status_code == 404 and "individual companies" in response.json()["detail"]
+
+
+def test_company_name_suggests_ticker(client):
+    detail = client.post("/api/analyze", json={"ticker": "BERKSHIRE"}).json()["detail"]
+    assert "BRK-B" in detail
+
+
+def test_head_root_and_bad_period(client):
+    assert client.head("/").status_code == 200
+    assert client.get("/api/price-history/BRK-B?period=zzz").status_code == 422

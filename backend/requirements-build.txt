@@ -1,4 +1,6 @@
-# Nightly snapshot build (GitHub Actions only, never on Render).
+# Nightly snapshot build (GitHub Actions only, never on Render). Pinned: this job
+# can publish to the repo, so upgrades should be deliberate.
 -r requirements.txt
-yfinance>=1.0,<2
-pandas>=2.0
+yfinance==1.2.0
+pandas==2.3.3
+lxml==6.1.3

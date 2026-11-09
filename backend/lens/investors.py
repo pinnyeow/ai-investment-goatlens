@@ -68,7 +68,7 @@ def status_for(points: float) -> str:
     return "pass" if points > 0 else "fail" if points < 0 else "neutral"
 
 
-def leverage(m, good: float, ok: float):
+def leverage(m, good: float, ok: float, nd_good: float = 1.0, nd_ok: float = 2.5):
     """Return (tier, sentence) where tier is "good", "ok" or "high", or None.
 
     Uses debt-to-equity normally. When shareholders' equity is negative (common
@@ -81,7 +81,7 @@ def leverage(m, good: float, ok: float):
         return tier, f"Debt-to-equity {de:.2f}"
     if have(m, "net_debt_to_ebitda"):
         nd = m["net_debt_to_ebitda"]
-        tier = "good" if nd <= 1.0 else "ok" if nd <= 2.5 else "high"
+        tier = "good" if nd <= nd_good else "ok" if nd <= nd_ok else "high"
         return tier, f"Net debt is {nd:.1f}× yearly EBITDA (equity is negative, so debt-to-equity doesn't apply)"
     return None
 
@@ -122,7 +122,7 @@ def _buffett_fcf(m):
     fcf = m["free_cash_flow"]
     points = 15 if fcf > 0 else -20
     word = "positive" if fcf > 0 else "negative"
-    return points, status_for(points), f"Free cash flow is {word} (${fcf / 1e9:,.1f}B last fiscal year)"
+    return points, status_for(points), f"Free cash flow was {word} last fiscal year (owner earnings)"
 
 
 BUFFETT = [
@@ -138,10 +138,13 @@ BUFFETT = [
 def _lynch_peg(m):
     if not have(m, "pe_ratio", "earnings_growth") or m["earnings_growth"] <= 0 or m["pe_ratio"] <= 0:
         return None
-    peg = m["pe_ratio"] / (m["earnings_growth"] * 100)
+    # Lynch distrusted growth above ~50% a year as unsustainable, so cap it.
+    growth = min(m["earnings_growth"], 0.50)
+    peg = m["pe_ratio"] / (growth * 100)
     points = tiered(peg, [(lambda v: v < 0.5, 35), (lambda v: v < 1.0, 25), (lambda v: v < 1.5, 10),
                           (lambda v: v < 2.0, -10)], -25)
-    return points, status_for(points), f"PEG ratio {peg:.2f} (under 1.0 is Lynch's sweet spot)"
+    note = " using growth capped at 50%" if m["earnings_growth"] > 0.50 else ""
+    return points, status_for(points), f"PEG ratio {peg:.2f}{note} (under 1.0 is Lynch's sweet spot)"
 
 
 def _lynch_category(m):
@@ -170,8 +173,8 @@ def _lynch_institutions(m):
     if not have(m, "institutional_ownership"):
         return None
     io = m["institutional_ownership"]
-    points = 15 if io < 0.30 else 10 if io < 0.50 else -10 if io > 0.80 else 0
-    return points, status_for(points), f"Institutions own {pct(io)} (Lynch liked under-followed stocks)"
+    points = 15 if io < 0.30 else -10 if io > 0.80 else 0
+    return points, status_for(points), f"Institutions own {pct(io)} (Lynch liked stocks Wall Street hadn't found yet, under 30%)"
 
 
 def _lynch_balance(m):
@@ -304,7 +307,7 @@ def _munger_growth(m):
 
 
 def _munger_debt_flag(m):
-    result = leverage(m, good=1.0, ok=1.0)
+    result = leverage(m, good=1.0, ok=1.0, nd_good=3.0, nd_ok=3.0)
     if result is None:
         return None
     tier, text = result
@@ -353,8 +356,8 @@ def _dalio_risk_adjusted(m):
     if not have(m, "realized_total_return_252d", "volatility_252d") or m["volatility_252d"] <= 0:
         return None
     ratio = m["realized_total_return_252d"] / m["volatility_252d"]
-    points = tiered(ratio, [(lambda v: v >= 1.0, 30), (lambda v: v >= 0.5, 20), (lambda v: v >= 0.25, 10),
-                            (lambda v: v >= 0, 0)], -20)
+    points = tiered(ratio, [(lambda v: v >= 1.0, 15), (lambda v: v >= 0.5, 10), (lambda v: v >= 0.25, 5),
+                            (lambda v: v >= 0, 0)], -15)
     return points, status_for(points), (
         f"Past-year return {pct(m['realized_total_return_252d'])} for {pct(m['volatility_252d'])} volatility "
         f"(return per unit of risk {ratio:.2f})"
@@ -370,7 +373,7 @@ def _dalio_diversification(m):
 
 
 def _dalio_leverage(m):
-    result = leverage(m, good=1.0, ok=1.0)
+    result = leverage(m, good=1.0, ok=1.0, nd_good=3.0, nd_ok=3.0)
     if result is None:
         return None
     tier, text = result
@@ -393,12 +396,19 @@ def _dalio_beta(m):
     if not have(m, "beta"):
         return None
     b = m["beta"]
-    points = 15 if 0.8 <= b <= 1.2 else 10 if 0.5 <= b <= 1.5 else -10
-    return points, status_for(points), f"Beta {b:.2f} (balanced risk is near 1.0)"
+    if b < 0.8:
+        points, text = 15, f"Beta {b:.2f}: moves less than the market (steadier through downturns)"
+    elif b <= 1.2:
+        points, text = 10, f"Beta {b:.2f}: moves with the market"
+    elif b <= 1.5:
+        points, text = 0, f"Beta {b:.2f}: swings more than the market"
+    else:
+        points, text = -10, f"Beta {b:.2f}: swings much more than the market (fragile in downturns)"
+    return points, status_for(points), text
 
 
 DALIO = [
-    Criterion("risk_adjusted_return", "Return per unit of risk", 30, _dalio_risk_adjusted, ('realized_total_return_252d', 'volatility_252d')),
+    Criterion("risk_adjusted_return", "Return per unit of risk", 15, _dalio_risk_adjusted, ('realized_total_return_252d', 'volatility_252d')),
     Criterion("diversification", "Diversification", 20, _dalio_diversification, ('correlation_sp500',)),
     Criterion("leverage", "Sustainable leverage", 15, _dalio_leverage, ('debt_to_equity', 'net_debt_to_ebitda')),
     Criterion("debt_cycle", "Debt cycle", 10, _dalio_debt_cycle, ('debt_growth_3y',)),
@@ -427,17 +437,18 @@ def verdict_for(score: float) -> str:
     return "strong_sell"
 
 
-def _no_data_reason(criterion: Criterion, metrics: Metrics, not_applicable: set) -> str:
-    if not_applicable.intersection(criterion.needs):
-        return "Not meaningful for banks and insurers, so not scored"
+def _no_data_reason(criterion: Criterion, metrics: Metrics, not_applicable: Dict[str, str]) -> str:
+    for key in criterion.needs:
+        if key in not_applicable:
+            return f"{not_applicable[key]}, so not scored"
     missing = [METRIC_NAMES.get(k, k) for k in criterion.needs if metrics.get(k) is None]
     if missing:
-        return f"Not scored: no {', '.join(dict.fromkeys(missing))} for this company"
+        return f"Not scored: no {' or '.join(dict.fromkeys(missing))} for this company"
     return "Not scored: the inputs don't apply here (for example, negative earnings)"
 
 
-def evaluate_investor(investor_id: str, metrics: Metrics, not_applicable: Optional[set] = None) -> Dict:
-    not_applicable = not_applicable or set()
+def evaluate_investor(investor_id: str, metrics: Metrics, not_applicable: Optional[Dict[str, str]] = None) -> Dict:
+    not_applicable = not_applicable or {}
     name, style, criteria = INVESTORS[investor_id]
     checks = []
     earned = available = 0.0
@@ -460,12 +471,15 @@ def evaluate_investor(investor_id: str, metrics: Metrics, not_applicable: Option
     scored = coverage >= MIN_COVERAGE and available > 0
     score = round(max(-100.0, min(100.0, earned / available * 100)), 1) if scored else None
     missing = [c["key"] for c in checks if c["status"] == "no_data"]
+    verdict = verdict_for(score) if score is not None else None
+    if verdict and coverage < 0.75:  # don't claim a strong view on a partial checklist
+        verdict = {"strong_buy": "buy", "strong_sell": "sell"}.get(verdict, verdict)
     return {
         "id": investor_id,
         "agent": name,
         "style": style,
         "score": score,
-        "verdict": verdict_for(score) if score is not None else None,
+        "verdict": verdict,
         "status": "complete" if scored else "insufficient_data",
         "coverage": round(coverage, 2),
         "criteria_checked": len(checks) - len(missing),
@@ -487,6 +501,9 @@ def consensus(results: List[Dict]) -> Dict:
             "consensus_verdict": "insufficient_data",
             "consensus_score": None,
             "agreement_score": None,
+            "split": False,
+            "positive_count": 0,
+            "negative_count": 0,
             "consensus_points": [],
             "divergence_points": ["Not enough data for any investor to form a view."],
         }
@@ -516,6 +533,10 @@ def consensus(results: List[Dict]) -> Dict:
         "consensus_verdict": verdict,
         "consensus_score": average,
         "agreement_score": agreement,
+        # An average hides disagreement; flag it so the page leads with "split".
+        "split": bool(bullish and bearish and agreement < 0.5),
+        "positive_count": len(bullish),
+        "negative_count": len(bearish),
         "consensus_points": points,
         "divergence_points": divergences,
     }

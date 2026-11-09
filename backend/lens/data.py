@@ -44,6 +44,10 @@ def _filled(frame: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
     return frame.loc[:, frame.notna().mean() >= 0.5]
 
 
+def _scaled(value: Optional[float], factor: Optional[float]) -> Optional[float]:
+    return value * factor if value is not None and factor else None
+
+
 def _first(values: List[Optional[float]]) -> Optional[float]:
     return values[0] if values else None
 
@@ -85,6 +89,21 @@ def _daily_returns(history: pd.DataFrame) -> pd.Series:
     return closes.pct_change().dropna()
 
 
+_FX_CACHE: Dict[str, Optional[float]] = {}
+
+
+def fx_rate(from_currency: str, to_currency: str) -> Optional[float]:
+    """Latest exchange rate from Yahoo (e.g. TWD -> USD), cached for the build."""
+    pair = f"{from_currency}{to_currency}=X"
+    if pair not in _FX_CACHE:
+        try:
+            closes = yf.Ticker(pair).history(period="5d")["Close"].dropna()
+            _FX_CACHE[pair] = float(closes.iloc[-1]) if len(closes) else None
+        except Exception:
+            _FX_CACHE[pair] = None
+    return _FX_CACHE[pair]
+
+
 def fetch_market_returns() -> pd.Series:
     """One year of S&P 500 daily returns, shared by every company in a build."""
     history = yf.Ticker("^GSPC").history(period="1y", auto_adjust=False)
@@ -119,6 +138,31 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
     net_debt = _first(_row(balance, "Net Debt"))
     ebitda = _first(_row(income, "EBITDA", "Normalized EBITDA"))
     invested_capital = _first(_row(balance, "Invested Capital"))
+    equity = _first(_row(balance, "Stockholders Equity", "Common Stock Equity"))
+    # implied shares counts every share class in one class's units (Berkshire's A
+    # and B shares); plain sharesOutstanding can cover a single class only.
+    shares = _num(info.get("impliedSharesOutstanding")) or _num(info.get("sharesOutstanding"))
+    currency = info.get("currency") or "USD"
+    financial_currency = info.get("financialCurrency") or currency
+    foreign_statements = financial_currency != currency
+    # Foreign filers (ADRs) report in their home currency. Convert at today's rate,
+    # but only if the converted figures reproduce Yahoo's own P/E: that proves the
+    # share count is in ADR units (it sometimes counts ordinary shares instead).
+    fx = 1.0
+    if foreign_statements:
+        rate = fx_rate(financial_currency, currency)
+        net_income = _first(_row(income, "Net Income", "Net Income Common Stockholders"))
+        trailing_pe = _num(info.get("trailingPE"))
+        fx = None
+        if rate and net_income and net_income > 0 and shares and trailing_pe:
+            implied_pe = price * shares / (net_income * rate)
+            if 0.6 <= implied_pe / trailing_pe <= 1.6:
+                fx = rate
+    # Book value per share from the balance sheet; Yahoo's own figure is sometimes
+    # per a different share class (Berkshire) or a different currency (ADRs).
+    book_value_per_share = (
+        equity * fx / shares if equity is not None and shares and fx else None
+    )
 
     op_margins = [
         _ratio(op, rev) for op, rev in zip(operating_income, revenue)
@@ -153,9 +197,9 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
     metrics: Dict[str, Optional[float]] = {
         "current_price": price,
         "pe_ratio": _num(info.get("trailingPE")),
-        "pb_ratio": _num(info.get("priceToBook")),
+        "pb_ratio": _ratio(price, book_value_per_share) if book_value_per_share and book_value_per_share > 0 else None,
         "eps": _num(info.get("trailingEps")),
-        "book_value_per_share": _num(info.get("bookValue")),
+        "book_value_per_share": book_value_per_share,
         "roe": _num(info.get("returnOnEquity")),
         "profit_margin": _num(info.get("profitMargins")),
         "gross_margin": _num(info.get("grossMargins")),
@@ -172,18 +216,18 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
         "revenue_growth": _cagr(revenue),
         "margin_trend": (op_margins[0] - op_margins[-1]) if len(op_margins) >= 2 else None,
         "capex_to_revenue": _ratio(abs(capex) if capex is not None else None, _first(revenue)),
-        "roic": (
+        "roic": (  # undefined when invested capital is zero or negative
             _ratio(ebit * (1 - (tax_rate if tax_rate is not None else 0.21)), invested_capital)
-            if ebit is not None else None
+            if ebit is not None and invested_capital and invested_capital > 0 else None
         ),
         "interest_coverage": _ratio(ebit, abs(interest) if interest else None),
         "debt_growth_3y": (
             _ratio(total_debt[0] - total_debt[-1], total_debt[-1])
             if len(total_debt) >= 3 and total_debt[0] is not None and total_debt[-1] else None
         ),
-        "current_assets": _first(_row(balance, "Current Assets")),
-        "total_liabilities": _first(_row(balance, "Total Liabilities Net Minority Interest")),
-        "shares_outstanding": _num(info.get("sharesOutstanding")),
+        "current_assets": _scaled(_first(_row(balance, "Current Assets")), fx),
+        "total_liabilities": _scaled(_first(_row(balance, "Total Liabilities Net Minority Interest")), fx),
+        "shares_outstanding": shares,
         "institutional_ownership": _num(info.get("heldPercentInstitutions")),
         "insider_ownership": _num(info.get("heldPercentInsiders")),
         "dividend_yield": _ratio(dividend_rate, price) if dividend_rate else 0.0,
@@ -194,16 +238,25 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
         "correlation_sp500": correlation,
     }
 
-    # Banks, insurers and brokers: deposits and float flow through cash flow and
-    # debt, so these industrial-company measures are not meaningful for them.
+    # Metrics that exist but would mislead, with the reason shown to users.
+    not_applicable: Dict[str, str] = {}
     industry = (info.get("industry") or "")
-    not_applicable: List[str] = []
-    if any(word in industry for word in ("Bank", "Insurance", "Capital Markets", "Mortgage")):
-        not_applicable = ["free_cash_flow", "gross_margin", "capex_to_revenue", "current_ratio",
-                          "debt_to_equity", "net_debt_to_ebitda", "debt_growth_3y", "roic",
-                          "current_assets", "total_liabilities"]
-        for key in not_applicable:
-            metrics[key] = None
+    is_financial = any(word in industry for word in ("Bank", "Insurance", "Capital Markets", "Mortgage"))
+    if is_financial:
+        # Deposits and insurance float flow through cash flow and debt.
+        for key in ("free_cash_flow", "gross_margin", "capex_to_revenue", "current_ratio",
+                    "debt_to_equity", "net_debt_to_ebitda", "debt_growth_3y", "roic",
+                    "current_assets", "total_liabilities"):
+            not_applicable[key] = "Not meaningful for banks and insurers"
+    if foreign_statements and fx is None:
+        # Couldn't convert reliably, so per-share and absolute amounts can't be
+        # compared with the US share price. Ratios and margins are unaffected.
+        for key in ("book_value_per_share", "pb_ratio", "current_assets", "total_liabilities"):
+            not_applicable.setdefault(
+                key, f"Reported in {financial_currency}, so it can't be compared with the US share price"
+            )
+    for key in not_applicable:
+        metrics[key] = None
 
     fiscal_year_end = None
     if income is not None and not income.empty:
@@ -214,16 +267,17 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
         "company_name": info.get("longName") or info.get("shortName") or ticker,
         "sector": info.get("sector") or "Other",
         "industry": info.get("industry"),
-        "currency": info.get("currency") or "USD",
-        "is_financial": bool(not_applicable),
+        "currency": currency,
+        "financial_currency": financial_currency,
+        "fx_rate_used": fx if foreign_statements else None,
+        "is_financial": is_financial,
         "not_applicable": not_applicable,
         "metrics": metrics,
         "statement_years": len([v for v in revenue if v is not None]),
         "fiscal_year_end": fiscal_year_end,
         "price_as_of": _price_time(info, history),
         "prices": _prices(history),
-        "earnings_history": _earnings(tk),
-        "next_earnings_date": _next_earnings(tk),
+        **_earnings(tk),
     }
 
 
@@ -256,41 +310,39 @@ def _prices(history: pd.DataFrame) -> List[List[Any]]:
     return rows
 
 
-def _earnings(tk: yf.Ticker) -> List[Dict[str, Any]]:
+def _earnings(tk: yf.Ticker) -> Dict[str, Any]:
+    """Past earnings announcements (by announcement date) and the next one."""
+    empty: Dict[str, Any] = {"earnings_history": [], "next_earnings_date": None}
     try:
-        frame = tk.earnings_history
+        frame = tk.get_earnings_dates(limit=12)
     except Exception:
-        return []
+        return empty
     if frame is None or frame.empty:
-        return []
-    quarters = []
+        return empty
+    today = pd.Timestamp.now(tz="UTC").normalize()
+    quarters, upcoming = [], []
     for stamp, row in frame.sort_index(ascending=False).iterrows():
         when = pd.Timestamp(stamp)
-        actual, estimate = _num(row.get("epsActual")), _num(row.get("epsEstimate"))
-        surprise = _num(row.get("surprisePercent"))
+        when_utc = when.tz_convert("UTC") if when.tzinfo else when.tz_localize("UTC")
+        actual, estimate = _num(row.get("Reported EPS")), _num(row.get("EPS Estimate"))
         if actual is None:
+            if when_utc >= today:
+                upcoming.append(str(when.date()))
             continue
-        if surprise is None or abs(surprise) < 0.01:
-            beat_miss = "inline" if surprise is not None else "unknown"
+        surprise = _num(row.get("Surprise(%)"))
+        if surprise is None:
+            beat_miss = "unknown"
+        elif abs(surprise) < 1:
+            beat_miss = "inline"
         else:
             beat_miss = "beat" if surprise > 0 else "miss"
         quarters.append({
-            "quarter": f"Q{(when.month - 1) // 3 + 1} {when.year}",
+            "quarter": f"Reported {when.strftime('%b %Y')}",
             "date": str(when.date()),
             "eps_actual": actual,
             "eps_estimate": estimate,
-            "eps_surprise": _num(row.get("epsDifference")),
-            "surprise_pct": round(surprise * 100, 2) if surprise is not None else None,
+            "eps_surprise": round(actual - estimate, 4) if estimate is not None else None,
+            "surprise_pct": round(surprise, 2) if surprise is not None else None,
             "beat_miss": beat_miss,
         })
-    return quarters
-
-
-def _next_earnings(tk: yf.Ticker) -> Optional[str]:
-    try:
-        calendar = tk.calendar or {}
-    except Exception:
-        return None
-    dates = calendar.get("Earnings Date") or []
-    upcoming = [d for d in dates if isinstance(d, date) and d >= date.today()]
-    return str(upcoming[0]) if upcoming else None
+    return {"earnings_history": quarters[:8], "next_earnings_date": min(upcoming) if upcoming else None}

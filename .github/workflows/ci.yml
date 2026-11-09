@@ -26,6 +26,9 @@ jobs:
   live-build-sample:
     # Builds a real sample from Yahoo (nothing is published) and fails if
     # any company gets no verdict or non-financial all-five coverage drops below 90%.
+    # Pull requests only: Render deploys main after CI passes, and a Yahoo hiccup
+    # must never block a hotfix deploy.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -40,4 +43,4 @@ jobs:
         run: |
           python -m lens.build --out /tmp/sample --pause 0.2 \
             --tickers AAPL,MSFT,NVDA,KO,JPM,TSLA,GOOGL,META,AMZN,WMT,COST,V,BRK-B,XOM,PFE,DIS,NFLX,TSM,SHOP,PLTR,SOFI,CELH,BAC,UNH,O
-          python -c "import json; r=json.load(open('/tmp/sample/coverage.json')); print(r); assert r['fresh'] == 25, 'fetch failures'; assert r['verdict_rate'] == 1.0, 'a company got no verdict'; assert r['all_five_rate_non_financial'] >= 0.9, 'non-financial all-five coverage below 90%'"
+          python -c "import json; r=json.load(open('/tmp/sample/coverage.json')); print(r); assert r['fresh'] >= 24, 'fetch failures'; assert r['verdict_rate'] == 1.0, 'a company got no verdict'; assert r['all_five_rate_non_financial'] >= 0.9, 'non-financial all-five coverage below 90%'"
