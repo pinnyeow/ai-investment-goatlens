@@ -7,6 +7,8 @@ on:
   schedule:
     - cron: '30 10 * * 1-6' # 10:30 UTC, Tue-Sat after each US trading day (Mon covers Fri)
   workflow_dispatch:
+  push:  # TEMPORARY: first run before merge; removed in the next commit
+    branches: [feat/nightly-yahoo-snapshots]
 
 permissions:
   contents: write
