@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+import hashlib
+import json
 import math
 import re
 from typing import Any, Dict, List, Optional
@@ -75,6 +77,8 @@ class SECFundamentals:
     latest: Dict[str, FundamentalValue]
     history: Dict[str, List[FundamentalValue]]
     is_financial_institution: bool = False
+    issuer_lookup_record: Optional[str] = None
+    issuer_lookup_digest: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -105,9 +109,12 @@ class NormalizedMetric:
 class SECNormalization(dict):
     """Analysis values plus the exact SEC facts used to derive them."""
 
-    def __init__(self, values: Dict[str, Any], metrics: Dict[str, NormalizedMetric]):
+    def __init__(
+        self, values: Dict[str, Any], metrics: Dict[str, NormalizedMetric], cik: str
+    ):
         super().__init__(values)
         self.metrics = metrics
+        self.cik = cik
 
 
 def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
@@ -496,14 +503,99 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
     operating_cash_flow = latest("operating_cash_flow")
     capex = latest("capex_payments")
     shares = latest("shares_outstanding")
-    debt_current = latest("long_term_debt_current")
-    debt_noncurrent = latest("long_term_debt_noncurrent")
-    short_term_borrowings = latest("short_term_borrowings")
+    debt_facts = {
+        metric: fact_for_reference(metric, reference)
+        for metric in (
+            "long_term_debt_current",
+            "long_term_debt_noncurrent",
+            "short_term_borrowings",
+            "debt_current",
+            "long_term_debt",
+        )
+    }
+
+    def legitimately_unreported(metric: str) -> bool:
+        return (
+            debt_facts[metric] is None
+            and data.latest[metric].availability_reason
+            != "conflicting_standard_concepts"
+            and reference is not None
+            and not any(
+                item.value is not None
+                and item.provenance is not None
+                and item.provenance.end == reference.end
+                for item in data.history[metric]
+            )
+        )
+
+    broader_debt_current_same_period = (
+        reference is not None
+        and any(
+            item.value is not None
+            and item.provenance is not None
+            and item.provenance.end == reference.end
+            for item in data.history["debt_current"]
+        )
+    )
+
+    reported_debt_roles: List[tuple[str, FundamentalValue]] = []
+    debt_to_equity_formula = "reviewed_funded_debt_branch_divided_by_equity"
+    if (
+        debt_facts["debt_current"] is not None
+        and debt_facts["long_term_debt_noncurrent"] is not None
+    ):
+        reported_debt_roles = [
+            ("debt_current", debt_facts["debt_current"]),
+            ("long_term_noncurrent", debt_facts["long_term_debt_noncurrent"]),
+        ]
+        debt_to_equity_formula = (
+            "debt_current_plus_long_term_debt_noncurrent_divided_by_equity"
+        )
+    elif (
+        debt_facts["long_term_debt_current"] is not None
+        and debt_facts["long_term_debt_noncurrent"] is not None
+        and not broader_debt_current_same_period
+        and (
+            debt_facts["short_term_borrowings"] is not None
+            or legitimately_unreported("short_term_borrowings")
+        )
+    ):
+        reported_debt_roles = [
+            ("long_term_current", debt_facts["long_term_debt_current"]),
+            ("long_term_noncurrent", debt_facts["long_term_debt_noncurrent"]),
+        ]
+        if debt_facts["short_term_borrowings"] is not None:
+            reported_debt_roles.append(
+                ("short_term_borrowings", debt_facts["short_term_borrowings"])
+            )
+        debt_to_equity_formula = (
+            "long_term_debt_components_plus_optional_short_term_borrowings_"
+            "divided_by_equity"
+        )
+    elif (
+        debt_facts["short_term_borrowings"] is not None
+        and debt_facts["long_term_debt_noncurrent"] is not None
+        and all(
+            legitimately_unreported(metric)
+            for metric in (
+                "long_term_debt_current",
+                "debt_current",
+                "long_term_debt",
+            )
+        )
+    ):
+        reported_debt_roles = [
+            ("short_term_borrowings", debt_facts["short_term_borrowings"]),
+            ("long_term_noncurrent", debt_facts["long_term_debt_noncurrent"]),
+        ]
+        debt_to_equity_formula = (
+            "short_term_borrowings_plus_long_term_debt_noncurrent_"
+            "divided_by_equity"
+        )
+    reported_debt_facts = [fact for _, fact in reported_debt_roles]
     total_debt = (
-        debt_current + debt_noncurrent + short_term_borrowings
-        if debt_current is not None
-        and debt_noncurrent is not None
-        and short_term_borrowings is not None
+        sum(item.value for item in reported_debt_facts if item.value is not None)
+        if reported_debt_facts
         else None
     )
     current_assets = latest("current_assets")
@@ -790,12 +882,7 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             ("income.current.net_income", "net_income", reference),
             ("income.current.revenue", "revenue", reference),
         ],
-        "debt_to_equity": [
-            ("debt.current.long_term_current", "long_term_debt_current", reference),
-            ("debt.current.long_term_noncurrent", "long_term_debt_noncurrent", reference),
-            ("debt.current.short_term_borrowings", "short_term_borrowings", reference),
-            ("capital.end.equity", "equity", reference),
-        ],
+
         "free_cash_flow": [
             ("cashflow.current.operating", "operating_cash_flow", reference),
             ("cashflow.current.capex", "capex_payments", reference),
@@ -843,12 +930,30 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
     }
     for output_metric, specifications in current_specs.items():
         set_inputs(output_metric, specifications)
+    debt_to_equity_inputs = tuple(
+        item
+        for item in (
+            *(
+                evidence_input(f"debt.current.{role}", fact)
+                for role, fact in reported_debt_roles
+            ),
+            evidence_input(
+                "capital.end.equity", fact_for_reference("equity", reference)
+            ),
+        )
+        if item is not None
+    )
+    if (
+        reported_debt_facts
+        and len(debt_to_equity_inputs) == len(reported_debt_facts) + 1
+    ):
+        metric_inputs["debt_to_equity"] = debt_to_equity_inputs
 
     formulas = {
         "revenue": "reported",
         "roe": "net_income_divided_by_equity",
         "profit_margin": "net_income_divided_by_revenue",
-        "debt_to_equity": "funded_debt_divided_by_equity",
+        "debt_to_equity": debt_to_equity_formula,
         "free_cash_flow": "operating_cash_flow_minus_capex",
         "earnings_growth": "three_year_net_income_cagr",
         "earnings_turnaround": "negative_or_zero_to_positive_three_year_net_income_transition",
@@ -888,21 +993,29 @@ def normalize_sec_fundamentals(data: SECFundamentals) -> SECNormalization:
             value = None
             values[name] = None
             reason = "required_provenance_unavailable"
+        if name == "debt_to_equity" and value is None:
+            formula = "reviewed_funded_debt_branch_divided_by_equity"
+            inputs = ()
         metrics[name] = NormalizedMetric(
             value=float(value) if value is not None else None,
             formula=formula,
+            formula_version=(
+                "sec_companyfacts_debt_to_equity_v4"
+                if name == "debt_to_equity"
+                else "sec_companyfacts_v1"
+            ),
             inputs=inputs,
             availability_reason=reason,
         )
 
-    return SECNormalization(values, metrics)
+    return SECNormalization(values, metrics, data.cik)
 
 
 _METRICS = {
     "revenue": ("duration", "USD", [
-        "RevenueFromContractWithCustomerExcludingAssessedTax",
-        "RevenuesNetOfInterestExpense",
         "Revenues",
+        "RevenuesNetOfInterestExpense",
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
         "SalesRevenueNet",
     ]),
     "net_income": ("duration", "USD", ["NetIncomeLoss"]),
@@ -931,6 +1044,8 @@ _METRICS = {
         ["LongTermDebtNoncurrent"],
     ),
     "short_term_borrowings": ("instant", "USD", ["ShortTermBorrowings"]),
+    "debt_current": ("instant", "USD", ["DebtCurrent"]),
+    "long_term_debt": ("instant", "USD", ["LongTermDebt"]),
     "current_assets": ("instant", "USD", ["AssetsCurrent"]),
     "current_liabilities": ("instant", "USD", ["LiabilitiesCurrent"]),
     "cash_and_equivalents": (
@@ -1030,12 +1145,26 @@ class SECFundamentalsClient:
             cik = str(int(company["cik_str"])).zfill(10)
         except (KeyError, TypeError, ValueError):
             raise SECInvalidResponseError("SEC returned an invalid response.") from None
+        issuer_lookup_record = json.dumps(
+            company, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        issuer_lookup_digest = "sha256:" + hashlib.sha256(
+            issuer_lookup_record.encode("utf-8")
+        ).hexdigest()
         facts_response = await self._get_response(
             f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
         )
         self._raise_structured_status(facts_response)
         facts_response.raise_for_status()
         payload = self._json_object(facts_response)
+        try:
+            payload_cik = str(int(payload["cik"])).zfill(10)
+        except (KeyError, TypeError, ValueError):
+            raise SECInvalidResponseError("SEC returned an invalid response.") from None
+        if payload_cik != cik:
+            raise SECInvalidResponseError(
+                "SEC Companyfacts issuer identity does not match the ticker map."
+            )
         if not isinstance(payload.get("facts"), dict):
             raise SECInvalidResponseError("SEC returned an invalid response.")
         us_gaap = payload["facts"].get("us-gaap")
@@ -1052,6 +1181,7 @@ class SECFundamentalsClient:
         }
         is_financial_institution = bool(
             financial_institution_markers.intersection(us_gaap)
+            or "RevenuesNetOfInterestExpense" in us_gaap
         )
 
         try:
@@ -1064,7 +1194,31 @@ class SECFundamentalsClient:
                     as_of=as_of,
                 )
                 for metric, (kind, unit, aliases) in _METRICS.items()
+                if metric != "revenue"
             }
+            revenue_kind, revenue_unit, revenue_concepts = _METRICS["revenue"]
+            preferred_revenue_concept = None
+            if (
+                is_financial_institution
+                and "RevenuesNetOfInterestExpense" in us_gaap
+            ):
+                preferred_revenue_concept = "RevenuesNetOfInterestExpense"
+                revenue_concepts = [
+                    preferred_revenue_concept,
+                    *(
+                        concept
+                        for concept in revenue_concepts
+                        if concept != preferred_revenue_concept
+                    ),
+                ]
+            resolved["revenue"] = self._resolve_ordered_concepts(
+                payload,
+                kind=revenue_kind,
+                unit=revenue_unit,
+                concepts=revenue_concepts,
+                as_of=as_of,
+                preferred_concept=preferred_revenue_concept,
+            )
             # Prefer the broader authoritative short-term borrowing total. Use
             # commercial paper only when that broader concept is wholly absent;
             # never add both because commercial paper may be included in it.
@@ -1125,6 +1279,8 @@ class SECFundamentalsClient:
             latest=latest,
             history=history,
             is_financial_institution=is_financial_institution,
+            issuer_lookup_record=issuer_lookup_record,
+            issuer_lookup_digest=issuer_lookup_digest,
         )
 
     @staticmethod
@@ -1167,6 +1323,7 @@ class SECFundamentalsClient:
         as_of: date,
     ) -> tuple[List[FundamentalValue], bool]:
         facts = payload.get("facts", {}).get("us-gaap", {})
+        concept_priority = {concept: index for index, concept in enumerate(aliases)}
         candidates: Dict[str, List[Dict[str, Any]]] = {}
         for concept in aliases:
             concept_rows = facts.get(concept, {}).get("units", {}).get(unit, [])
@@ -1205,9 +1362,20 @@ class SECFundamentalsClient:
             default=None,
         )
         for period, period_candidates in candidates.items():
-            winning_rank = max(candidate["rank"] for candidate in period_candidates)
+            winning_priority = min(
+                concept_priority[candidate["concept"]]
+                for candidate in period_candidates
+            )
+            preferred_candidates = [
+                candidate
+                for candidate in period_candidates
+                if concept_priority[candidate["concept"]] == winning_priority
+            ]
+            winning_rank = max(
+                candidate["rank"] for candidate in preferred_candidates
+            )
             winning_candidates = [
-                candidate for candidate in period_candidates
+                candidate for candidate in preferred_candidates
                 if candidate["rank"] == winning_rank
             ]
             reported_values = {
@@ -1249,6 +1417,50 @@ class SECFundamentalsClient:
                 reverse=True,
             ),
             conflict_found,
+        )
+
+    def _resolve_ordered_concepts(
+        self,
+        payload: Dict[str, Any],
+        kind: str,
+        unit: str,
+        concepts: List[str],
+        as_of: date,
+        preferred_concept: Optional[str] = None,
+    ) -> tuple[List[FundamentalValue], bool]:
+        """Select one revenue concept family; never pool narrower concepts."""
+
+        facts = payload.get("facts", {}).get("us-gaap", {})
+        newest_by_concept = {}
+        for concept in concepts:
+            rows = facts.get(concept, {}).get("units", {}).get(unit, [])
+            annual_ends = [
+                row["end"]
+                for row in rows
+                if self._is_annual(row, kind, as_of)
+            ]
+            if annual_ends:
+                newest_by_concept[concept] = max(annual_ends)
+        if not newest_by_concept:
+            return [], False
+        newest_period = max(newest_by_concept.values())
+        if (
+            preferred_concept is not None
+            and preferred_concept in newest_by_concept
+            and newest_by_concept[preferred_concept] != newest_period
+        ):
+            return [], False
+        selected_concept = next(
+            concept
+            for concept in concepts
+            if newest_by_concept.get(concept) == newest_period
+        )
+        return self._resolve_metric(
+            payload,
+            kind=kind,
+            unit=unit,
+            aliases=[selected_concept],
+            as_of=as_of,
         )
 
     def _derive_liabilities(
