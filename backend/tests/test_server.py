@@ -76,3 +76,8 @@ def test_company_name_suggests_ticker(client):
 def test_head_root_and_bad_period(client):
     assert client.head("/").status_code == 200
     assert client.get("/api/price-history/BRK-B?period=zzz").status_code == 422
+
+
+def test_csp_allows_only_goatcounter_for_analytics(client):
+    csp = client.get("/").headers["content-security-policy"]
+    assert "https://gc.zgo.at" in csp and "connect-src 'self' https://goatlens.goatcounter.com;" in csp
