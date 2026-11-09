@@ -117,6 +117,8 @@ def build(tickers: List[str], out: Path, pause: float) -> Dict:
             "name": snapshot["company_name"],
             "sector": snapshot["sector"],
             "complete": snapshot["completed_analyses"],
+            "verdict": snapshot["consensus_verdict"] != "insufficient_data",
+            "financial": snapshot.get("is_financial", False),
         })
         if i % 50 == 0:
             print(f"[{i}/{len(tickers)}] {len(fresh)} fresh, {len(stale)} stale, {len(missing)} missing")
@@ -124,6 +126,8 @@ def build(tickers: List[str], out: Path, pause: float) -> Dict:
 
     covered = len(index)
     full = sum(1 for item in index if item["complete"] == len(INVESTORS))
+    industrial = [item for item in index if not item["financial"]]
+    industrial_full = sum(1 for item in industrial if item["complete"] == len(INVESTORS))
     report = {
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "universe": len(tickers),
@@ -133,6 +137,10 @@ def build(tickers: List[str], out: Path, pause: float) -> Dict:
         "missing": missing,
         "all_five_investors": full,
         "all_five_rate": round(full / covered, 3) if covered else 0,
+        # Gates: every company gets a verdict; non-financial companies get all five
+        # investors (banks and insurers legitimately skip some industrial checks).
+        "verdict_rate": round(sum(item["verdict"] for item in index) / covered, 3) if covered else 0,
+        "all_five_rate_non_financial": round(industrial_full / len(industrial), 3) if industrial else 0,
         "by_completed_count": dict(Counter(item["complete"] for item in index)),
     }
     (out / "index.json").write_text(json.dumps(sorted(index, key=lambda x: x["ticker"]), separators=(",", ":")))

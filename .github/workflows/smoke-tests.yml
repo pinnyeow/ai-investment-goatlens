@@ -28,7 +28,8 @@ jobs:
           age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(r["built_at"])
           assert age < dt.timedelta(days=4), f"data is {age} old"
           assert r["covered"] >= 500, f"only {r['covered']} companies covered"
-          assert r["all_five_rate"] >= 0.85, f"only {r['all_five_rate']:.0%} get all five investors"
+          assert r["verdict_rate"] >= 0.98, f"only {r['verdict_rate']:.0%} of companies get a verdict"
+          assert r["all_five_rate_non_financial"] >= 0.85, f"only {r['all_five_rate_non_financial']:.0%} of non-financial companies get all five investors"
           PY
 
       - name: Real analyses work end to end

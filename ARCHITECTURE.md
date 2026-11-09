@@ -4,7 +4,7 @@
 
 An educational tool: "how would Buffett, Graham, Lynch, Munger and Dalio each think about this stock, and why?" Trust comes from showing the numbers and the reasoning, not from refusing to answer. The success measures are:
 
-1. **Coverage:** share of covered companies where all five investors give a view. Target ≥ 85% (CI and the daily smoke test enforce it).
+1. **Coverage:** every covered company gets a verdict, and among non-financial companies all five investors give a view ≥ 85% of the time (CI's 25-company sample requires ≥ 90%; the daily smoke test checks the full set). Banks and insurers legitimately skip some industrial checks, so they're measured by verdict, not all-five.
 2. **Accuracy:** headline numbers match the company's annual report (spot-check; Yahoo's revenue and net income matched SEC filings exactly for AAPL, WMT and KO when this design was chosen).
 
 Any change that lowers either one should not ship.

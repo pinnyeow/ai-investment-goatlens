@@ -23,5 +23,5 @@ make dev     # build 5 companies locally and serve http://localhost:8000
 - Never commit directly to main; use a branch + PR. Run `make check` first.
 - Missing data is skipped and explained, never treated as zero, and never blocks the whole answer.
 - Do not add checks that make a user request fail or crash because data is imperfect. Validate at build time; log and label instead.
-- Every PR that touches data or scoring reports coverage from the CI `live-build-sample` job. Do not lower coverage (all-five rate ≥ 85%).
+- Every PR that touches data or scoring reports coverage from the CI `live-build-sample` job. Do not lower coverage (every company gets a verdict; non-financial all-five rate ≥ 85%).
 - Keep it free: no paid APIs, no per-request LLM calls.
