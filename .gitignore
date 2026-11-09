@@ -40,3 +40,4 @@ htmlcov/
 
 # Eval results (generated, not source code)
 backend/evals/results/
+.snapshots/

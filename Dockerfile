@@ -18,8 +18,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
 
-# The FastAPI app references "../frontend/index.html" from the backend/ directory,
-# so we set the working directory to backend/
+# main.py serves ../frontend/index.html, so run from backend/.
 WORKDIR /app/backend
 
 # Render sets the PORT env var; default to 8000 for local testing

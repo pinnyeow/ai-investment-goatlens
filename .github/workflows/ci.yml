@@ -6,29 +6,41 @@ on:
   pull_request:
 
 jobs:
-  lint-and-test:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          fetch-depth: 0
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - run: pip install -r backend/requirements-dev.txt
+      - name: Lint
+        working-directory: backend
+        run: ruff check .
+      - name: Tests
+        working-directory: backend
+        run: python -m pytest -q tests
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+  live-build-sample:
+    # Builds a real sample from Yahoo (nothing is published) and fails if
+    # any company gets no verdict or non-financial all-five coverage drops below 90%.
+    # Pull requests only: Render deploys main after CI passes, and a Yahoo hiccup
+    # must never block a hotfix deploy.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Install dependencies
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-build.txt
+      - run: pip install -r backend/requirements-build.txt
+      - name: Build 25 representative companies
         working-directory: backend
         run: |
-          pip install ruff pytest pytest-asyncio pyyaml
-          pip install -r requirements.txt
-
-      - name: Deterministic full verification
-        working-directory: ${{ github.workspace }}
-        run: python scripts/verify_goatlens.py
-
-      - name: Representative five-agent fixture matrix and optimized affected validation
-        # Includes test_representative_fixture_matrix_exact_contract via the affected suite.
-        working-directory: ${{ github.workspace }}
-        run: python -O scripts/verify_goatlens.py --affected-only
+          python -m lens.build --out /tmp/sample --pause 0.2 \
+            --tickers AAPL,MSFT,NVDA,KO,JPM,TSLA,GOOGL,META,AMZN,WMT,COST,V,BRK-B,XOM,PFE,DIS,NFLX,TSM,SHOP,PLTR,SOFI,CELH,BAC,UNH,O
+          python -c "import json; r=json.load(open('/tmp/sample/coverage.json')); print(r); assert r['fresh'] >= 24, 'fetch failures'; assert r['verdict_rate'] == 1.0, 'a company got no verdict'; assert r['all_five_rate_non_financial'] >= 0.9, 'non-financial all-five coverage below 90%'"

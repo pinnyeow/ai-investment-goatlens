@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-W4bN8Haue+s7AAhILoiF1GKqA9hjwEfszDT3JWxNFUU=' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'">
-    <title>GOATlens - Multi-Agent Investment Analysis</title>
+    <title>GOATlens: How Legendary Investors Would See a Stock</title>
     <link rel="icon" href="data:,">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js" integrity="sha384-2Yiz1jBuc53MdRCA3ojcpk7cAoW2uFfKcetY6JKbqUetb537Hq2uPJrqM1Mj2AKx" crossorigin="anonymous"></script>
@@ -713,6 +712,7 @@
         .verdict-buy { color: #4ade80; }
         .verdict-hold { color: var(--accent-gold); }
         .verdict-mixed { color: var(--accent-gold); }
+        .consensus-verdict.is-split { font-size: clamp(1.6rem, 5vw, 2.4rem); line-height: 1.15; }
         .verdict-sell { color: #f87171; }
         .verdict-strong_sell { color: var(--accent-red); }
 
@@ -968,6 +968,22 @@
         .badge-hold { background: var(--accent-gold-dim); color: var(--accent-gold); }
         .badge-sell { background: rgba(248, 113, 113, 0.1); color: #f87171; }
         .badge-strong_sell { background: var(--accent-red-dim); color: var(--accent-red); }
+
+        .checklist { list-style: none; margin: 0.25rem 0 0.75rem; padding: 0; }
+        .checklist li {
+            display: flex; gap: 0.6rem; align-items: flex-start;
+            font-size: 0.9rem; line-height: 1.45; color: var(--text-secondary);
+            padding: 0.4rem 0; border-top: 1px solid rgba(63, 63, 70, 0.5);
+        }
+        .checklist li:first-child { border-top: none; }
+        .checklist strong { color: var(--text-primary, #fafafa); font-weight: 600; margin-right: 0.25rem; }
+        .check-icon { flex: 0 0 1.1rem; text-align: center; font-weight: 700; }
+        .check-pass .check-icon { color: #4ade80; }
+        .check-fail .check-icon { color: #f87171; }
+        .check-neutral .check-icon { color: var(--text-muted); }
+        .check-no_data { opacity: 0.6; }
+        .check-no_data .check-icon { color: var(--text-muted); }
+        .badge-insufficient_data { background: rgba(161, 161, 170, 0.12); color: var(--text-muted); }
 
         .agent-insights, .agent-concerns {
             margin-bottom: 0.75rem;
@@ -2579,6 +2595,13 @@
            RESPONSIVE — Small phones (≤480px)
            Extra tightening for very narrow screens.
            ═══════════════════════════════════════════ */
+        /* Phones: hover tooltips can't be used and were stretching the page
+           sideways; the "Numbers used" rows stack instead of needing 400px. */
+        @media (max-width: 768px) {
+            .score-tooltip { display: none; }
+            .metric-evidence-row { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; }
+        }
+
         @media (max-width: 480px) {
             main {
                 padding: 1rem 0.75rem;
@@ -2666,7 +2689,7 @@
                 <div class="scoring-card">
                     <h4>Warren Buffett</h4>
                     <div class="style">Value + Quality</div>
-                    <p>ROE &gt;15%, high margins, low debt. Seeks durable moats and positive free cash flow. Rewards consistent earnings beats.</p>
+                    <p>ROE &gt;15%, high margins, low debt. Seeks durable moats and positive free cash flow.</p>
                 </div>
                 <div class="scoring-card">
                     <h4>Peter Lynch</h4>
@@ -2676,7 +2699,7 @@
                 <div class="scoring-card">
                     <h4>Benjamin Graham</h4>
                     <div class="style">Deep Value</div>
-                    <p>P/E &lt;15, P/B &lt;1.5, current ratio &gt;2. Demands margin of safety below intrinsic value.</p>
+                    <p>P/E ≤15, P/E × P/B ≤22.5, current ratio ≥2, a long dividend record. Demands a margin of safety below intrinsic value.</p>
                 </div>
                 <div class="scoring-card">
                     <h4>Charlie Munger</h4>
@@ -2685,19 +2708,19 @@
                 </div>
                 <div class="scoring-card">
                     <h4>Ray Dalio</h4>
-                    <div class="style">Macro & Risk</div>
-                    <p>Debt cycles, risk-adjusted returns, diversification. Prefers all-weather performers.</p>
+                    <div class="style">Risk & Resilience</div>
+                    <p>Return per unit of risk, diversification, sustainable debt, steadiness through downturns.</p>
                 </div>
             </div>
             <p style="font-size: 0.75rem; color: var(--text-muted); text-align: center; margin: 0.75rem 0 0.5rem; font-style: italic;">Investment philosophies and thresholds are based on each investor's published writings. Scoring weights are GOATlens interpretations and not endorsed by these individuals.</p>
             <div class="score-legend">
                 <h4>Score Scale (-100 to +100)</h4>
                 <div class="legend-items">
-                    <div class="legend-item"><span class="legend-dot green"></span> +60 to +100: Strong Buy</div>
-                    <div class="legend-item"><span class="legend-dot green"></span> +20 to +59: Buy</div>
-                    <div class="legend-item"><span class="legend-dot gold"></span> -19 to +19: Hold</div>
-                    <div class="legend-item"><span class="legend-dot red"></span> -20 to -59: Sell</div>
-                    <div class="legend-item"><span class="legend-dot red"></span> -60 to -100: Strong Sell</div>
+                    <div class="legend-item"><span class="legend-dot green"></span> +60 to +100: Would buy</div>
+                    <div class="legend-item"><span class="legend-dot green"></span> +20 to +59: Leaning yes</div>
+                    <div class="legend-item"><span class="legend-dot gold"></span> -20 to +19: On the fence</div>
+                    <div class="legend-item"><span class="legend-dot red"></span> -60 to -21: Leaning no</div>
+                    <div class="legend-item"><span class="legend-dot red"></span> below -60: Would avoid</div>
                 </div>
             </div>
         </div>
@@ -2708,7 +2731,7 @@
             <div class="about-content">
                 <div class="about-story">
                     <span class="about-label">Why I built this</span>
-                    <p>I wanted to develop my AI product sense and learning by building felt like the best starting point. GOATlens combines real financial data, multi-agent AI, and legendary investor frameworks into one tool.</p>
+                    <p>I wanted to develop my AI product sense and learning by building felt like the best starting point. GOATlens combines real financial data and legendary investor frameworks into one tool.</p>
                     <span class="about-label">Feedback welcome</span>
                     <p>This is a work in progress. If you have ideas, see bugs, or just want to chat about AI &amp; investing, I'd love to hear from you.</p>
                 </div>
@@ -2730,17 +2753,8 @@
             <div class="search-row">
                 <div class="input-group">
                     <label>Ticker</label>
-                    <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="10" pattern="[A-Za-z0-9]+([.\-][A-Za-z0-9]+)?">
-                </div>
-                <div class="input-group">
-                    <label>Time Period</label>
-                    <div class="period-selector">
-                        <button class="period-btn" data-period="ytd">YTD</button>
-                        <button class="period-btn" data-period="3m">3M</button>
-                        <button class="period-btn" data-period="6m">6M</button>
-                        <button class="period-btn active" data-period="1y">1Y</button>
-                        <button class="period-btn" data-period="5y">5Y</button>
-                    </div>
+                    <input type="text" class="ticker-input" id="tickerInput" placeholder="AAPL" maxlength="10" list="tickerList" autocomplete="off" pattern="[A-Za-z0-9]+([.\-][A-Za-z0-9]+)?">
+                    <datalist id="tickerList"></datalist>
                 </div>
                 <div class="input-group" style="flex: 1;">
                     <label>Investors</label>
@@ -2765,8 +2779,8 @@
             <div class="loading-spinner"></div>
             <div class="loading-text" id="loadingText">Consulting the GOATs...</div>
             <div class="loading-substeps" id="loadingSubsteps">
-                <span class="substep active" id="stepFetch">Fetching financial data…</span>
-                <span class="substep" id="stepAgents">Running investor agents…</span>
+                <span class="substep active" id="stepFetch">Loading tonight's analysis…</span>
+                <span class="substep" id="stepAgents">Lining up the investors…</span>
                 <span class="substep" id="stepCharts">Loading charts…</span>
             </div>
         </div>
@@ -2780,7 +2794,7 @@
                     <div class="company-name" id="companyName">Apple Inc.</div>
                     <div class="company-meta">
                         <span class="company-sector" id="companySector">Technology</span>
-                        <span class="analysis-period" id="analysisPeriod">1 Year Analysis</span>
+                        <span class="analysis-period" id="analysisPeriod"></span>
                     </div>
                 </div>
             </div>
@@ -2789,13 +2803,13 @@
             <div class="consensus-panel">
                 <div class="consensus-top">
                     <div class="consensus-left">
-                        <div class="consensus-label">Consensus Verdict</div>
+                        <div class="consensus-label">What the investors would do</div>
                         <div class="consensus-verdict" id="consensusVerdict">Buy</div>
                         <div class="agent-availability" id="consensusStatusNotice"></div>
-                        <div class="agent-availability" id="partialIndication" hidden></div>
+                        <div class="agent-availability verdict-disclaimer">How each investor's checklist would judge this company. A learning tool, not a recommendation for you to buy or sell.</div>
                     </div>
                     <div class="agreement-meter">
-                        <div class="agreement-label" title="Share of completed agents supporting the consensus direction; Buy and Strong Buy count together, as do Sell and Strong Sell.">Directional Support</div>
+                        <div class="agreement-label" title="How closely the investors' scores agree with each other (100% = identical scores).">Agreement</div>
                         <div class="agreement-value" id="agreementValue">72%</div>
                         <div class="agreement-bar">
                             <div class="agreement-fill" id="agreementFill" style="width: 72%"></div>
@@ -2815,7 +2829,7 @@
             </div>
 
             <details class="metric-evidence-section" id="metricEvidenceSection">
-                <summary>Data sources &amp; formulas</summary>
+                <summary>Numbers used &amp; where they come from</summary>
                 <div class="metric-evidence-list" id="metricEvidenceList"></div>
             </details>
 
@@ -2823,7 +2837,7 @@
             <div class="moat-section">
                 <div class="moat-left">
                     <span class="moat-icon">🏰</span>
-                    <span class="moat-label">Competitive Moat Trend</span>
+                    <span class="moat-label" title="Change in operating margin across the reported years. Rising margins are one clue that a competitive moat is holding.">Margin trend (a moat clue)</span>
                 </div>
                 <span class="moat-trend" id="moatTrend">Stable</span>
             </div>
@@ -2925,7 +2939,7 @@
                         <table class="earnings-table">
                             <thead>
                                 <tr>
-                                    <th>Quarter</th>
+                                    <th>Announced</th>
                                     <th>Date</th>
                                     <th>EPS Actual</th>
                                     <th>EPS Estimate</th>
@@ -2995,7 +3009,7 @@
                 <button class="modal-close" data-action="close-scoring" aria-label="Close">&times;</button>
             </div>
             <div class="modal-body">
-                <p class="modal-intro">Each GOAT agent evaluates companies using their unique investment philosophy. Below are the exact formulas and point allocations used to calculate scores from -100 to +100.</p>
+                <p class="modal-intro">Each investor is a short checklist based on their investment philosophy. Below are the exact thresholds and points used to calculate scores from -100 to +100.</p>
                 
                 <!-- Buffett Section -->
                 <div class="agent-formula-section">
@@ -3007,7 +3021,7 @@
                         <button class="expand-btn" id="buffettExpand">+</button>
                     </div>
                     <div class="agent-summary">
-                        <p>ROE ≥15%, profit margins ≥10%, debt-to-equity ≤0.5. Rewards consistent earnings beats and durable competitive advantages.</p>
+                        <p>ROE ≥15%, profit margin ≥10%, debt-to-equity ≤0.5, positive free cash flow: signs of a durable competitive advantage.</p>
                     </div>
                     <div class="formula-details" id="buffettFormula" style="display: none;">
                         <table class="formula-table">
@@ -3019,28 +3033,25 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td rowspan="2">ROE</td><td>≥15%</td><td>Up to +25 (scaled: ROE/15% × 15)</td></tr>
+                                <tr><td rowspan="2">ROE (or ROIC when equity is negative)</td><td>≥15%</td><td>Up to +25 (ROE/15% × 15)</td></tr>
                                 <tr><td>&lt;15%</td><td>-15</td></tr>
-                                <tr><td rowspan="2">Profit Margin</td><td>≥10%</td><td>Up to +20 (scaled: margin/10% × 10)</td></tr>
+                                <tr><td rowspan="2">Profit Margin</td><td>≥10%</td><td>Up to +20 (margin/10% × 10)</td></tr>
                                 <tr><td>&lt;10%</td><td>-10</td></tr>
-                                <tr><td rowspan="3">Debt-to-Equity</td><td>≤0.5</td><td>+20</td></tr>
+                                <tr><td rowspan="3">Debt-to-Equity (or net debt ÷ EBITDA ≤1 / ≤2.5 when equity is negative)</td><td>≤0.5</td><td>+20</td></tr>
                                 <tr><td>≤1.0</td><td>+10</td></tr>
                                 <tr><td>&gt;1.0</td><td>-20</td></tr>
                                 <tr><td rowspan="2">Free Cash Flow</td><td>Positive</td><td>+15</td></tr>
                                 <tr><td>Negative</td><td>-20</td></tr>
-                                <tr><td rowspan="3">Earnings Consistency</td><td>Beat rate ≥80%</td><td>+10</td></tr>
-                                <tr><td>Beat rate ≥60%</td><td>+5</td></tr>
-                                <tr><td>4+ consecutive beats</td><td>+5</td></tr>
                             </tbody>
                         </table>
                         <div class="verdict-table">
                             <h4>Verdict Thresholds</h4>
                             <table>
-                                <tr><td>≥60</td><td>Strong Buy</td></tr>
-                                <tr><td>≥20</td><td>Buy</td></tr>
-                                <tr><td>≥-20</td><td>Hold</td></tr>
-                                <tr><td>≥-60</td><td>Sell</td></tr>
-                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                                <tr><td>≥60</td><td>Would buy</td></tr>
+                                <tr><td>≥20</td><td>Leaning yes</td></tr>
+                                <tr><td>≥-20</td><td>On the fence</td></tr>
+                                <tr><td>≥-60</td><td>Leaning no</td></tr>
+                                <tr><td>&lt;-60</td><td>Would avoid</td></tr>
                             </table>
                         </div>
                     </div>
@@ -3056,7 +3067,7 @@
                         <button class="expand-btn" id="lynchExpand">+</button>
                     </div>
                     <div class="agent-summary">
-                        <p>PEG &lt;1.0, strong earnings growth, low institutional ownership. Rewards earnings momentum and "ten-bagger" potential.</p>
+                        <p>PEG under 1.0, strong earnings growth, under-followed by institutions, a balance sheet that survives mistakes.</p>
                     </div>
                     <div class="formula-details" id="lynchFormula" style="display: none;">
                         <table class="formula-table">
@@ -3068,30 +3079,29 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td rowspan="5">PEG Ratio</td><td>&lt;0.5</td><td>+35</td></tr>
+                                <tr><td rowspan="5">PEG (P/E ÷ EPS growth, growth capped at 50%)</td><td>&lt;0.5</td><td>+35</td></tr>
                                 <tr><td>&lt;1.0</td><td>+25</td></tr>
                                 <tr><td>&lt;1.5</td><td>+10</td></tr>
                                 <tr><td>&lt;2.0</td><td>-10</td></tr>
                                 <tr><td>≥2.0</td><td>-25</td></tr>
-                                <tr><td rowspan="3">Growth Category</td><td>Fast grower (≥20%)</td><td>+25</td></tr>
-                                <tr><td>Stalwart (10-15%)</td><td>+15</td></tr>
+                                <tr><td rowspan="4">Growth category</td><td>Fast grower (≥20%/yr)</td><td>+25</td></tr>
+                                <tr><td>Stalwart (5–20%)</td><td>+15</td></tr>
                                 <tr><td>Slow grower (&lt;5%)</td><td>-15</td></tr>
-                                <tr><td rowspan="3">Institutional Ownership</td><td>&lt;30%</td><td>+15</td></tr>
-                                <tr><td>&lt;50%</td><td>+10</td></tr>
+                                <tr><td>Turnaround (loss → profit)</td><td>+15</td></tr>
+                                <tr><td rowspan="2">Institutional ownership</td><td>&lt;30%</td><td>+15</td></tr>
                                 <tr><td>&gt;80%</td><td>-10</td></tr>
-                                <tr><td>Ten-Bagger Potential</td><td>Based on factors</td><td>Up to +25 (scaled × 0.25)</td></tr>
-                                <tr><td rowspan="2">Earnings Momentum</td><td>4+ consecutive beats</td><td>+15</td></tr>
-                                <tr><td>2+ consecutive beats</td><td>+8</td></tr>
+                                <tr><td rowspan="2">Debt-to-Equity</td><td>&lt;0.5</td><td>+5</td></tr>
+                                <tr><td>&gt;1.0</td><td>-5</td></tr>
                             </tbody>
                         </table>
                         <div class="verdict-table">
                             <h4>Verdict Thresholds</h4>
                             <table>
-                                <tr><td>≥60</td><td>Strong Buy</td></tr>
-                                <tr><td>≥20</td><td>Buy</td></tr>
-                                <tr><td>≥-20</td><td>Hold</td></tr>
-                                <tr><td>≥-60</td><td>Sell</td></tr>
-                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                                <tr><td>≥60</td><td>Would buy</td></tr>
+                                <tr><td>≥20</td><td>Leaning yes</td></tr>
+                                <tr><td>≥-20</td><td>On the fence</td></tr>
+                                <tr><td>≥-60</td><td>Leaning no</td></tr>
+                                <tr><td>&lt;-60</td><td>Would avoid</td></tr>
                             </table>
                         </div>
                     </div>
@@ -3107,7 +3117,7 @@
                         <button class="expand-btn" id="grahamExpand">+</button>
                     </div>
                     <div class="agent-summary">
-                        <p>P/E ≤15, P/B ≤1.5, current ratio ≥2.0. Demands margin of safety below intrinsic value. Rewards earnings stability.</p>
+                        <p>Margin of safety below the Graham Number, P/E ≤15, P/E × P/B ≤22.5, current ratio ≥2, a long dividend record.</p>
                     </div>
                     <div class="formula-details" id="grahamFormula" style="display: none;">
                         <table class="formula-table">
@@ -3119,33 +3129,33 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td rowspan="4">Margin of Safety</td><td>≥33%</td><td>+40</td></tr>
-                                <tr><td>≥20%</td><td>+25</td></tr>
-                                <tr><td>≥10%</td><td>+10</td></tr>
-                                <tr><td>&lt;0%</td><td>-30</td></tr>
-                                <tr><td rowspan="4">P/E Ratio</td><td>≤10</td><td>+20</td></tr>
+                                <tr><td rowspan="4">Margin of safety vs Graham Number √(22.5 × EPS × book value)</td><td>≥33% below</td><td>+40</td></tr>
+                                <tr><td>≥20% below</td><td>+25</td></tr>
+                                <tr><td>≥10% below</td><td>+10</td></tr>
+                                <tr><td>Above (or negative EPS/book)</td><td>-30</td></tr>
+                                <tr><td rowspan="4">P/E</td><td>≤10</td><td>+20</td></tr>
                                 <tr><td>≤15</td><td>+15</td></tr>
                                 <tr><td>≤20</td><td>+5</td></tr>
                                 <tr><td>&gt;20</td><td>-15</td></tr>
+                                <tr><td rowspan="2">P/E × P/B</td><td>≤22.5</td><td>+10</td></tr>
+                                <tr><td>&gt;22.5</td><td>-10</td></tr>
                                 <tr><td rowspan="3">Current Ratio</td><td>≥2.0</td><td>+15</td></tr>
                                 <tr><td>≥1.5</td><td>+5</td></tr>
                                 <tr><td>&lt;1.5</td><td>-15</td></tr>
-                                <tr><td rowspan="3">Dividend History</td><td>≥20 years</td><td>+15</td></tr>
-                                <tr><td>≥10 years</td><td>+10</td></tr>
-                                <tr><td>≥5 years</td><td>+5</td></tr>
-                                <tr><td>Net-Net Bonus</td><td>NCAV &gt; current price</td><td>+20</td></tr>
-                                <tr><td rowspan="2">Earnings Stability</td><td>0 misses (4+ quarters)</td><td>+10</td></tr>
-                                <tr><td>Miss rate ≤25%</td><td>+5</td></tr>
+                                <tr><td rowspan="3">Dividend record (years in a row)</td><td>≥20</td><td>+15</td></tr>
+                                <tr><td>≥10</td><td>+10</td></tr>
+                                <tr><td>≥5</td><td>+5</td></tr>
+                                <tr><td rowspan="1">Net-net bonus</td><td>Price below current assets − all liabilities</td><td>+20</td></tr>
                             </tbody>
                         </table>
                         <div class="verdict-table">
                             <h4>Verdict Thresholds</h4>
                             <table>
-                                <tr><td>≥60</td><td>Strong Buy</td></tr>
-                                <tr><td>≥20</td><td>Buy</td></tr>
-                                <tr><td>≥-20</td><td>Hold</td></tr>
-                                <tr><td>≥-60</td><td>Sell</td></tr>
-                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                                <tr><td>≥60</td><td>Would buy</td></tr>
+                                <tr><td>≥20</td><td>Leaning yes</td></tr>
+                                <tr><td>≥-20</td><td>On the fence</td></tr>
+                                <tr><td>≥-60</td><td>Leaning no</td></tr>
+                                <tr><td>&lt;-60</td><td>Would avoid</td></tr>
                             </table>
                         </div>
                     </div>
@@ -3161,7 +3171,7 @@
                         <button class="expand-btn" id="mungerExpand">+</button>
                     </div>
                     <div class="agent-summary">
-                        <p>Business quality over cheapness. High margins, ROIC, capital-light models. Heavy penalties for red flags. Rewards earnings quality.</p>
+                        <p>Great businesses: high margins and returns on capital, capital-light, growing, with no red flags and owners who have skin in the game.</p>
                     </div>
                     <div class="formula-details" id="mungerFormula" style="display: none;">
                         <table class="formula-table">
@@ -3173,26 +3183,29 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td>Gross Margin</td><td>≥40%</td><td>+25</td></tr>
-                                <tr><td>Operating Margin</td><td>≥15%</td><td>+20</td></tr>
-                                <tr><td>ROIC</td><td>≥15%</td><td>+25</td></tr>
-                                <tr><td>Capex/Revenue</td><td>&lt;5%</td><td>+15</td></tr>
-                                <tr><td>Revenue Growth (5Y)</td><td>&gt;5%</td><td>+15</td></tr>
-                                <tr><td>Red Flags</td><td>Each flag</td><td>-20</td></tr>
-                                <tr><td rowspan="2">Management Ownership</td><td>≥10%</td><td>+15</td></tr>
+                                <tr><td rowspan="2">Gross Margin</td><td>≥40%</td><td>+25</td></tr>
+                                <tr><td>&lt;20%</td><td>-20</td></tr>
+                                <tr><td rowspan="1">Operating Margin</td><td>≥15%</td><td>+20</td></tr>
+                                <tr><td rowspan="2">ROIC</td><td>≥15%</td><td>+25</td></tr>
+                                <tr><td>&lt;8%</td><td>-20</td></tr>
+                                <tr><td rowspan="2">Capex / Revenue</td><td>&lt;5%</td><td>+15</td></tr>
+                                <tr><td>&gt;15%</td><td>-20</td></tr>
+                                <tr><td rowspan="1">Revenue growth per year</td><td>&gt;5%</td><td>+15</td></tr>
+                                <tr><td rowspan="1">Red flag: debt</td><td>Debt-to-equity &gt;1.0</td><td>-20</td></tr>
+                                <tr><td rowspan="1">Red flag: margins</td><td>Operating margin down &gt;2 points</td><td>-20</td></tr>
+                                <tr><td rowspan="3">Insider ownership</td><td>≥10%</td><td>+15</td></tr>
                                 <tr><td>≥5%</td><td>+10</td></tr>
-                                <tr><td rowspan="2">Earnings Quality</td><td>Beat rate ≥80%</td><td>+10</td></tr>
-                                <tr><td>Beat rate ≥60%</td><td>+5</td></tr>
+                                <tr><td>&lt;1%</td><td>-20</td></tr>
                             </tbody>
                         </table>
                         <div class="verdict-table">
                             <h4>Verdict Thresholds</h4>
                             <table>
-                                <tr><td>≥60</td><td>Strong Buy</td></tr>
-                                <tr><td>≥20</td><td>Buy</td></tr>
-                                <tr><td>≥-20</td><td>Hold</td></tr>
-                                <tr><td>≥-60</td><td>Sell</td></tr>
-                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                                <tr><td>≥60</td><td>Would buy</td></tr>
+                                <tr><td>≥20</td><td>Leaning yes</td></tr>
+                                <tr><td>≥-20</td><td>On the fence</td></tr>
+                                <tr><td>≥-60</td><td>Leaning no</td></tr>
+                                <tr><td>&lt;-60</td><td>Would avoid</td></tr>
                             </table>
                         </div>
                     </div>
@@ -3208,7 +3221,7 @@
                         <button class="expand-btn" id="dalioExpand">+</button>
                     </div>
                     <div class="agent-summary">
-                        <p>Risk-adjusted returns, debt cycle positioning, diversification benefit. Prefers predictable earnings for portfolio construction.</p>
+                        <p>Return per unit of risk, diversification, sustainable leverage, the debt cycle, and steadiness through downturns (low beta).</p>
                     </div>
                     <div class="formula-details" id="dalioFormula" style="display: none;">
                         <table class="formula-table">
@@ -3220,43 +3233,42 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td rowspan="4">Risk-Adjusted Returns</td><td>Ratio ≥1.0</td><td>+30</td></tr>
-                                <tr><td>Ratio ≥0.5</td><td>+20</td></tr>
-                                <tr><td>Ratio ≥0.25</td><td>+10</td></tr>
-                                <tr><td>Ratio &lt;0</td><td>-20</td></tr>
-                                <tr><td>Diversification</td><td>Based on correlation</td><td>Up to +20 (scaled)</td></tr>
-                                <tr><td rowspan="2">Debt Cycle</td><td>Sustainable leverage</td><td>+15</td></tr>
-                                <tr><td>Unsustainable leverage</td><td>-20</td></tr>
-                                <tr><td rowspan="2">Cycle Phase</td><td>Moderate growth</td><td>+10</td></tr>
-                                <tr><td>Expansion</td><td>+5</td></tr>
-                                <tr><td rowspan="3">Beta</td><td>0.8-1.2</td><td>+15</td></tr>
-                                <tr><td>0.5-1.5</td><td>+10</td></tr>
-                                <tr><td>Other</td><td>-10</td></tr>
-                                <tr><td rowspan="2">Earnings Predictability</td><td>Avg surprise &lt;3%</td><td>+10</td></tr>
-                                <tr><td>Avg surprise &lt;5%</td><td>+5</td></tr>
+                                <tr><td rowspan="4">Past-year return ÷ volatility</td><td>≥1.0</td><td>+15</td></tr>
+                                <tr><td>≥0.5</td><td>+10</td></tr>
+                                <tr><td>≥0.25</td><td>+5</td></tr>
+                                <tr><td>&lt;0</td><td>-15</td></tr>
+                                <tr><td rowspan="1">Diversification</td><td>Correlation with S&amp;P 500</td><td>+20 × (1 − |correlation|)</td></tr>
+                                <tr><td rowspan="2">Debt-to-Equity</td><td>&lt;1.0</td><td>+15</td></tr>
+                                <tr><td>≥1.0</td><td>-20</td></tr>
+                                <tr><td rowspan="2">Debt growth over the reported years</td><td>0–15% (moderate)</td><td>+10</td></tr>
+                                <tr><td>&gt;15% (expansion)</td><td>+5</td></tr>
+                                <tr><td rowspan="4">Beta</td><td>&lt;0.8 (steadier than the market)</td><td>+15</td></tr>
+                                <tr><td>0.8–1.2</td><td>+10</td></tr>
+                                <tr><td>1.2–1.5</td><td>0</td></tr>
+                                <tr><td>&gt;1.5</td><td>-10</td></tr>
                             </tbody>
                         </table>
                         <div class="verdict-table">
                             <h4>Verdict Thresholds</h4>
                             <table>
-                                <tr><td>≥60</td><td>Strong Buy</td></tr>
-                                <tr><td>≥20</td><td>Buy</td></tr>
-                                <tr><td>≥-20</td><td>Hold</td></tr>
-                                <tr><td>≥-60</td><td>Sell</td></tr>
-                                <tr><td>&lt;-60</td><td>Strong Sell</td></tr>
+                                <tr><td>≥60</td><td>Would buy</td></tr>
+                                <tr><td>≥20</td><td>Leaning yes</td></tr>
+                                <tr><td>≥-20</td><td>On the fence</td></tr>
+                                <tr><td>≥-60</td><td>Leaning no</td></tr>
+                                <tr><td>&lt;-60</td><td>Would avoid</td></tr>
                             </table>
                         </div>
                     </div>
                 </div>
 
-                <p class="modal-disclaimer">Scoring weights are GOATlens interpretations based on each investor's published writings, not official formulas.</p>
+                <p class="modal-disclaimer">Score = points earned ÷ points available on the checks that have data, scaled to −100…+100. Checks without data are skipped (never counted as zero); an investor needs at least half of its checklist to give a verdict. Thresholds are GOATlens interpretations of each investor's writings, not official formulas.</p>
             </div>
         </div>
     </dialog>
 
     <footer>
         <p class="disclaimer">
-            Educational project only &mdash; not financial advice. Scores are AI-generated interpretations and may contain errors. Always do your own research. Fundamentals come from SEC filings; Yahoo Finance market data is an unofficial, best-effort source with no SLA.
+            Free educational project &mdash; not financial advice. Each score applies a simple, published checklist inspired by the investor's writings; the investors did not endorse it. Data comes from Yahoo Finance and is refreshed nightly, so it can be a day old and may contain errors. Always do your own research.
         </p>
     </footer>
 
@@ -3273,14 +3285,13 @@
         let earningsInsightsGeneration = 0;
         const earningsInsightsRequests = new Map();
         
-        // Score tooltips for each investor
-        const investorTooltips = {
-            'Warren Buffett': 'Buffett scores based on ROE (25pts), profit margins (20pts), debt levels (20pts), free cash flow (+15/-20pts), and earnings consistency (15pts). Loves durable competitive advantages.',
-            'Peter Lynch': 'Lynch scores PEG ratio (35pts), growth rate (25pts), institutional ownership (15pts), and ten-bagger potential (25pts). Seeks growth at fair prices.',
-            'Benjamin Graham': 'Graham scores margin of safety (40pts), P/E ratio (20pts), current ratio (15pts), and dividend history (15pts). Demands deep value.',
-            'Charlie Munger': 'Munger scores business quality (100pts base) minus red flags (-20 each). Focuses on avoiding mistakes and finding quality.',
-            'Ray Dalio': 'Dalio scores risk-adjusted returns (30pts), diversification (20pts), debt cycle position (25pts), and beta (15pts). All-weather focused.'
-        };
+        // Score tooltip: the checks this investor actually ran
+        function checklistTooltip(agent) {
+            const labels = (agent.criteria || []).map(c => c.label);
+            return labels.length
+                ? `Checks: ${labels.join(', ')}. Score = points earned ÷ points available on the checks with data, from -100 to +100.`
+                : 'Score based on investor-specific criteria.';
+        }
         
         // DOM Elements
         const tickerInput = document.getElementById('tickerInput');
@@ -3447,30 +3458,64 @@
             })[character]);
         }
 
-        function getMarketDataUiState(dataStatus) {
-            const marketData = dataStatus && dataStatus.market_data;
-            if (!marketData || marketData.available !== false) {
-                return { shouldLoadPrice: true, message: '' };
+        function getDataNotice(data) {
+            const status = data.data_status || {};
+            if (data.stale) {
+                return `Showing the last good data (prices as of ${status.price_as_of || 'unknown'}); tonight's refresh for this company failed.`;
             }
-            return {
-                shouldLoadPrice: false,
-                message: 'Market data unavailable. SEC-backed fundamentals remain available; price-dependent analysis is incomplete.'
-            };
+            return '';
         }
 
         function formatAgentAvailability(agent) {
-            if (!agent || agent.status !== 'incomplete') return '';
-            const labels = {
-                current_price: 'current price',
-                pe_ratio: 'PE ratio',
-                pb_ratio: 'price-to-book ratio',
-                peg_ratio: 'PEG ratio'
+            if (!agent) return '';
+            if (agent.status === 'insufficient_data') {
+                return `Not enough data for this lens: only ${agent.criteria_checked} of ${agent.criteria_total} checks apply to this company.`;
+            }
+            if (agent.criteria_checked < agent.criteria_total) {
+                return `Based on ${agent.criteria_checked} of ${agent.criteria_total} checks`;
+            }
+            return '';
+        }
+
+        function renderChecklist(agent) {
+            const icons = { pass: '✓', fail: '✗', neutral: '•', no_data: '–' };
+            return `<ul class="checklist">${(agent.criteria || []).map(c => `
+                <li class="check-${c.status}">
+                    <span class="check-icon" aria-hidden="true">${icons[c.status] || '•'}</span>
+                    <span>${c.status === 'no_data' ? `<strong>${escapeHtml(c.label)}</strong> ` : ''}${escapeHtml(c.detail)}</span>
+                </li>`).join('')}</ul>`;
+        }
+
+        async function loadTickerList() {
+            try {
+                const resp = await fetch(`${API_BASE}/api/tickers`);
+                if (!resp.ok) return;
+                const items = await resp.json();
+                const list = document.getElementById('tickerList');
+                list.replaceChildren(...items.map(item => {
+                    const option = document.createElement('option');
+                    option.value = item.ticker;
+                    option.label = item.name;
+                    return option;
+                }));
+            } catch (err) {
+                // Autocomplete is a convenience; typing a ticker still works.
+            }
+        }
+        loadTickerList();
+
+        // Shared links (?ticker=AAPL) open straight to that analysis.
+        const sharedTicker = new URLSearchParams(window.location.search).get('ticker');
+        if (sharedTicker) {
+            const openShared = () => {
+                tickerInput.value = sharedTicker.trim().toUpperCase().slice(0, 10);
+                runAnalysis();
             };
-            const unavailable = (agent.unavailable_metrics || [])
-                .map(metric => labels[metric] || metric.replaceAll('_', ' '));
-            return unavailable.length
-                ? `Incomplete — unavailable: ${unavailable.join(', ')}`
-                : 'Incomplete — required inputs unavailable';
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', openShared);
+            } else {
+                openShared();
+            }
         }
 
         async function runAnalysis() {
@@ -3501,7 +3546,6 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ticker: ticker,
-                    time_period: selectedPeriod,
                     agents: selectedInvestors
                 })
             });
@@ -3553,90 +3597,80 @@
             await runAnalysis();
         }
 
-        function renderMetricEvidence(metricEvidence) {
+        const METRIC_LABELS = {
+            current_price: ['Share price', 'money'], pe_ratio: ['P/E ratio', 'x'], pb_ratio: ['Price-to-book', 'x'],
+            eps: ['Earnings per share (TTM)', 'money'], book_value_per_share: ['Book value per share', 'money'],
+            roe: ['Return on equity', 'pct'], profit_margin: ['Profit margin', 'pct'], gross_margin: ['Gross margin', 'pct'],
+            operating_margin: ['Operating margin', 'pct'], debt_to_equity: ['Debt-to-equity', 'x'],
+            current_ratio: ['Current ratio', 'x'], free_cash_flow: ['Free cash flow (last fiscal year)', 'big'],
+            earnings_growth: ['EPS growth per year', 'pct'], revenue_growth: ['Revenue growth per year', 'pct'],
+            margin_trend: ['Operating margin change', 'pts'], capex_to_revenue: ['Capital spending / revenue', 'pct'],
+            roic: ['Return on invested capital', 'pct'], institutional_ownership: ['Held by institutions', 'pct'],
+            insider_ownership: ['Held by insiders', 'pct'], dividend_yield: ['Dividend yield', 'pct'],
+            consecutive_dividend_years: ['Years of dividends in a row', 'int'], beta: ['Beta', 'x'],
+            volatility_252d: ['Volatility (1 year)', 'pct'], realized_total_return_252d: ['Return (1 year)', 'pct'],
+            correlation_sp500: ['Correlation with S&P 500', 'x']
+        };
+
+        function formatMetric(value, kind) {
+            if (value == null) return 'not available';
+            if (kind === 'pct') return `${(value * 100).toFixed(1)}%`;
+            if (kind === 'pts') return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(1)} pts`;
+            if (kind === 'money') return `$${value.toFixed(2)}`;
+            if (kind === 'big') return `$${(value / 1e9).toFixed(1)}B`;
+            if (kind === 'int') return `${Math.round(value)}`;
+            return value.toFixed(2);
+        }
+
+        function renderMetrics(data) {
             const section = document.getElementById('metricEvidenceSection');
             const list = document.getElementById('metricEvidenceList');
             list.replaceChildren();
-            const entries = Object.entries(metricEvidence || {})
-                .filter(([, evidence]) => evidence && evidence.available === true)
-                .sort(([left], [right]) => left.localeCompare(right));
-
-            entries.forEach(([metric, evidence]) => {
+            const metrics = data.metrics || {};
+            const na = data.not_applicable || {};
+            const notApplicable = new Map(Array.isArray(na)
+                ? na.map(key => [key, 'Not meaningful for banks and insurers'])
+                : Object.entries(na));
+            const statementCurrency = data.financial_currency || data.currency || 'USD';
+            const status = data.data_status || {};
+            const source = document.createElement('div');
+            source.className = 'metric-evidence-row';
+            source.textContent = `Source: ${status.source || 'Yahoo Finance'} · prices as of ${status.price_as_of || 'unknown'} · latest annual report for the fiscal year ending ${status.fiscal_year_end || 'unknown'} · growth uses ${status.statement_years || 'the available'} years of reports · refreshed ${String(data.built_at || '').slice(0, 10)}`;
+            list.append(source);
+            Object.entries(METRIC_LABELS).forEach(([key, [label, kind]]) => {
                 const row = document.createElement('div');
                 row.className = 'metric-evidence-row';
                 const name = document.createElement('div');
                 name.className = 'metric-evidence-name';
-                name.textContent = metric.replaceAll('_', ' ');
-                const detail = document.createElement('div');
-                const asOf = evidence.as_of ? ` · as of ${evidence.as_of}` : '';
-                const filedAt = evidence.filed_at ? ` · filed ${evidence.filed_at}` : '';
-                const observations = evidence.observation_count != null
-                    ? ` · ${evidence.observation_count} observations`
-                    : '';
-                detail.textContent = `${evidence.value} · ${evidence.source} · ${evidence.formula} (${evidence.formula_version})${asOf}${filedAt}${observations}`;
-                row.append(name, detail);
-                (evidence.inputs || []).forEach(input => {
-                    const inputDetail = document.createElement('div');
-                    if (input.kind === 'sec_fact') {
-                        const provenance = input.provenance || {};
-                        inputDetail.textContent = `${input.role}: ${provenance.concept} = ${input.value} · period ${provenance.end || 'unknown'} · filed ${provenance.filed || 'unknown'} · accession ${provenance.accession || 'unknown'}`;
-                    } else if (input.kind === 'market_observation') {
-                        inputDetail.textContent = `${input.role} (${input.symbol}): ${input.value} · observed ${input.observed_at}`;
-                    } else if (input.kind === 'market_series') {
-                        inputDetail.textContent = `${input.role} (${input.symbol}): ${input.observation_count} observations · ${input.start} to ${input.end}`;
-                    }
-                    row.append(inputDetail);
-                });
+                name.textContent = label;
+                const value = document.createElement('div');
+                if (notApplicable.has(key)) {
+                    value.textContent = notApplicable.get(key);
+                } else if (kind === 'big' && metrics[key] != null && statementCurrency !== 'USD') {
+                    value.textContent = `${(metrics[key] / 1e9).toFixed(1)}B ${statementCurrency}`;
+                } else {
+                    value.textContent = formatMetric(metrics[key], kind);
+                }
+                row.append(name, value);
                 list.append(row);
             });
-            section.style.display = entries.length ? 'block' : 'none';
+            section.style.display = 'block';
         }
 
         function getConsensusUiState(data) {
             const completed = data.completed_analyses;
             const requested = data.requested_analyses;
-            const indication = data.partial_indication;
-            let status;
-            if (data.consensus_status === 'partial') {
-                status = `Incomplete — ${completed} of ${requested} requested analyses complete.`;
-            } else if (data.consensus_status === 'incomplete') {
-                status = completed === 0
-                    ? 'Incomplete — no requested analysis is complete.'
-                    : `Incomplete — ${completed} of ${requested} requested analyses complete; at least 3 are required for consensus.`;
-            } else {
-                status = 'Complete consensus — all requested analyses are complete.';
+            if (data.consensus_verdict === 'insufficient_data') {
+                return { headline: 'Not enough data', status: 'None of the selected investors had enough data to form a view.' };
             }
-
-            if (!indication) {
-                return {
-                    headline: formatVerdict(data.consensus_verdict),
-                    status,
-                    partialIndication: '',
-                    showPartialIndication: false
-                };
+            let status = completed === requested
+                ? `All ${requested} selected investors weighed in.`
+                : `${completed} of ${requested} selected investors had enough data; the rest are explained below.`;
+            if (data.split) {
+                status = `On average: ${formatVerdict(data.consensus_verdict)}. ${status}`;
+                return { headline: `Split: ${data.positive_count} say${data.positive_count === 1 ? 's' : ''} yes, ${data.negative_count} say${data.negative_count === 1 ? 's' : ''} no`, status };
             }
-
-            const completedLabel = indication.completed_analyses === 1
-                ? 'completed investor'
-                : 'completed investors';
-            const support = indication.directional_support == null
-                ? 'No directional support for mixed completed votes.'
-                : `Directional support: ${indication.supporting_analyses} of ${indication.completed_analyses} completed.`;
-            const excluded = indication.excluded_agents.map(item => {
-                const metrics = item.unavailable_metrics
-                    .map(metric => metric.replaceAll('_', ' '))
-                    .join(', ');
-                return metrics ? `${item.agent} (${metrics})` : item.agent;
-            }).join('; ');
-            const excludedText = excluded ? ` Excluded: ${excluded}.` : '';
-            const warnings = (indication.divergence_points || []).join(' ');
-            const warningText = warnings ? ` Completed-vote warning: ${warnings}` : '';
-            return {
-                headline: 'Incomplete',
-                status,
-                partialIndication: `Partial indication: ${formatVerdict(indication.verdict)} among ${indication.completed_analyses} ${completedLabel}. ${support}${excludedText}${warningText}`,
-                showPartialIndication: true
-            };
+            return { headline: formatVerdict(data.consensus_verdict), status };
         }
 
         function displayResults(data) {
@@ -3644,17 +3678,18 @@
             currentTicker = data.ticker;
             earningsInsightsGeneration += 1;
 
-            const marketUi = getMarketDataUiState(data.data_status);
+            const notice = getDataNotice(data);
             const marketNotice = document.getElementById('marketDataNotice');
-            marketNotice.textContent = marketUi.message;
-            marketNotice.classList.toggle('active', Boolean(marketUi.message));
-            renderMetricEvidence(data.metric_evidence);
+            marketNotice.textContent = notice;
+            marketNotice.classList.toggle('active', Boolean(notice));
+            renderMetrics(data);
             
             // Company Header
             document.getElementById('companyTicker').textContent = data.ticker;
             document.getElementById('companyName').textContent = data.company_name;
             document.getElementById('companySector').textContent = data.sector;
-            document.getElementById('analysisPeriod').textContent = formatPeriod(selectedPeriod);
+            document.getElementById('analysisPeriod').textContent = data.data_status && data.data_status.price_as_of
+                ? `Prices as of ${data.data_status.price_as_of}` : '';
 
             // Next Earnings Badge
             renderNextEarnings(data.next_earnings_date);
@@ -3663,13 +3698,10 @@
             const consensusUi = getConsensusUiState(data);
             const verdictEl = document.getElementById('consensusVerdict');
             verdictEl.textContent = consensusUi.headline;
-            verdictEl.className = `consensus-verdict verdict-${data.consensus_verdict}`;
+            verdictEl.className = `consensus-verdict verdict-${data.split ? 'mixed is-split' : data.consensus_verdict}`;
 
             const consensusStatusNotice = document.getElementById('consensusStatusNotice');
             consensusStatusNotice.textContent = consensusUi.status;
-            const partialIndication = document.getElementById('partialIndication');
-            partialIndication.textContent = consensusUi.partialIndication;
-            partialIndication.hidden = !consensusUi.showPartialIndication;
 
             const agreementValue = document.getElementById('agreementValue');
             const agreementFill = document.getElementById('agreementFill');
@@ -3720,15 +3752,7 @@
             // Load the visible price chart only after core analysis succeeds.
             // Rich earnings insights remain lazy until the Insights tab opens.
             earningsInsightsLoadedTicker = '';
-            if (marketUi.shouldLoadPrice) {
-                loadPriceChart(data.ticker, selectedChartPeriod);
-            } else {
-                if (priceChart) {
-                    priceChart.remove();
-                    priceChart = null;
-                }
-                document.getElementById('chartsSection').style.display = 'none';
-            }
+            loadPriceChart(data.ticker, selectedChartPeriod);
 
             // Agent Cards with Tooltips
             const agentsGrid = document.getElementById('agentsGrid');
@@ -3743,24 +3767,13 @@
                             <div class="agent-score ${getScoreClass(agent.score)}">${formatAgentScore(agent)}</div>
                             <div class="score-tooltip">
                                 <div class="tooltip-title">How ${escapeHtml(agent.agent.split(' ')[0])} Scores</div>
-                                ${investorTooltips[agent.agent] || 'Score based on investor-specific criteria.'}
+                                ${escapeHtml(checklistTooltip(agent))}
                             </div>
                         </div>
                     </div>
-                    <span class="agent-verdict-badge badge-${agent.verdict || 'incomplete'}">${formatVerdict(agent.verdict)}</span>
+                    <span class="agent-verdict-badge badge-${agent.verdict || 'insufficient_data'}">${formatVerdict(agent.verdict)}</span>
                     ${formatAgentAvailability(agent) ? `<div class="agent-availability">${escapeHtml(formatAgentAvailability(agent))}</div>` : ''}
-                    ${agent.insights.length > 0 ? `
-                        <div class="agent-insights">
-                            <h5>Key Insights</h5>
-                            <ul>${agent.insights.slice(0, 3).map(i => `<li>${escapeHtml(i)}</li>`).join('')}</ul>
-                        </div>
-                    ` : ''}
-                    ${agent.concerns.length > 0 ? `
-                        <div class="agent-concerns">
-                            <h5>Concerns</h5>
-                            <ul>${agent.concerns.slice(0, 2).map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
-                        </div>
-                    ` : ''}
+                    ${renderChecklist(agent)}
                 </div>
             `).join('');
 
@@ -3770,7 +3783,7 @@
                 <tr>
                     <td><strong>${escapeHtml(agent.agent)}</strong></td>
                     <td>${escapeHtml(agent.style)}</td>
-                    <td><span class="agent-verdict-badge badge-${agent.verdict || 'incomplete'}">${formatVerdict(agent.verdict)}</span></td>
+                    <td><span class="agent-verdict-badge badge-${agent.verdict || 'insufficient_data'}">${formatVerdict(agent.verdict)}</span></td>
                     <td class="${getScoreClass(agent.score)}" style="font-weight: 600; font-size: 1.1rem;">${formatAgentScore(agent)}</td>
                 </tr>
             `).join('');
@@ -4571,20 +4584,21 @@
 
         function formatVerdict(verdict) {
             const map = {
-                'strong_buy': 'Strong Buy',
-                'buy': 'Buy',
-                'hold': 'Hold',
+                'strong_buy': 'Would buy',
+                'buy': 'Leaning yes',
+                'hold': 'On the fence',
                 'mixed': 'Mixed',
                 'incomplete': 'Incomplete',
-                'sell': 'Sell',
-                'strong_sell': 'Strong Sell'
+                'insufficient_data': 'Not enough data',
+                'sell': 'Leaning no',
+                'strong_sell': 'Would avoid'
             };
-            return map[verdict] || 'Incomplete';
+            return map[verdict] || 'Not enough data';
         }
 
         function formatAgentScore(agent) {
-            if (!agent || agent.status === 'incomplete' || agent.score == null) {
-                return 'Unavailable';
+            if (!agent || agent.score == null) {
+                return '—';
             }
             return `${agent.score > 0 ? '+' : ''}${agent.score}`;
         }
@@ -4594,7 +4608,8 @@
                 'strengthening': '↑ Strengthening',
                 'stable': '→ Stable',
                 'weakening': '↓ Weakening',
-                'collapsed': '⚠ Collapsed'
+                'collapsed': '⚠ Collapsed',
+                'unknown': 'Not enough history'
             };
             return map[trend] || trend;
         }
