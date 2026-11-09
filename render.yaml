@@ -7,3 +7,6 @@ services:
     plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
+    # Deploy main only after GitHub checks (CI) pass. Set here because Blueprint
+    # syncs overwrite dashboard settings.
+    autoDeployTrigger: checksPass
