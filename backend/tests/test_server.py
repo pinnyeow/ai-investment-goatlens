@@ -76,3 +76,8 @@ def test_company_name_suggests_ticker(client):
 def test_head_root_and_bad_period(client):
     assert client.head("/").status_code == 200
     assert client.get("/api/price-history/BRK-B?period=zzz").status_code == 422
+
+
+def test_analyze_includes_why_sentences(client):
+    body = client.post("/api/analyze", json={"ticker": "BRK-B", "agents": ["graham"]}).json()
+    assert all(c["why"] for c in body["agent_results"][0]["criteria"])
