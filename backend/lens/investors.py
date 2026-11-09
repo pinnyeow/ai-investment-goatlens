@@ -35,7 +35,7 @@ class Criterion:
 
 METRIC_NAMES = {
     "roe": "return on equity", "profit_margin": "profit margin", "debt_to_equity": "debt-to-equity",
-    "free_cash_flow": "free cash flow", "pe_ratio": "P/E (needs positive earnings)",
+    "net_debt_to_ebitda": "net debt / EBITDA", "free_cash_flow": "free cash flow", "pe_ratio": "P/E (needs positive earnings)",
     "earnings_growth": "earnings growth (needs positive earnings)", "institutional_ownership": "institutional ownership",
     "eps": "earnings per share", "book_value_per_share": "book value", "pb_ratio": "price-to-book",
     "current_ratio": "current ratio", "consecutive_dividend_years": "dividend history",
@@ -68,14 +68,35 @@ def status_for(points: float) -> str:
     return "pass" if points > 0 else "fail" if points < 0 else "neutral"
 
 
+def leverage(m, good: float, ok: float):
+    """Return (tier, sentence) where tier is "good", "ok" or "high", or None.
+
+    Uses debt-to-equity normally. When shareholders' equity is negative (common
+    after years of buybacks, e.g. McDonald's or Starbucks) debt-to-equity is
+    undefined, so fall back to net debt / EBITDA: years of earnings to repay debt.
+    """
+    if have(m, "debt_to_equity"):
+        de = m["debt_to_equity"]
+        tier = "good" if de <= good else "ok" if de <= ok else "high"
+        return tier, f"Debt-to-equity {de:.2f}"
+    if have(m, "net_debt_to_ebitda"):
+        nd = m["net_debt_to_ebitda"]
+        tier = "good" if nd <= 1.0 else "ok" if nd <= 2.5 else "high"
+        return tier, f"Net debt is {nd:.1f}× yearly EBITDA (equity is negative, so debt-to-equity doesn't apply)"
+    return None
+
+
 # ── Warren Buffett ──────────────────────────────────────────────────────────
 
 def _buffett_roe(m):
-    if not have(m, "roe"):
+    if have(m, "roe"):
+        roe, text = m["roe"], f"Return on equity {pct(m['roe'])} (Buffett wants 15%+)"
+    elif have(m, "roic"):  # ROE is undefined when equity is negative
+        roe, text = m["roic"], f"Return on invested capital {pct(m['roic'])} (ROE doesn't apply; Buffett wants 15%+)"
+    else:
         return None
-    roe = m["roe"]
     points = min(25, roe / 0.15 * 15) if roe >= 0.15 else -15
-    return points, status_for(points), f"Return on equity {pct(roe)} (Buffett wants 15%+)"
+    return points, status_for(points), text
 
 
 def _buffett_margin(m):
@@ -87,11 +108,12 @@ def _buffett_margin(m):
 
 
 def _buffett_debt(m):
-    if not have(m, "debt_to_equity"):
+    result = leverage(m, good=0.5, ok=1.0)
+    if result is None:
         return None
-    de = m["debt_to_equity"]
-    points = 20 if de <= 0.5 else 10 if de <= 1.0 else -20
-    return points, status_for(points), f"Debt-to-equity {de:.2f} (Buffett prefers under 0.5)"
+    tier, text = result
+    points = {"good": 20, "ok": 10, "high": -20}[tier]
+    return points, status_for(points), f"{text} (Buffett prefers little debt)"
 
 
 def _buffett_fcf(m):
@@ -104,9 +126,9 @@ def _buffett_fcf(m):
 
 
 BUFFETT = [
-    Criterion("roe", "Return on equity", 25, _buffett_roe, ('roe',)),
+    Criterion("roe", "Return on equity", 25, _buffett_roe, ('roe', 'roic')),
     Criterion("profit_margin", "Profit margin", 20, _buffett_margin, ('profit_margin',)),
-    Criterion("debt_to_equity", "Low debt", 20, _buffett_debt, ('debt_to_equity',)),
+    Criterion("debt_to_equity", "Low debt", 20, _buffett_debt, ('debt_to_equity', 'net_debt_to_ebitda')),
     Criterion("free_cash_flow", "Free cash flow", 15, _buffett_fcf, ('free_cash_flow',)),
 ]
 
@@ -126,14 +148,21 @@ def _lynch_category(m):
     if m.get("earnings_turnaround") == 1.0:
         return 15, "pass", "Turnaround: earnings swung from loss to profit"
     if not have(m, "earnings_growth"):
+        latest, oldest = m.get("eps_latest_annual"), m.get("eps_oldest_annual")
+        if latest is not None and latest <= 0:
+            if oldest is not None and oldest > 0:
+                return -15, "fail", "Latest fiscal year was a loss after earlier profits (Lynch avoided these)"
+            return -15, "fail", "No profits yet: Lynch avoided paying for a story without earnings"
         return None
     g = m["earnings_growth"]
     if g >= 0.20:
         points, kind = 25, "Fast grower"
     elif g >= 0.05:
         points, kind = 15, "Stalwart"
-    else:
+    elif g >= 0:
         points, kind = -15, "Slow grower"
+    else:
+        return -15, "fail", f"Shrinking: earnings per share falling {pct(abs(g))} a year"
     return points, status_for(points), f"{kind}: earnings per share growing {pct(g)} a year"
 
 
@@ -146,18 +175,19 @@ def _lynch_institutions(m):
 
 
 def _lynch_balance(m):
-    if not have(m, "debt_to_equity"):
+    result = leverage(m, good=0.5, ok=1.0)
+    if result is None:
         return None
-    de = m["debt_to_equity"]
-    points = 5 if de < 0.5 else -5 if de > 1.0 else 0
-    return points, status_for(points), f"Debt-to-equity {de:.2f} (a strong balance sheet survives mistakes)"
+    tier, text = result
+    points = {"good": 5, "ok": 0, "high": -5}[tier]
+    return points, status_for(points), f"{text} (a strong balance sheet survives mistakes)"
 
 
 LYNCH = [
     Criterion("peg_ratio", "PEG ratio", 35, _lynch_peg, ('pe_ratio', 'earnings_growth')),
     Criterion("growth_category", "Growth category", 25, _lynch_category, ('earnings_growth',)),
     Criterion("institutional_ownership", "Under-discovered", 15, _lynch_institutions, ('institutional_ownership',)),
-    Criterion("balance_sheet", "Balance sheet", 5, _lynch_balance, ('debt_to_equity',)),
+    Criterion("balance_sheet", "Balance sheet", 5, _lynch_balance, ('debt_to_equity', 'net_debt_to_ebitda')),
 ]
 
 
@@ -274,12 +304,13 @@ def _munger_growth(m):
 
 
 def _munger_debt_flag(m):
-    if not have(m, "debt_to_equity"):
+    result = leverage(m, good=1.0, ok=1.0)
+    if result is None:
         return None
-    de = m["debt_to_equity"]
-    if de > 1.0:
-        return -20, "fail", f"Red flag: heavy debt (debt-to-equity {de:.2f})"
-    return 0, "neutral", f"No debt red flag (debt-to-equity {de:.2f})"
+    tier, text = result
+    if tier == "high":
+        return -20, "fail", f"Red flag: heavy debt. {text}"
+    return 0, "neutral", f"No debt red flag. {text}"
 
 
 def _munger_margin_flag(m):
@@ -310,7 +341,7 @@ MUNGER = [
     Criterion("roic", "Return on capital", 25, _munger_roic, ('roic',)),
     Criterion("capex_to_revenue", "Capital-light", 15, _munger_capex, ('capex_to_revenue',)),
     Criterion("revenue_growth", "Sustainable growth", 15, _munger_growth, ('revenue_growth',)),
-    Criterion("debt_flag", "Debt red flag", 0, _munger_debt_flag, ('debt_to_equity',)),
+    Criterion("debt_flag", "Debt red flag", 0, _munger_debt_flag, ('debt_to_equity', 'net_debt_to_ebitda')),
     Criterion("margin_flag", "Margin red flag", 0, _munger_margin_flag, ('margin_trend',)),
     Criterion("insider_ownership", "Skin in the game", 15, _munger_insiders, ('insider_ownership',)),
 ]
@@ -339,11 +370,12 @@ def _dalio_diversification(m):
 
 
 def _dalio_leverage(m):
-    if not have(m, "debt_to_equity"):
+    result = leverage(m, good=1.0, ok=1.0)
+    if result is None:
         return None
-    de = m["debt_to_equity"]
-    points = 15 if de < 1.0 else -20
-    return points, status_for(points), f"Debt-to-equity {de:.2f} (sustainable below 1.0)"
+    tier, text = result
+    points = 15 if tier == "good" else -20
+    return points, status_for(points), f"{text} (Dalio watches whether debt is sustainable)"
 
 
 def _dalio_debt_cycle(m):
@@ -368,7 +400,7 @@ def _dalio_beta(m):
 DALIO = [
     Criterion("risk_adjusted_return", "Return per unit of risk", 30, _dalio_risk_adjusted, ('realized_total_return_252d', 'volatility_252d')),
     Criterion("diversification", "Diversification", 20, _dalio_diversification, ('correlation_sp500',)),
-    Criterion("leverage", "Sustainable leverage", 15, _dalio_leverage, ('debt_to_equity',)),
+    Criterion("leverage", "Sustainable leverage", 15, _dalio_leverage, ('debt_to_equity', 'net_debt_to_ebitda')),
     Criterion("debt_cycle", "Debt cycle", 10, _dalio_debt_cycle, ('debt_growth_3y',)),
     Criterion("beta", "Market sensitivity", 15, _dalio_beta, ('beta',)),
 ]

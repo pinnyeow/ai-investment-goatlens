@@ -36,6 +36,14 @@ def _row(frame: Optional[pd.DataFrame], *names: str) -> List[Optional[float]]:
     return []
 
 
+def _filled(frame: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """Drop report columns that are mostly empty. Yahoo sometimes adds a column
+    for a fiscal year before its numbers are filled in."""
+    if frame is None or frame.empty:
+        return frame
+    return frame.loc[:, frame.notna().mean() >= 0.5]
+
+
 def _first(values: List[Optional[float]]) -> Optional[float]:
     return values[0] if values else None
 
@@ -94,9 +102,9 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
     if price is None:
         raise ValueError(f"No price for {ticker}")
 
-    income = tk.financials
-    balance = tk.balance_sheet
-    cashflow = tk.cashflow
+    income = _filled(tk.financials)
+    balance = _filled(tk.balance_sheet)
+    cashflow = _filled(tk.cashflow)
     history = tk.history(period="5y", auto_adjust=False)
     dividends = tk.dividends
 
@@ -108,6 +116,8 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
     interest = _first(_row(income, "Interest Expense", "Interest Expense Non Operating"))
     capex = _first(_row(cashflow, "Capital Expenditure"))
     total_debt = _row(balance, "Total Debt")
+    net_debt = _first(_row(balance, "Net Debt"))
+    ebitda = _first(_row(income, "EBITDA", "Normalized EBITDA"))
     invested_capital = _first(_row(balance, "Invested Capital"))
 
     op_margins = [
@@ -154,6 +164,10 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
         "current_ratio": _num(info.get("currentRatio")),
         "free_cash_flow": _first(_row(cashflow, "Free Cash Flow")),
         "earnings_growth": earnings_growth,
+        "eps_latest_annual": eps_points[0] if eps_points else None,
+        "eps_oldest_annual": eps_points[-1] if len(eps_points) >= 2 else None,
+        # Used instead of debt-to-equity when equity is negative (e.g. after big buybacks).
+        "net_debt_to_ebitda": _ratio(net_debt, ebitda) if ebitda and ebitda > 0 else None,
         "earnings_turnaround": earnings_turnaround,
         "revenue_growth": _cagr(revenue),
         "margin_trend": (op_margins[0] - op_margins[-1]) if len(op_margins) >= 2 else None,
@@ -186,7 +200,8 @@ def fetch_company(ticker: str, market_returns: Optional[pd.Series] = None) -> Di
     not_applicable: List[str] = []
     if any(word in industry for word in ("Bank", "Insurance", "Capital Markets", "Mortgage")):
         not_applicable = ["free_cash_flow", "gross_margin", "capex_to_revenue", "current_ratio",
-                          "debt_to_equity", "debt_growth_3y", "roic", "current_assets", "total_liabilities"]
+                          "debt_to_equity", "net_debt_to_ebitda", "debt_growth_3y", "roic",
+                          "current_assets", "total_liabilities"]
         for key in not_applicable:
             metrics[key] = None
 

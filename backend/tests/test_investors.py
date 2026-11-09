@@ -71,3 +71,20 @@ def test_earnings_streak():
     quarters = [{"beat_miss": b} for b in ("beat", "beat", "miss", "beat")]
     streak = earnings_streak(quarters)
     assert streak["streak_type"] == "beat" and streak["streak_count"] == 2 and streak["beats"] == 3
+
+
+def test_negative_equity_uses_roic_and_net_debt_to_ebitda():
+    # Years of buybacks (e.g. McDonald's) make equity negative: ROE and D/E are undefined.
+    metrics = {**QUALITY_COMPANY, "roe": None, "debt_to_equity": None, "roic": 0.20, "net_debt_to_ebitda": 2.0}
+    buffett = evaluate_investor("buffett", metrics)
+    assert buffett["status"] == "complete" and buffett["criteria_checked"] == 4
+    details = " ".join(c["detail"] for c in buffett["criteria"])
+    assert "invested capital" in details and "EBITDA" in details
+
+
+def test_loss_makers_are_judged_by_lynch_not_skipped():
+    turned_to_loss = {**QUALITY_COMPANY, "earnings_growth": None, "eps_latest_annual": -1.0, "eps_oldest_annual": 2.0}
+    lynch = evaluate_investor("lynch", turned_to_loss)
+    assert lynch["status"] == "complete"
+    category = next(c for c in lynch["criteria"] if c["key"] == "growth_category")
+    assert category["status"] == "fail" and "loss" in category["detail"]
