@@ -416,6 +416,48 @@ DALIO = [
 ]
 
 
+# One plain sentence per check on why that investor cared, shown under each
+# check on the page. Paraphrased from each investor's published thinking.
+WHY = {
+    "buffett": {
+        "roe": "Buffett looks for businesses that earn high returns on shareholders' money without needing lots of debt to do it.",
+        "profit_margin": "High margins suggest pricing power: customers keep paying even when prices rise, a sign of a durable moat.",
+        "debt_to_equity": "Buffett avoids companies that depend on borrowing, because debt can sink even a good business in one bad year.",
+        "free_cash_flow": "He values the cash a business actually produces after reinvesting to stay competitive, which he calls owner earnings.",
+    },
+    "lynch": {
+        "peg_ratio": "Lynch compared the P/E to the growth rate: a fairly priced growth stock has a P/E roughly equal to its growth rate.",
+        "growth_category": "Lynch sorted companies into slow growers, stalwarts, fast growers and turnarounds, because each deserves different expectations.",
+        "institutional_ownership": "He liked finding good companies before Wall Street did. Heavy institutional ownership leaves less room for discovery.",
+        "balance_sheet": "A strong balance sheet lets a company survive its mistakes, so Lynch checked debt before anything exciting.",
+    },
+    "graham": {
+        "margin_of_safety": "Graham's core idea: buy well below what a business is worth, so you're protected if your estimate is wrong.",
+        "pe_ratio": "He distrusted forecasts. A low P/E means paying for earnings the company already makes, not hopes about the future.",
+        "pe_x_pb": "Graham accepted a higher P/E if the price was low relative to assets, and vice versa; multiplying the two balances both.",
+        "current_ratio": "He wanted short-term assets at least twice short-term debts, so the company can comfortably pay its bills in a downturn.",
+        "dividend_record": "A long, unbroken dividend record showed the company had survived many recessions and kept rewarding owners.",
+        "net_net": "His deepest bargains: companies priced below their cash and short-term assets minus all debts, like getting the business for free.",
+    },
+    "munger": {
+        "gross_margin": "Munger preferred a great business at a fair price over a fair business at a great price. High gross margins signal a great product.",
+        "operating_margin": "Strong operating margins show the company turns sales into profit efficiently after paying to run the business.",
+        "roic": "Munger's favorite test: a business that earns high returns on the money it reinvests can compound value for decades.",
+        "capex_to_revenue": "Businesses that need little spending to grow hand cash to owners instead of pouring it back into equipment.",
+        "revenue_growth": "Steady growth suggests the company's advantage is still widening rather than standing still.",
+        "debt_flag": "Munger liked to invert: first ask what could kill the company. Heavy debt is one of the most common answers.",
+        "margin_flag": "Shrinking margins can be an early warning that competitors are wearing down the moat.",
+        "insider_ownership": "He wanted managers with skin in the game, because people who own a lot of stock think like owners.",
+    },
+    "dalio": {
+        "risk_adjusted_return": "Dalio cares about return per unit of risk, not return alone: a steady gain beats a bigger but wilder one.",
+        "diversification": "His key idea is owning things that don't move together. A stock that zigs when the market zags lowers overall risk.",
+        "leverage": "Dalio studies debt cycles. Companies that borrow more than their earnings support get hurt most when credit tightens.",
+        "debt_cycle": "Fast debt growth is typical late in an expansion, so he watches whether a company is borrowing faster than it can sustain.",
+        "beta": "A lower beta means the stock tends to fall less in market downturns, which fits his goal of surviving any environment.",
+    },
+}
+
 INVESTORS = {
     "buffett": ("Warren Buffett", "Value Investing with Quality Focus", BUFFETT),
     "lynch": ("Peter Lynch", "Growth at Reasonable Price (GARP)", LYNCH),

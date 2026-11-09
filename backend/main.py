@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
-from lens.investors import INVESTORS, consensus
+from lens.investors import INVESTORS, WHY, consensus
 
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend" / "index.html"
 SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR")
@@ -191,6 +191,9 @@ class AnalyzeRequest(BaseModel):
 async def analyze(request: AnalyzeRequest):
     snapshot = await snapshot_for(normalize_ticker(request.ticker))
     results = [r for r in snapshot["agent_results"] if r["id"] in request.agents]
+    for result in results:
+        for check in result.get("criteria", []):
+            check["why"] = WHY.get(result["id"], {}).get(check["key"])
     body = {k: v for k, v in snapshot.items() if k not in ("prices", "agent_results")}
     body.update(consensus(results))
     body["agent_results"] = results

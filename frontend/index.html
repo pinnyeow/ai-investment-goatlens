@@ -981,6 +981,7 @@
         .check-pass .check-icon { color: #4ade80; }
         .check-fail .check-icon { color: #f87171; }
         .check-neutral .check-icon { color: var(--text-muted); }
+        .check-why { display: block; margin-top: 0.2rem; font-size: 0.8rem; font-style: italic; color: var(--text-muted); line-height: 1.4; }
         .check-no_data { opacity: 0.6; }
         .check-no_data .check-icon { color: var(--text-muted); }
         .badge-insufficient_data { background: rgba(161, 161, 170, 0.12); color: var(--text-muted); }
@@ -3484,7 +3485,7 @@
             return `<ul class="checklist">${(agent.criteria || []).map(c => `
                 <li class="check-${c.status}">
                     <span class="check-icon" aria-hidden="true">${icons[c.status] || '•'}</span>
-                    <span>${c.status === 'no_data' ? `<strong>${escapeHtml(c.label)}</strong> ` : ''}${escapeHtml(c.detail)}</span>
+                    <span>${c.status === 'no_data' ? `<strong>${escapeHtml(c.label)}</strong> ` : ''}${escapeHtml(c.detail)}${c.why && c.status !== 'no_data' ? `<span class="check-why">${escapeHtml(c.why)}</span>` : ''}</span>
                 </li>`).join('')}</ul>`;
         }
 
