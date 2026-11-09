@@ -1,0 +1,4 @@
+# Nightly snapshot build (GitHub Actions only, never on Render).
+-r requirements.txt
+yfinance>=1.0,<2
+pandas>=2.0

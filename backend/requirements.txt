@@ -1,36 +1,5 @@
-# GOATlens - Backend Dependencies
-
-# Web Framework
-fastapi>=0.109.0
-uvicorn[standard]>=0.27.0
-
-# LangGraph & LangChain
-langgraph>=0.0.40
-langchain>=0.1.0
-langchain-openai>=0.0.5
-
-# LLM Client
-openai>=1.12.0
-
-# HTTP Client
-httpx>=0.26.0
-
-# Data Sources
-curl-cffi>=0.13.0,<1.0
-
-# Data Processing
-pydantic>=2.5.0
-
-# Environment & Config
-python-dotenv>=1.0.0
-
-# Optional: For local development
-watchfiles>=0.21.0
-
-# Observability - Arize AX
-arize-otel>=0.8.1
-opentelemetry-sdk>=1.21.0
-opentelemetry-exporter-otlp>=1.21.0
-openinference-instrumentation-langchain>=0.1.19
-openinference-instrumentation-openai>=0.1.0
-openinference-instrumentation>=0.1.12
+# Web server (what Render runs). Kept small: it only serves nightly snapshots.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.26
+pydantic>=2.5

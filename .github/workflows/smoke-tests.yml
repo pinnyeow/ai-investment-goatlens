@@ -1,102 +1,41 @@
 name: Smoke Tests
 
+# Daily check of the live site and of last night's data.
 on:
   schedule:
-    - cron: '17 15 * * *' # daily live dependency canary
+    - cron: '0 13 * * *'
+  workflow_run:
+    workflows: [Nightly snapshots]
+    types: [completed]
   workflow_dispatch:
-    inputs:
-      expected_sha:
-        description: Exact deployed commit SHA to verify
-        required: true
-        type: string
-
-concurrency:
-  group: smoke-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for the expected Render release
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
+      - name: Site is up
         run: |
-          for ATTEMPT in {1..30}; do
-            BODY=$(curl --silent --show-error --max-time 5 \
-              https://goatlens.onrender.com/health || true)
-            echo "Release check $ATTEMPT: $BODY"
-            RELEASE=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("release", ""))' <<<"$BODY" 2>/dev/null || true)
-            if [[ "$RELEASE" == "$EXPECTED_SHA" ]]; then
-              echo "Expected release is live."
-              exit 0
-            fi
-            if (( ATTEMPT < 30 )); then
-              sleep 15
-            fi
-          done
-          echo "FAIL: Render did not deploy $EXPECTED_SHA within 10 minutes"
+          for i in 1 2 3 4 5 6; do curl -fsS --max-time 60 https://goatlens.onrender.com/health && exit 0; sleep 20; done
           exit 1
 
-      - name: Homepage loads
+      - name: Last night's data is fresh and coverage holds
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://goatlens.onrender.com/)
-          echo "Homepage status: $STATUS"
-          [ "$STATUS" = "200" ] || (echo "FAIL: Homepage returned $STATUS" && exit 1)
+          curl -fsS --max-time 60 https://goatlens.onrender.com/api/coverage > coverage.json
+          cat coverage.json
+          python3 - <<'PY'
+          import json, datetime as dt
+          r = json.load(open("coverage.json"))
+          age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(r["built_at"])
+          assert age < dt.timedelta(days=4), f"data is {age} old"
+          assert r["covered"] >= 500, f"only {r['covered']} companies covered"
+          assert r["all_five_rate"] >= 0.85, f"only {r['all_five_rate']:.0%} get all five investors"
+          PY
 
-      - name: Health check returns healthy
+      - name: Real analyses work end to end
         run: |
-          BODY=$(curl -s https://goatlens.onrender.com/health)
-          echo "Health response: $BODY"
-          printf '%s' "$BODY" | python3 -c "import json, re, sys; body=json.load(sys.stdin); release=body.get('release', ''); (body.get('status') == 'healthy' and re.fullmatch(r'[0-9a-f]{40}', release)) or sys.exit('FAIL: health response or deployed release is invalid'); print(f'Deployed release: {release}')"
-
-      - name: Authoritative SEC fundamentals path is healthy
-        run: |
-          BODY=$(curl --fail --silent --show-error \
-            --max-time 45 \
-            https://goatlens.onrender.com/api/fundamentals-health)
-          echo "Fundamentals health: $BODY"
-          echo "$BODY" | grep -q '"status":"healthy"' || (echo "FAIL: SEC fundamentals unavailable" && exit 1)
-          echo "$BODY" | grep -q '"source":"sec"' || (echo "FAIL: SEC source missing" && exit 1)
-
-      - name: Report Yahoo market-data status without failing the service
-        run: |
-          BODY=$(curl --silent --show-error \
-            --max-time 45 \
-            https://goatlens.onrender.com/api/market-data-health || true)
-          echo "Yahoo market-data status (non-gating): $BODY"
-
-      - name: AAPL returns five explicit analyses and SEC evidence
-        run: |
-          BODY=$(curl --fail --silent --show-error \
-            --max-time 90 \
-            -X POST https://goatlens.onrender.com/api/analyze \
-            -H 'Content-Type: application/json' \
-            -d '{"ticker":"AAPL","agents":["buffett","lynch","graham","munger","dalio"]}')
-          echo "AAPL analysis (truncated): ${BODY:0:500}"
-          echo "$BODY" | grep -q '"ticker":"AAPL"' || (echo "FAIL: AAPL analysis missing ticker" && exit 1)
-          echo "$BODY" | grep -q '"fundamentals":{"available":true,"source":"sec"' || (echo "FAIL: AAPL analysis is not SEC-backed" && exit 1)
-          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); results=body.get('agent_results', []); completed=body.get('completed_analyses'); requested=body.get('requested_analyses'); partial=body.get('partial_indication'); expected_agents={'Warren Buffett', 'Peter Lynch', 'Benjamin Graham', 'Charlie Munger', 'Ray Dalio'}; valid={item.get('agent') for item in results} == expected_agents and body.get('ticker') == 'AAPL' and requested == 5 and len(results) == 5 and completed == sum(item.get('status') == 'complete' for item in results) and completed >= 1 and all((item.get('score') is not None and item.get('verdict') is not None and not item.get('unavailable_metrics')) if item.get('status') == 'complete' else (item.get('status') == 'incomplete' and item.get('score') is None and item.get('verdict') is None and bool(item.get('unavailable_metrics'))) for item in results) and body.get('consensus_status') == ('complete' if completed == 5 else 'partial' if completed >= 3 else 'incomplete') and ((completed < 3 and partial is None) or (3 <= completed < 5 and partial is not None) or (completed == 5 and partial is None)) and body.get('data_status', {}).get('fundamentals', {}).get('available') and body.get('data_status', {}).get('fundamentals', {}).get('source') == 'sec' and len(body.get('metric_evidence', {})) >= 28; valid or sys.exit('FAIL: AAPL response is not a complete or honestly degraded five-analysis result'); print(f'AAPL analyses: {completed}/5 complete')"
-          printf '%s' "$BODY" | python3 -c "import json, re, sys; body=json.load(sys.stdin); revenue=body.get('fundamentals', {}).get('revenue', {}); provenance=revenue.get('provenance', {}); valid=isinstance(revenue.get('value'), (int, float)) and not isinstance(revenue.get('value'), bool) and revenue.get('value') > 0 and provenance.get('namespace') == 'us-gaap' and bool(provenance.get('concept')) and provenance.get('unit') == 'USD' and provenance.get('form') in {'10-K', '10-K/A'} and re.fullmatch(r'[0-9]{10}-[0-9]{2}-[0-9]{6}', provenance.get('accession', '')) and re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', provenance.get('filed', '')); valid or sys.exit('FAIL: AAPL revenue lacks current SEC annual-filing provenance'); print(f\"AAPL SEC revenue: {revenue['value']} from {provenance['accession']}\")"
-
-      - name: AMZN turnaround analysis remains useful or degrades honestly
-        run: |
-          BODY=$(curl --fail --silent --show-error \
-            --max-time 90 \
-            -X POST https://goatlens.onrender.com/api/analyze \
-            -H 'Content-Type: application/json' \
-            -d '{"ticker":"AMZN","agents":["buffett","lynch","graham","munger","dalio"]}')
-          echo "AMZN analysis (truncated): ${BODY:0:500}"
-          printf '%s' "$BODY" | python3 -c "import json, sys; body=json.load(sys.stdin); evidence=body.get('metric_evidence', {}); results=body.get('agent_results', []); completed=body.get('completed_analyses'); requested=body.get('requested_analyses'); partial=body.get('partial_indication'); expected_agents={'Warren Buffett', 'Peter Lynch', 'Benjamin Graham', 'Charlie Munger', 'Ray Dalio'}; valid={item.get('agent') for item in results} == expected_agents and body.get('ticker') == 'AMZN' and requested == 5 and len(results) == 5 and completed == sum(item.get('status') == 'complete' for item in results) and completed >= 1 and all((item.get('score') is not None and item.get('verdict') is not None and not item.get('unavailable_metrics')) if item.get('status') == 'complete' else (item.get('status') == 'incomplete' and item.get('score') is None and item.get('verdict') is None and bool(item.get('unavailable_metrics'))) for item in results) and body.get('consensus_status') == ('complete' if completed == 5 else 'partial' if completed >= 3 else 'incomplete') and ((completed < 3 and partial is None) or (3 <= completed < 5 and partial is not None) or (completed == 5 and partial is None)) and body.get('data_status', {}).get('fundamentals', {}).get('available') and body.get('data_status', {}).get('fundamentals', {}).get('source') == 'sec' and evidence.get('earnings_turnaround', {}).get('available') and evidence.get('earnings_turnaround', {}).get('source') == 'sec' and evidence.get('earnings_turnaround', {}).get('value') == 1.0; valid or sys.exit('FAIL: AMZN response is not a useful or honestly degraded five-analysis result'); print(f'AMZN analyses: {completed}/5 complete')"
-
-      - name: Agents endpoint returns all 5 investors
-        if: ${{ always() }}
-        run: |
-          BODY=$(curl -s https://goatlens.onrender.com/api/agents)
-          echo "Agents response: $BODY"
-          echo "$BODY" | grep -q '"buffett"' || (echo "FAIL: Missing buffett agent" && exit 1)
-          echo "$BODY" | grep -q '"lynch"'   || (echo "FAIL: Missing lynch agent" && exit 1)
-          echo "$BODY" | grep -q '"graham"'  || (echo "FAIL: Missing graham agent" && exit 1)
-          echo "$BODY" | grep -q '"munger"'  || (echo "FAIL: Missing munger agent" && exit 1)
-          echo "$BODY" | grep -q '"dalio"'   || (echo "FAIL: Missing dalio agent" && exit 1)
+          for T in AAPL WMT BRK.B JPM; do
+            curl -fsS --max-time 60 -X POST https://goatlens.onrender.com/api/analyze \
+              -H 'Content-Type: application/json' -d "{\"ticker\":\"$T\"}" > a.json
+            python3 -c "import json,sys; b=json.load(open('a.json')); r=b['agent_results']; assert len(r)==5 and b['consensus_verdict']!='insufficient_data', b; assert all(x['criteria'] for x in r); print('$T', b['consensus_verdict'], b['completed_analyses'], '/ 5')"
+          done
+          curl -fsS --max-time 60 "https://goatlens.onrender.com/api/price-history/AAPL?period=1y" | python3 -c "import json,sys; assert len(json.load(sys.stdin)['prices']) > 200"

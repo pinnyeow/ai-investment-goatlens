@@ -1,97 +1,48 @@
 # GOATlens
 
-GOATlens is an educational investment-research application that evaluates U.S. public companies through five investor lenses: Buffett, Lynch, Graham, Munger, and Dalio.
+A free educational site that shows how five legendary investors (Buffett, Lynch, Graham, Munger, Dalio) would look at a stock. Each investor is a short, published checklist; every check shows the number it used and why it passed or failed.
 
-## Data architecture
+**Live:** https://goatlens.onrender.com · Not financial advice.
 
-- **SEC EDGAR Company Facts** is authoritative for annual accounting fundamentals and provenance.
-- **Yahoo Finance** is a narrow, best-effort market boundary: the chart endpoint supplies current price and adjusted price history only.
-- GOATlens computes versioned, transparent metrics from compatible SEC facts and Yahoo market observations. It does not ingest Yahoo financial statements or normalized ratios.
-- SEC-backed fundamental analysis remains available when Yahoo is unavailable.
-- Price-dependent agents return `incomplete` when required market inputs are missing.
-- Missing financial values remain unavailable; they are never replaced with fabricated zeroes.
+## How it works
 
-The current SEC scope is U.S. issuers present in the SEC ticker map. A genuine unknown issuer returns a sanitized `404`; SEC transport or capacity failures return retryable `503` responses.
-
-Yahoo Finance is an unofficial, best-effort dependency with no product SLA. Operators are responsible for confirming that their intended use complies with Yahoo's terms and any applicable display or redistribution restrictions.
-
-## Quick start
-
-### Requirements
-
-- Python 3.10+
-- An identifying SEC operator string containing an application name and contact email
-
-```bash
-git clone https://github.com/pinnyeow/ai-investment-goatlens.git
-cd ai-investment-goatlens/backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+```
+Nightly GitHub Action (free)                      Render (free)
+  Yahoo Finance → lens/data.py   (~600 companies)    main.py serves the page and
+  checklists    → lens/investors.py                  reads the JSON from the data
+  JSON files    → lens/build.py  → `data` branch  →  branch (cached 30 min)
 ```
 
-Create `backend/.env`:
+- **No live data calls while a user waits.** Everything is prepared nightly, so pages load instantly and Yahoo outages or throttling never break the site; if a company fails one night, yesterday's data stays up and is labelled.
+- **Missing data is skipped, never counted as zero.** An investor needs at least half of its checklist to give a verdict; the page says exactly which checks were skipped and why (for example, "not meaningful for banks").
+- **Covered companies** are listed in `backend/lens/universe.txt` (S&P 500 plus popular names). Add a ticker there and it appears after the next nightly run.
+- **Cost:** $0. GitHub Actions (public repo), Yahoo Finance via `yfinance`, Render free tier.
 
-```env
-# Required by SEC fair-access policy; use your real operational contact.
-SEC_USER_AGENT=GOATlens your-contact@example.com
+See [ARCHITECTURE.md](ARCHITECTURE.md) for details and the reasoning behind this design.
 
-# Optional: enables LLM-enhanced narratives.
-OPENAI_API_KEY=your_openai_key_here
-
-PORT=8000
-```
-
-Run from `backend/`:
-
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-Open <http://localhost:8000/>.
-
-## API
-
-Analyze a company:
-
-```bash
-curl -X POST "http://localhost:8000/api/analyze" \
-  -H "Content-Type: application/json" \
-  -d '{"ticker":"AAPL","time_period":"1y"}'
-```
-
-The response includes `data_status` for SEC fundamentals and Yahoo chart market data. Yahoo status separates quote observation time from retrieval time and exposes quote currency, process-local cache age, and freshness. Each agent result includes `status` and `unavailable_metrics` so partial analysis is explicit.
-
-Other endpoints:
-
-- `GET /api/agents`
-- `GET /api/price-history/{ticker}` (raw OHLCV plus explicit `adjusted_close`; the UI plots adjusted history)
-- `GET /api/earnings/{ticker}`
-- `GET /health` (includes the exact deployed release SHA)
-
-## Project structure
-
-```text
-backend/
-  main.py                 FastAPI and LangGraph workflow
-  agents/                 Investor scoring agents
-  data_sources/sec.py     SEC Company Facts adapter
-  data_sources/yahoo_chart.py   Best-effort current-price/history boundary
-  temporal/               Current-period moat assessment
-  tests/                  Pytest suite and SEC fixtures
-frontend/index.html       Browser application
-```
-
-## Development
+## Run locally
 
 ```bash
 cd backend
-venv/bin/python -m pytest -q
-venv/bin/ruff check .
+python -m venv venv && source venv/bin/activate
+pip install -r requirements-dev.txt
+cd .. && make dev        # builds 5 companies, then serves http://localhost:8000
+make check               # lint + tests
 ```
 
-See `ARCHITECTURE.md` for contracts and `docs/verification.md` for the release procedure.
+Build any set of companies: `cd backend && python -m lens.build --out ../.snapshots --tickers NVDA,KO`.
 
-## Disclaimer
+## API
 
-GOATlens is for educational and research purposes only. It is not financial advice. Verify source filings and consult a qualified professional before making investment decisions.
+| Endpoint | What it returns |
+|---|---|
+| `POST /api/analyze` `{"ticker": "AAPL", "agents": ["buffett", ...]}` | Verdicts, checklists, consensus, metrics |
+| `GET /api/price-history/{ticker}?period=1y` | Prices plus earnings markers |
+| `GET /api/earnings/{ticker}` | Last quarters' EPS vs estimates |
+| `GET /api/tickers` | Covered companies (for search) |
+| `GET /api/coverage` | Last night's coverage report |
+| `GET /health` | Status and deployed commit |
+
+## Data and terms
+
+Data comes from Yahoo Finance through the unofficial `yfinance` library. It is used here for a free, non-commercial educational project; revisit the source if GOATlens ever charges money.

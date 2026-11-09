@@ -1,0 +1,55 @@
+name: Nightly snapshots
+
+# Fetches every covered company from Yahoo Finance, scores the five investors,
+# and publishes JSON to the `data` branch, which the website reads. Runs on
+# GitHub's servers because Yahoo throttles Render's shared IP addresses.
+on:
+  schedule:
+    - cron: '30 10 * * 1-6' # 10:30 UTC, Tue-Sat after each US trading day (Mon covers Fri)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-snapshots
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements-build.txt
+
+      - run: pip install -r backend/requirements-build.txt
+
+      - name: Start from last night's snapshots (kept if a ticker fails tonight)
+        run: |
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git clone --depth 1 --branch data "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" site
+            rm -rf site/.git
+          else
+            mkdir site
+          fi
+
+      - name: Build snapshots
+        working-directory: backend
+        run: python -m lens.build --out ../site
+
+      - name: Publish to the data branch
+        working-directory: site
+        run: |
+          git init -q -b data
+          git config user.name "goatlens-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Snapshots $(date -u +%Y-%m-%d)"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" data
+          cat coverage.json

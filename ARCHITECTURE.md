@@ -1,86 +1,48 @@
 # GOATlens Architecture
 
-## Core rule
+## What the product is
 
-Accounting fundamentals and volatile market data are different dependency classes. GOATlens keeps them separate so a market-data outage cannot erase authoritative filing analysis.
+An educational tool: "how would Buffett, Graham, Lynch, Munger and Dalio each think about this stock, and why?" Trust comes from showing the numbers and the reasoning, not from refusing to answer. The success measures are:
 
-## Providers
+1. **Coverage:** share of covered companies where all five investors give a view. Target ≥ 85% (CI and the daily smoke test enforce it).
+2. **Accuracy:** headline numbers match the company's annual report (spot-check; Yahoo's revenue and net income matched SEC filings exactly for AAPL, WMT and KO when this design was chosen).
 
-### SEC EDGAR Company Facts — authoritative fundamentals
+Any change that lowers either one should not ship.
 
-`backend/data_sources/sec.py` resolves SEC tickers, retrieves Company Facts, selects annual 10-K/10-K/A facts as of a declared date, and preserves provenance:
+## Design
 
-- namespace and concept
-- unit and value
-- period start/end
-- accession, form, and filing date
-- fiscal year
-- derivation inputs or an availability reason
+| Piece | File | Job |
+|---|---|---|
+| Fetch | `backend/lens/data.py` | One Yahoo Finance call set per company → plain metrics (number or `None`) |
+| Score | `backend/lens/investors.py` | Five checklists; each criterion returns points + a sentence, or `None` if its inputs are missing |
+| Build | `backend/lens/build.py` | Runs nightly in GitHub Actions; writes `snapshots/{TICKER}.json`, `index.json`, `coverage.json` |
+| Publish | `.github/workflows/nightly-snapshots.yml` | Force-pushes the JSON to the `data` branch (one commit, no history growth) |
+| Serve | `backend/main.py` | FastAPI on Render; reads the `data` branch over HTTPS, caches 30 minutes |
+| Page | `frontend/index.html` | Single page; shows each investor's checklist and the numbers used |
 
-Conflicting aliases fail closed. Derived liabilities require matching period end, accession, filing date, and form. Bank cash-flow semantics remain explicitly non-comparable to industrial companies.
+### Rules
 
-`SEC_USER_AGENT` must contain an application identifier and a contact email. Missing configuration returns a sanitized non-retryable `503`. SEC rate-limit, transport, and capacity failures return sanitized retryable `503` responses. A symbol absent from the SEC ticker map returns a sanitized `404`.
+- **Missing ≠ zero.** A criterion with missing inputs is skipped and shown as "not scored" with the reason. Score = points earned ÷ points available on the checks that ran, scaled to −100…100.
+- **Half a checklist minimum.** Below 50% of an investor's checklist, that investor shows "not enough data" instead of a verdict. The consensus uses whichever investors have a view.
+- **Banks and insurers:** free cash flow, gross margin, debt-to-equity, current ratio and similar industrial measures are marked "not meaningful" rather than scored.
+- **Never crash a user request on data quality.** Validation happens at build time; the server only reads finished files.
+- **A bad night never removes a company.** If a fetch fails, the previous snapshot is kept and labelled stale. If fewer than 80% of companies fetch, nothing is published.
 
-### Yahoo Finance — best-effort market enrichment
+## Why this design (November 2026)
 
-`backend/data_sources/yahoo_chart.py` is the only Yahoo boundary. It supplies a timestamped current regular-market price, adjusted daily price history, split events, and price-series risk inputs. It does not supply financial statements, normalized ratios, earnings, or analyst context. Its data is optional for the SEC fundamentals path. Public market status separates observation time from retrieval time and includes quote currency, cache age, and freshness.
+The previous design fetched SEC XBRL and Yahoo data live on every request and refused to answer unless every input could be proven consistent. Each fix added stricter checks; by v0.2 it was ~24,000 lines and about half of well-known companies showed an error or no verdict. Tested alternatives:
 
-When Yahoo is unavailable:
+| Source | Result |
+|---|---|
+| Yahoo Finance full data from GitHub Actions | 100 of 100 companies, 0 errors, ~1.2 s each |
+| Yahoo Finance full data from Render | Throttled (HTTP 429 / 401 invalid crumb): shared IPs |
+| SEC Company Facts | Free and official but every company tags figures differently; needs per-company special cases |
+| Stooq | Now behind a bot check |
 
-- the SEC-backed response still succeeds;
-- `data_status.market_data.available` is `false`;
-- price-dependent agent results are `incomplete`;
-- unavailable metrics are named;
-- no missing input is silently converted to a favorable score.
+So: fetch once a night from GitHub's servers, and let Render only serve files.
 
-Yahoo is a prototype market-data source, not an assertion of permanent public redistribution rights.
+## Known limits
 
-## Request flow
-
-```text
-POST /api/analyze
-  -> validate ticker
-  -> retrieve and normalize SEC fundamentals
-  -> try Yahoo market enrichment
-  -> run only agents whose required inputs are available
-  -> synthesize explicit complete/incomplete results
-  -> return data_status and provenance-aware analysis
-```
-
-SEC errors stop before Yahoo because market data cannot substitute for authoritative fundamentals. Yahoo errors degrade only market-dependent behavior.
-
-## Missing-data contract
-
-- Missing values remain `None`/unavailable.
-- Every unsupported derived metric has an availability reason.
-- Missing inputs earn no scoring points.
-- Agents that require absent inputs return `status="incomplete"` with `unavailable_metrics`.
-- Current prices include observation/fetch timestamps; cached values are never described as timelessly current.
-
-## Workflow and files
-
-```text
-backend/main.py                  API and LangGraph orchestration
-backend/data_sources/sec.py      filing fundamentals and provenance
-backend/data_sources/yahoo_chart.py  narrow price/history market boundary
-backend/agents/                  investor-specific scoring
-backend/temporal/                current-period moat assessment
-backend/tests/fixtures/sec/      reduced Company Facts fixtures
-frontend/index.html              browser UI
-```
-
-## Release boundary
-
-A release is not successful merely because code merged or Render is healthy. Verification must establish:
-
-1. local focused and full tests, lint, and security checks;
-2. a real local API and browser journey;
-3. independent fail-closed review;
-4. passing GitHub Actions;
-5. `/health` reports a `release` equal to the merged commit;
-6. one production SEC fundamentals canary;
-7. production market-data status;
-8. one production AAPL analysis;
-9. production browser behavior.
-
-See `docs/verification.md` for the executable procedure.
+- Yahoo is unofficial and can change without notice; the CI `live-build-sample` job and daily smoke test catch breakage, and the site keeps serving the last good data.
+- Growth figures use the 4–5 years of annual reports Yahoo provides (Graham's 10-year tests are approximated).
+- Companies outside `universe.txt` aren't covered; the API returns a helpful 404.

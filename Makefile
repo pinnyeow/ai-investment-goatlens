@@ -1,9 +1,14 @@
-.PHONY: lint test check
+.PHONY: lint test check dev
 
 lint:
-	cd backend && source venv/bin/activate && ruff check .
+	cd backend && ruff check .
 
 test:
-	cd backend && source venv/bin/activate && python -m pytest tests/ -v
+	cd backend && python -m pytest -q tests
 
 check: lint test
+
+# Build snapshots for a few tickers and serve them locally at http://localhost:8000
+dev:
+	cd backend && python -m lens.build --out ../.snapshots --tickers AAPL,KO,JPM,WMT,BRK-B && \
+	SNAPSHOT_DIR=../.snapshots uvicorn main:app --reload
