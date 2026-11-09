@@ -712,6 +712,7 @@
         .verdict-buy { color: #4ade80; }
         .verdict-hold { color: var(--accent-gold); }
         .verdict-mixed { color: var(--accent-gold); }
+        .consensus-verdict.is-split { font-size: clamp(1.6rem, 5vw, 2.4rem); line-height: 1.15; }
         .verdict-sell { color: #f87171; }
         .verdict-strong_sell { color: var(--accent-red); }
 
@@ -2594,6 +2595,13 @@
            RESPONSIVE — Small phones (≤480px)
            Extra tightening for very narrow screens.
            ═══════════════════════════════════════════ */
+        /* Phones: hover tooltips can't be used and were stretching the page
+           sideways; the "Numbers used" rows stack instead of needing 400px. */
+        @media (max-width: 768px) {
+            .score-tooltip { display: none; }
+            .metric-evidence-row { grid-template-columns: minmax(0, 1fr); gap: 0.25rem; }
+        }
+
         @media (max-width: 480px) {
             main {
                 padding: 1rem 0.75rem;
@@ -3690,7 +3698,7 @@
             const consensusUi = getConsensusUiState(data);
             const verdictEl = document.getElementById('consensusVerdict');
             verdictEl.textContent = consensusUi.headline;
-            verdictEl.className = `consensus-verdict verdict-${data.split ? 'mixed' : data.consensus_verdict}`;
+            verdictEl.className = `consensus-verdict verdict-${data.split ? 'mixed is-split' : data.consensus_verdict}`;
 
             const consensusStatusNotice = document.getElementById('consensusStatusNotice');
             consensusStatusNotice.textContent = consensusUi.status;
