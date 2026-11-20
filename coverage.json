@@ -1,0 +1,17 @@
+{
+  "built_at": "2026-11-20T19:01:35+00:00",
+  "universe": 591,
+  "covered": 591,
+  "fresh": 591,
+  "stale": [],
+  "missing": [],
+  "all_five_investors": 535,
+  "all_five_rate": 0.905,
+  "verdict_rate": 1.0,
+  "all_five_rate_non_financial": 0.985,
+  "by_completed_count": {
+    "5": 535,
+    "4": 54,
+    "3": 2
+  }
+}
