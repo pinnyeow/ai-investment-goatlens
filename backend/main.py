@@ -120,9 +120,9 @@ def _inline_script_hashes() -> str:
 
 
 _CSP = (
-    f"default-src 'self'; script-src 'self' {_inline_script_hashes()} https://unpkg.com https://cdn.jsdelivr.net; "
+    f"default-src 'self'; script-src 'self' {_inline_script_hashes()} https://unpkg.com https://cdn.jsdelivr.net https://gc.zgo.at; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
-    "img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    "img-src 'self' data:; connect-src 'self' https://goatlens.goatcounter.com; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
 )
 
 

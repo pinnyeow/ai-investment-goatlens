@@ -8,6 +8,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js" integrity="sha384-2Yiz1jBuc53MdRCA3ojcpk7cAoW2uFfKcetY6JKbqUetb537Hq2uPJrqM1Mj2AKx" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
+    <!-- Privacy-friendly visit counts (GoatCounter: no cookies, no cross-site tracking). Pinned with its published SRI hash. -->
+    <script data-goatcounter="https://goatlens.goatcounter.com/count" async src="https://gc.zgo.at/count.v5.js" integrity="sha384-atnOLvQb9t+jTSipvd75X2yginT4PjVbqDdlJAmxMm+wYElFmeR6EmLP5bYeoRVQ" crossorigin="anonymous"></script>
     <style>
         :root {
             --bg-primary: #09090b;
@@ -2733,7 +2735,7 @@
                     <span class="about-label">Why I built this</span>
                     <p>I wanted to sharpen my AI product sense, and building something real felt like the best way to learn. GOATlens takes five legendary investors' frameworks and turns each into a simple checklist you can see.</p>
                     <span class="about-label">How it works</span>
-                    <p>It's free and non-commercial. Data comes from Yahoo Finance and refreshes each weekday morning for about 590 companies (the S&amp;P 500 plus popular names). Each score shows exactly which checks passed and why. It's a way to learn how great investors think, not financial advice.</p>
+                    <p>It's free and non-commercial. Data comes from Yahoo Finance and refreshes each weekday morning for about 590 companies (the S&amp;P 500 plus popular names). Each score shows exactly which checks passed and why. It's a way to learn how great investors think, not financial advice. Visits are counted anonymously with GoatCounter (no cookies).</p>
                     <span class="about-label">Feedback welcome</span>
                     <p>This is a work in progress. If you have ideas, see bugs, or just want to chat about AI &amp; investing, I'd love to hear from you.</p>
                 </div>
@@ -3506,6 +3508,16 @@
         }
         loadTickerList();
 
+        // Anonymous usage events for GoatCounter (which stocks are looked up,
+        // which aren't covered yet). Never blocks the page if analytics is off.
+        function track(path, title) {
+            try {
+                if (window.goatcounter && window.goatcounter.count) {
+                    window.goatcounter.count({ path, title, event: true });
+                }
+            } catch (err) { /* analytics is optional */ }
+        }
+
         // Shared links (?ticker=AAPL) open straight to that analysis.
         const sharedTicker = new URLSearchParams(window.location.search).get('ticker');
         if (sharedTicker) {
@@ -3563,6 +3575,7 @@
                 setLoadingStep('stepCharts');
 
                 if (!response.ok) {
+                    if (response.status === 404) track(`not-covered/${ticker}`, 'Searched a stock that is not covered');
                     const error = await response.json();
                     const detail = error.detail;
                     const message = detail && typeof detail === 'object'
@@ -3572,6 +3585,7 @@
                 }
 
                 const data = await response.json();
+                track(`analyze/${data.ticker}`, 'Analyzed a stock');
                 displayResults(data);
             } catch (err) {
                 clearTimeout(_loadingTimer);
@@ -4679,6 +4693,7 @@
 
         function shareResults() {
             const ticker = currentTicker || '';
+            track(`share/${ticker}`, 'Copied a share link');
             const url = ticker
                 ? `${window.location.origin}${window.location.pathname}?ticker=${ticker}`
                 : window.location.href;
@@ -4701,7 +4716,7 @@
             const actionElement = event.target.closest('[data-action]');
             if (actionElement) {
                 const actions = {
-                    'open-scoring': openScoringDetailsModal,
+                    'open-scoring': () => { track('open-scoring', 'Opened scoring details'); openScoringDetailsModal(); },
                     'close-scoring': closeScoringDetailsModal,
                     'scroll-search': scrollToSearch,
                     'share-results': shareResults,
