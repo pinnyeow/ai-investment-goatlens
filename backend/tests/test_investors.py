@@ -122,3 +122,11 @@ def test_foreign_currency_reason_is_shown():
     graham = evaluate_investor("graham", {**QUALITY_COMPANY, "book_value_per_share": None, "pb_ratio": None}, na)
     reasons = [c["detail"] for c in graham["criteria"] if c["status"] == "no_data"]
     assert any("TWD" in r for r in reasons)
+
+
+def test_every_check_has_a_why_sentence():
+    from lens.investors import WHY
+    for investor_id, (_, _, criteria) in INVESTORS.items():
+        for criterion in criteria:
+            why = WHY[investor_id].get(criterion.key)
+            assert why and why.endswith(".") and len(why) < 170, (investor_id, criterion.key)
