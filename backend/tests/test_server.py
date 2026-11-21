@@ -81,3 +81,7 @@ def test_head_root_and_bad_period(client):
 def test_analyze_includes_why_sentences(client):
     body = client.post("/api/analyze", json={"ticker": "BRK-B", "agents": ["graham"]}).json()
     assert all(c["why"] for c in body["agent_results"][0]["criteria"])
+
+def test_csp_allows_only_goatcounter_for_analytics(client):
+    csp = client.get("/").headers["content-security-policy"]
+    assert "https://gc.zgo.at" in csp and "connect-src 'self' https://goatlens.goatcounter.com;" in csp
